@@ -41,6 +41,8 @@ Alertmanager 9093도 host loopback에만 공개하고 relay는 host port를
 ```text
 React Web
   ├─ IntroSequence
+  ├─ WalkingProfileDialog
+  │    필수 출생연도/신장/체중/생물학적 성별
   ├─ PlaceCombobox                │
   │    캠퍼스 중심/주소/출입구    │
   ├─ GoalForm                     │
@@ -109,6 +111,8 @@ Kakao/NAVER의 400·401·403 설정 오류는 보완으로 숨기지 않습니�
 
 ```text
 RecommendationRequest
+  → 브라우저 프로필로 HAN_2026_V1 한 걸음 길이 계산
+  → 원본 프로필을 제외한 walkingMetric 전송
   → 입력·마감·거리 검증
   → 출발/도착 500m PostGIS 주변 정류장 + 운행 노선 확인
   → 연결 경로 없음: 800m → 최대 1.2km 단계 확장
@@ -116,14 +120,21 @@ RecommendationRequest
   → 직행 후보, 필요 시 최대 1회 환승 후보
   → TAGO 도착정보 + 노선 정류장 순서
   → Kakao 도보 구간 + 버스 도로 매칭 geometry
+  → baseline이 목표 ±5% 밖이면 실제 TAGO 정류장 순서로 운동 후보 생성
+       ├─ 마지막 버스 조기 하차 상위 4개 우선
+       ├─ 범위 내 후보 없음: 첫 버스 늦은 탑승 상위 2개
+       └─ 여전히 없음: 늦은 탑승+조기 하차 조합 상위 1개
   → 마감/추가시간 필터
   → 중복 제거
   → FAST/BALANCED/GOAL 선택
+  → 남은 목표가 있으면 GOAL을 primaryRecommendationId로 지정
   → RecommendationResponse
 ```
 
-추천 전체 timeout은 20초이며 대중교통 호출은 최대 5회, 도보 호출은 최대
-4회, 합계 최대 9회입니다. 후보 호출 동시성은 3입니다.
+추천 전체 timeout은 20초입니다. 후보 생성기 기준 대중교통 경로 호출은
+1회, 조정 도보 호출은 최대 8회로 합계 최대 9회이며 동시성은 3입니다.
+조기 하차 후보가 목표 범위에 들어오면 늦은 탑승과 양쪽 조합 호출은
+생략합니다.
 
 ## 5. 데이터 저장 경계
 
@@ -140,13 +151,17 @@ RecommendationRequest
 - 검색어와 장소 검색 결과
 - GPS·출발지·목적지
 - 걸음 수·목표·마감시간
+- 출생연도·신장·체중·생물학적 성별 원본 프로필
 - 추천 요청·응답
 - 실시간 버스 도착과 차량 위치
 - 공급자 원문과 API 키
 
-검색·경로·실시간 자료는 프로세스 메모리 TTL 후 제거합니다. 사용자 환경설정
-일부는 브라우저 localStorage에 versioned 계약으로 저장하고, 인트로 완료
-상태는 sessionStorage에 저장합니다.
+검색·경로·실시간 자료는 프로세스 메모리 TTL 후 제거합니다. 개인화 걸음
+프로필과 사용자 환경설정은 브라우저 localStorage version 2 계약으로만
+저장하고, API에는 `stepLengthMeters`, `RESEARCH_ESTIMATE`,
+`HAN_2026_V1`로 구성된 파생 `walkingMetric`만 전달합니다. version 1
+선호는 읽기 호환만 유지하고 개인화 온보딩을 다시 요구하며, 새 저장은
+version 2만 사용합니다. 인트로 완료 상태는 sessionStorage에 저장합니다.
 
 ## 6. 캐시와 동시성
 
@@ -161,7 +176,6 @@ RecommendationRequest
 | TAGO 차량 | 기본 10초 |
 | Kakao 도보 | 30분 |
 | Kakao 버스 도로 geometry | 24시간 |
-| 정류장명 해석 | 6시간 |
 
 같은 key의 진행 중 요청은 하나의 Promise를 공유합니다. 캐시와 IP rate
 limit은 프로세스 로컬이므로 현재 API는 단일 인스턴스로 운영합니다.

@@ -1,6 +1,6 @@
 # 구현·운영 현황
 
-이 문서는 2026-07-25 23:59 KST에 실제 소스, 실행 컨테이너, 공개 도메인,
+이 문서는 2026-07-26 01:19 KST에 실제 소스, 실행 컨테이너, 공개 도메인,
 PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니다.
 수시로 바뀌는 운영 수치는 새 배포 검증 때 갱신합니다.
 
@@ -16,6 +16,8 @@ PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니�
 - 추천 카드를 시간·이동수단·도보·환승 중심의 간략 기본 표시로 개편
 - 상세 이동 단계는 카드별 `자세히/접기`로만 표시하고 경로 변경 시 자동 닫힘
 - 운행 경고를 기본 접힌 안내로 이동하고 상세 열림 상태의 접근성 속성 적용
+- 회원가입 없이 필수 출생연도·신장·체중·생물학적 성별을 받는 개인화
+  온보딩과 브라우저 전용 저장·수정·삭제 구현
 
 ### 실제 검색·교통
 
@@ -73,7 +75,7 @@ PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니�
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| GitHub | `feat/tago-transit`, 구현 기준 CI run `30162100952` 두 job 성공 |
+| 기반 GitHub | `feat/tago-transit`의 `bf05003`, CI run `30162100952` 두 job 성공 |
 | 기본 브랜치 | `main`은 아직 초기 commit, 병합·보호 규칙 사용자 작업 |
 | 공개 번들 비밀값 검사 | NAVER 서버 Client Secret 미검출 |
 
@@ -95,10 +97,10 @@ PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니�
     "tago": true
   },
   "transit": {
-    "stops": 227187,
-    "linkedStops": 2741,
+    "stops": 227223,
+    "linkedStops": 2797,
     "routes": 134,
-    "routeStops": 5535
+    "routeStops": 5638
   }
 }
 ```
@@ -130,9 +132,15 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 직행 또는 최대 1회 환승 버스 후보 생성
 - TAGO 도착정보 우선, 없으면 실제 노선의 배차·정류장 정보로 추정
 - Kakao 도보 경로를 버스 전후와 운동 구간에 사용
+- 출생연도·신장·체중·필수 생물학적 성별로 개인화 한 걸음 길이 추정
+- 직접 한 걸음 길이 입력과 20m 보행 측정 없이 localStorage v2 프로필 사용
+- 마지막 버스의 조기 하차 후보를 우선하고 부족하면 늦은 탑승·양쪽 조합
 - TAGO 정류장 순서를 최대 30개 경유지 단위로 Kakao 도로에 매칭
 - 빠른·균형·목표 달성 최대 3개 추천
+- 남은 목표가 있으면 목표에 가장 가까운 추천을 기본 선택
 - NAVER 지도에 도로 매칭 경로와 첫 승차·환승·최종 하차만 표시
+- 운동 시작 마커를 제거하고 모든 도보 구간을 주황색 실선으로 통일
+- 비선택 추천 경로는 비교 맥락을 위해 0.2 불투명도로 유지
 - 선택한 각 버스 구간에서 탑승 정류장에 가장 가까이 접근 중인 차량 최대 1대
 - 차량은 노선번호 중심의 작은 마커로 표시하고 지도 bounds 계산에서는 제외
 - NAVER SDK 장애 시 동일 추천 좌표 SVG 표시
@@ -177,15 +185,17 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | --- | --- |
 | TypeScript typecheck | 통과 |
 | production build | 통과 |
-| 계약·API·웹·알림 릴레이 테스트 | 71개 통과 |
+| 계약·API·웹·알림 릴레이 테스트 | 74개 통과 |
 | PostgreSQL/PostGIS 통합 테스트 | 5개 통과 |
 | 공개 strict 지도 E2E | 2개 통과 |
-| GitHub Actions | 구현 기준 run `30162100952`, 품질·PostGIS 두 job 성공 |
+| GitHub Actions | 기반 commit run `30162100952`, 품질·PostGIS 두 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
+| 개인화 8,000보 실제 추천 | 7,995보·목표 오차 -5보·조기 하차 경로를 기본 선택 |
 | KAIST 본원 중심→대전 갤러리아 | HTTP 200, 실제 추천 3건·Kakao 승차 도보 확인 |
 | 버스 geometry | 도로 vertex가 정류장 수보다 많고 정류장 외 좌표 포함 확인 |
 | 지도 교통 마커 | 탑승 1·환승 1·하차 1·중간 정류장 0 육안/E2E 확인 |
+| 지도 도보 표현 | 모든 도보 주황색 실선·운동 시작 마커 0·비선택 경로 0.2 opacity 확인 |
 | NAVER 서버 API | Geocoding 200 1건, Reverse Geocoding 200 4건 |
 | 차량 마커 E2E | 마커 수≤선택 버스 구간 수, 탑승 접근 차량 title 확인 |
 | Prometheus | API/relay/Alertmanager target `up`, 20개 rule healthy |
@@ -210,8 +220,8 @@ SHA-256: e064e44f483960240596a0e4461829baba7e6c9d920ed3130ea322259a8c6b81
 
 별도 PostgreSQL/PostGIS 18 컨테이너의 `template0` 기반 빈 DB로 restore한
 뒤 `PostGIS=1`, `migration=2`, `227184/2659/131/5411` 통계를 다시
-확인했습니다. 이는 14:19 UTC 백업 시점의 고정 통계이며, 23:59 KST 현재
-readiness의 `227187/2741/134/5535`와 구분합니다. 성공 상태는
+확인했습니다. 이는 14:19 UTC 백업 시점의 고정 통계이며, 01:19 KST 최신
+readiness의 `227223/2797/134/5638`과 구분합니다. 성공 상태는
 `/var/backups/chimap/latest.json`과 `restore-latest.json`에 기록합니다.
 
 설치된 timer:
@@ -229,10 +239,15 @@ API를 다시 배포했습니다. 운영 컨테이너에서 알려진 주소 geo
 좌표 reverse가 각각 HTTP 200을 반환했으며, strict Web Dynamic Map E2E와
 공개 번들 서버 비밀값 미검출도 통과했습니다.
 
-초기 검증에서 host는 NAVER TLS에 연결됐지만 Docker bridge에서 handshake가
-timeout 됐습니다. MTU 1400의 별도 bridge에서는 즉시 연결됨을 재현한 뒤
-Compose 내부 network에 같은 값을 적용했습니다. 적용 후 geocode 1건과
-reverse 4건을 정상 수신했습니다.
+초기 API 검증에서 host는 NAVER TLS에 연결됐지만 Compose bridge에서
+handshake가 timeout 됐습니다. MTU 1400의 별도 bridge에서는 즉시 연결됨을
+재현한 뒤 Compose 내부 network에 같은 값을 적용했습니다. 적용 후 geocode
+1건과 reverse 4건을 정상 수신했습니다.
+
+Playwright 브라우저 컨테이너의 기본 Docker bridge에서는 별도로 NAVER Web
+SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치했고 host
+직접 요청은 HTTP 200이었습니다. 같은 strict E2E를 `--network host`로
+실행해 NAVER 지도까지 포함한 2개 시나리오가 모두 통과했습니다.
 
 ## 8. Git release 상태
 
@@ -247,10 +262,11 @@ GitHub CI run `30162100952`에서 다음 두 job이 모두 성공했습니다.
 - `Typecheck, tests, build, config`
 - `PostgreSQL and PostGIS integration`
 
-감사 시점의 로컬·원격 기능 브랜치 SHA는 일치했고 작업 트리는
-clean이었습니다. 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며
-보호 설정도 꺼져 있습니다. 병합, 병합 후 수동 `Public live E2E`, 필수
-check 지정은 [사용자 작업](../needs.md)에 기록했습니다.
+`bf05003` 이후 개인화 보폭, 조기 하차 우선 추천과 지도 도보 표현 변경도
+운영 배포·검증 후 `feat/tago-transit`에 반영했습니다. 기본 브랜치 `main`은
+`321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져 있습니다. 병합, 병합
+후 수동 `Public live E2E`, 필수 check 지정은
+[사용자 작업](../needs.md)에 기록했습니다.
 
 ## 9. 현재 한계와 확장 조건
 

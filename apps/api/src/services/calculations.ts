@@ -40,21 +40,21 @@ export function calculateRemainingSteps(
 
 export function calculateTargetWalkDistanceMeters(
   remainingSteps: number,
-  strideLengthMeters: number,
+  stepLengthMeters: number,
 ): number {
   return (
-    Math.round(remainingSteps * strideLengthMeters * 1_000_000) / 1_000_000
+    Math.round(remainingSteps * stepLengthMeters * 1_000_000) / 1_000_000
   );
 }
 
 export function estimateSteps(
   walkDistanceMeters: number,
-  strideLengthMeters: number,
+  stepLengthMeters: number,
 ): number {
-  if (strideLengthMeters <= 0 || !Number.isFinite(strideLengthMeters)) {
+  if (stepLengthMeters <= 0 || !Number.isFinite(stepLengthMeters)) {
     throw new RangeError("보폭은 0보다 큰 유한한 값이어야 합니다.");
   }
-  return Math.round(walkDistanceMeters / strideLengthMeters);
+  return Math.round(walkDistanceMeters / stepLengthMeters);
 }
 
 export function calculateStepMetrics(
@@ -68,15 +68,15 @@ export function calculateStepMetrics(
   );
   const targetTripWalkDistanceMeters = calculateTargetWalkDistanceMeters(
     remainingSteps,
-    request.strideLengthMeters,
+    request.walkingMetric.stepLengthMeters,
   );
   const routeEstimatedSteps = estimateSteps(
     route.walkDistanceMeters,
-    request.strideLengthMeters,
+    request.walkingMetric.stepLengthMeters,
   );
   const baseEstimatedSteps = estimateSteps(
     baseline.walkDistanceMeters,
-    request.strideLengthMeters,
+    request.walkingMetric.stepLengthMeters,
   );
   const additionalNeededDistanceMeters = Math.max(
     targetTripWalkDistanceMeters - baseline.walkDistanceMeters,
@@ -137,10 +137,9 @@ export function evaluateCandidate(
   );
   const transferPenalty = Math.min(candidate.route.transferCount / 3, 1);
   const balancedScore =
-    0.55 * stepError +
+    0.6 * stepError +
     0.3 * timePenalty +
-    0.1 * transferPenalty +
-    0.05 * Math.min(Math.max(candidate.connectionPenalty, 0), 1);
+    0.1 * transferPenalty;
 
   return {
     ...candidate,

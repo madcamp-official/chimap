@@ -24,8 +24,11 @@ function LegIcon({ leg }: { leg: RouteLeg }) {
 }
 
 function modeLabel(leg: RouteLeg): string {
-  if (leg.isExerciseSegment) {
-    return "추가 운동 도보";
+  if (leg.walkingRole === "GOAL_EARLY_ALIGHTING") {
+    return "미리 내려 걷기";
+  }
+  if (leg.walkingRole === "GOAL_LATE_BOARDING") {
+    return "더 걸어 탑승";
   }
   if (leg.mode === "WALK") {
     return "일반 도보";
@@ -149,9 +152,9 @@ export function RouteDetails({
       <details className="calculation-note">
         <summary>예상값은 어떻게 계산했나요?</summary>
         <p>
-          입력한 보폭으로 도보거리를 걸음 수로 환산했습니다. 경로와
-          도착시간은 지금 출발 기준이며 실제 대기시간, 신호, 걷는 속도에 따라
-          달라질 수 있어요.
+          신장·체중·나이·생물학적 성별로 추정한 개인화 한 걸음 길이로
+          도보거리를 걸음 수로 환산했습니다. 경로와 도착시간은 지금 출발
+          기준이며 실제 대기시간, 신호, 걷는 속도에 따라 달라질 수 있어요.
         </p>
         {recommendation.estimationNotes?.map((note) => (
           <p key={note}>{note}</p>

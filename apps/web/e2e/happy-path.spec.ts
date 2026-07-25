@@ -32,13 +32,30 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
       vehicleResponseCount += 1;
     }
   });
-  await page.goto("/");
+  await page.addInitScript(() => {
+    if (window.name !== "chimap-e2e-initialized") {
+      window.sessionStorage.clear();
+      window.localStorage.clear();
+      window.name = "chimap-e2e-initialized";
+    }
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
 
   const intro = page.getByRole("dialog", { name: "CHIMap 시작 화면" });
   await expect(intro).toBeVisible();
   await expect(page.getByText("LOAD HEALTHY ROUTE")).toBeVisible();
   await page.getByRole("button", { name: "인트로 건너뛰기" }).click();
   await expect(intro).toBeHidden();
+  const walkingProfile = page.getByRole("dialog", {
+    name: "내 한 걸음 길이 계산",
+  });
+  await expect(walkingProfile).toBeVisible();
+  await page.getByLabel("출생연도").fill("2000");
+  await page.getByLabel("신장").fill("170");
+  await page.getByLabel("체중").fill("65");
+  await page.getByLabel("여성").check();
+  await page.getByRole("button", { name: "이 값으로 시작" }).click();
+  await expect(walkingProfile).toBeHidden();
 
   const origin = page.getByRole("combobox", { name: "출발지" });
   await origin.fill("대전 유성구 대학로 291");
@@ -217,7 +234,11 @@ test("KAIST 본원 중심 좌표에서도 운행 정류장을 확장 탐색한�
       currentSteps: 0,
       goalSteps: 8000,
       maxExtraMinutes: 90,
-      strideLengthMeters: 0.7,
+      walkingMetric: {
+        stepLengthMeters: 0.69,
+        source: "RESEARCH_ESTIMATE",
+        modelVersion: "HAN_2026_V1",
+      },
       safetyBufferMinutes: 3,
     },
   });

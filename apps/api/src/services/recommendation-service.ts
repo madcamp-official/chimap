@@ -69,6 +69,14 @@ export class RecommendationService {
           status: 404,
         });
       }
+      const primaryRecommendationId = selection.primaryRecommendationId;
+      if (primaryRecommendationId === undefined) {
+        throw new AppError({
+          code: "INTERNAL_ERROR",
+          message: "기본 추천 경로를 결정하지 못했어요.",
+          status: 500,
+        });
+      }
 
       const baselineMetrics = calculateStepMetrics(
         input.request,
@@ -119,7 +127,7 @@ export class RecommendationService {
         warnings.push({
           code: "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
           message:
-            "설정한 마감시간과 추가시간 안에서는 목표 걸음을 모두 채우기 어려워요.",
+            "설정한 마감시간과 추가시간 안에서는 목표 걸음의 ±5% 범위에 맞추기 어려워 가장 가까운 경로를 보여드려요.",
         });
       }
       if (selection.recommendations.length < 3) {
@@ -142,6 +150,17 @@ export class RecommendationService {
           walkDistanceMeters: generated.baseline.walkDistanceMeters,
           estimatedSteps: baselineMetrics.baseEstimatedSteps,
         },
+        walkingGoal: {
+          remainingSteps: baselineMetrics.remainingSteps,
+          targetWalkDistanceMeters: Math.round(
+            baselineMetrics.targetTripWalkDistanceMeters,
+          ),
+          toleranceSteps: Math.round(baselineMetrics.remainingSteps * 0.05),
+          effectiveStepLengthMeters:
+            input.request.walkingMetric.stepLengthMeters,
+          source: input.request.walkingMetric.source,
+        },
+        primaryRecommendationId,
         recommendations: selection.recommendations,
         warnings,
       });
@@ -150,8 +169,8 @@ export class RecommendationService {
         event: "recommendation.completed",
         requestId: input.requestId,
         candidateCount: generated.candidates.length,
-        successfulCandidateCount:
-          generated.candidates.length - generated.candidateFailureCount,
+        successfulCandidateCount: generated.candidates.length,
+        candidateFailureCount: generated.candidateFailureCount,
         recommendationCount: response.recommendations.length,
         routeApiCallCount: generated.routeApiCallCount,
       });

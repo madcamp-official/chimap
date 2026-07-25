@@ -1,7 +1,9 @@
 import {
   storedPreferencesV1Schema,
+  storedPreferencesV2Schema,
   storedTripV1Schema,
   type StoredPreferencesV1,
+  type StoredPreferencesV2,
   type StoredTripV1,
 } from "@chimap/contracts";
 
@@ -46,21 +48,38 @@ function safelyWrite(
 
 export function loadPreferences(
   storage = browserStorage(),
-): StoredPreferencesV1 | undefined {
-  const parsed = storedPreferencesV1Schema.safeParse(
-    safelyRead(PREFERENCES_STORAGE_KEY, storage),
-  );
-  return parsed.success ? parsed.data : undefined;
+): StoredPreferencesV1 | StoredPreferencesV2 | undefined {
+  const value = safelyRead(PREFERENCES_STORAGE_KEY, storage);
+  const current = storedPreferencesV2Schema.safeParse(value);
+  if (current.success) {
+    return current.data;
+  }
+  const legacy = storedPreferencesV1Schema.safeParse(value);
+  return legacy.success ? legacy.data : undefined;
 }
 
 export function savePreferences(
-  preferences: StoredPreferencesV1,
+  preferences: StoredPreferencesV2,
   storage = browserStorage(),
 ): boolean {
-  const parsed = storedPreferencesV1Schema.safeParse(preferences);
+  const parsed = storedPreferencesV2Schema.safeParse(preferences);
   return parsed.success
     ? safelyWrite(PREFERENCES_STORAGE_KEY, parsed.data, storage)
     : false;
+}
+
+export function clearPreferences(
+  storage = browserStorage(),
+): boolean {
+  if (storage === undefined) {
+    return false;
+  }
+  try {
+    storage.removeItem(PREFERENCES_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function loadLastTrip(

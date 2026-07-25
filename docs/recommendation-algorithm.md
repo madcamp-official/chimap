@@ -10,7 +10,7 @@
 | 현재 걸음 | 0~100,000 |
 | 하루 목표 | 1~100,000 |
 | 최대 추가시간 | 0~120분 |
-| 보폭 | 0.3~1.2m |
+| 개인화 한 걸음 길이 | 0.3~1.2m, `HAN_2026_V1` |
 | 안전 여유시간 | 0~15분 |
 | 마감시간 | 현재보다 미래, 최대 6시간 이내 |
 
@@ -82,55 +82,94 @@ Directions의 다중 경유지에 전달해 받은 도로 vertex입니다. 한 �
 버스 거리·승차시간 추정은 기존처럼 TAGO 노선 정류장 좌표 간 거리, 평균
 속도와 정차시간을 사용합니다.
 
-## 4. 운동 후보 생성
+## 4. 개인화 한 걸음 길이
+
+브라우저는 최초 이용 시 출생연도·신장·체중·생물학적 성별을 필수로
+입력받습니다. 계정은 만들지 않으며 원본 신체정보는 브라우저 localStorage에만
+version 2로 저장합니다. 직접 한 걸음 길이를 입력하거나 20m 보행 결과를
+받는 경로는 없습니다. 생물학적 성별을 선택하기 전에는 프로필을 저장할 수
+없습니다.
+
+```text
+stepLengthCm =
+  -16.14
+  - 0.06 × age
+  + 0.31 × heightCm
+  - 0.04 × weightKg
+  + 0.02 × biologicalSexCode
+  + 0.30 × 128.35
+```
+
+성별 코드는 남성 0, 여성 1이며 128.35cm/s는 적용 연구의 평균 평소
+보행속도입니다. 이 값은 한 걸음 길이 추정치이며 실제 보폭은 보행속도,
+지형, 신발과 건강 상태에 따라 달라질 수 있습니다.
+
+계약 범위는 만 18~90세, 신장 120~220cm, 체중 30~200kg입니다. BMI
+30 이상이면 UI가 적용 연구의 중심 범위를 벗어날 수 있다는 안내를
+표시합니다. 기존 localStorage version 1은 읽기만 가능하고 필수 프로필이
+없으므로 온보딩을 다시 거친 뒤 version 2로 저장합니다.
+
+API에는 원본 프로필 대신 다음 파생값만 보냅니다.
+
+```ts
+walkingMetric: {
+  stepLengthMeters: number;
+  source: "RESEARCH_ESTIMATE";
+  modelVersion: "HAN_2026_V1";
+}
+```
 
 남은 걸음과 목표 도보거리:
 
 ```text
 remainingSteps = max(goalSteps - currentSteps, 0)
-targetWalkMeters = remainingSteps × strideLengthMeters
-additionalNeeded = max(targetWalkMeters - baselineWalkMeters, 0)
-desiredDirectDistance = max(300m, additionalNeeded × 0.75)
+targetWalkMeters = remainingSteps × stepLengthMeters
 ```
 
-baseline의 마지막 대중교통 leg에서 목적지 전 최대 6개 정류장을 후보로
-추출합니다. 장소 검색으로 정류장명을 해석하고 다음 confidence를
-계산합니다.
+## 5. 조기 하차 우선 운동 후보
+
+장소 검색으로 정류장명을 다시 해석하지 않고 baseline의
+`TransitBusLeg.stops`에 포함된 실제 TAGO 정류장 순서를 사용합니다.
+
+1. 마지막 버스 leg의 원래 하차 정류장보다 앞선 정류장을 전부 열거합니다.
+2. 직선거리×1.25로 목표 적합도를 사전 계산하고 상위 4개 조기 하차 후보의
+   하차→목적지 Kakao 도보를 조회합니다.
+3. 조기 하차만으로 목표 ±5% 후보가 없을 때 첫 버스 leg의 탑승 정류장을
+   뒤로 옮긴 상위 2개 후보를 조회합니다.
+4. 그래도 목표 범위가 없으면 늦은 탑승과 조기 하차를 결합한 상위 1개
+   후보를 조회합니다.
+5. 환승 경로에서는 첫 탑승과 마지막 하차만 변경하고 환승 지점은
+   유지합니다.
+6. 모든 버스 leg에는 최소 한 정거장 이동을 남기며 승하차 순서가
+   역전되는 조합은 제외합니다.
+
+변경된 버스 leg는 기존 TAGO 정류장 배열과 도로 geometry를 해당
+승하차점까지 잘라 사용합니다. 새 출발·도착 도보거리와 시간은 Kakao
+실제 응답으로 다시 계산합니다.
+
+목표 허용 범위:
 
 ```text
-0.55 × 이름 유사도
-+ 0.20 × 교통 카테고리 점수
-+ 0.25 × baseline 선과의 거리 점수
+toleranceSteps = round(remainingSteps × 0.05)
+abs(routeSteps - remainingSteps) <= toleranceSteps
 ```
 
-confidence 0.58 미만 또는 baseline 선에서 1.5km를 넘는 후보는 제외합니다.
-선택 후보에서 목적지까지 Kakao 도보를 붙이고:
+조기 하차를 최우선으로 하되 범위 안의 후보가 없으면 시간 제약 안에서 절대
+걸음 오차가 가장 작은 경로를 반환하고 부족·초과량을 표시합니다.
 
-- 대중교통 끝↔도보 시작 gap 120m 이하
-- 도보 끝↔목적지 gap 250m 이하
-
-를 확인합니다.
-
-운동 후보가 부족하면 목적지 주변의 공원·광장·역·공공시설을 실제 Kakao
-장소 검색으로 찾아 최대 2개를 추가 시도합니다. 쇼핑·병원·학교·아파트
-카테고리는 이 보완 후보에서 제외합니다.
-
-## 5. 외부 호출 예산
+## 6. 외부 호출 예산
 
 한 추천 요청의 예산:
 
 | 호출 | 최대 |
 | --- | --- |
-| 대중교통 후보 | 5회 |
-| 도보 | 4회 |
+| baseline 대중교통 | 1회 |
+| 조정 도보 | 8회 |
 | 합계 | 9회 |
 | 동시성 | 3 |
 | 추천 전체 timeout | 20초 |
 
-장소 해석 검색은 같은 동시성 제한을 공유하고 정류장명 해석 결과는 6시간
-캐시합니다.
-
-## 6. 마감·추가시간 필터
+## 7. 마감·추가시간 필터
 
 후보 도착:
 
@@ -147,28 +186,25 @@ routeDuration <= baselineDuration + maxExtraMinutes
 
 조건을 만족하는 후보가 없으면 `NO_ROUTE_WITHIN_DEADLINE`입니다.
 
-## 7. 걸음과 점수
+## 8. 걸음과 점수
 
 ```text
-estimatedSteps = round(walkDistanceMeters / strideLengthMeters)
+estimatedSteps = round(walkDistanceMeters / stepLengthMeters)
 expectedTotalSteps = currentSteps + estimatedSteps
 ```
 
 균형 점수는 낮을수록 좋습니다.
 
 ```text
-0.55 × stepError
+0.60 × stepError
 + 0.30 × timePenalty
 + 0.10 × transferPenalty
-+ 0.05 × connectionPenalty
 ```
 
 - `stepError`: 목표에 필요한 걸음과 후보 걸음의 오차
 - `timePenalty`: 허용 추가시간 대비 실제 추가시간
 - `transferPenalty`: 환승 횟수/3, 최대 1
-- `connectionPenalty`: 조합 구간 연결 gap과 장소 confidence
-
-## 8. 중복 제거와 최종 선택
+## 9. 중복 제거와 최종 선택
 
 다음 조건을 모두 만족하면 같은 경로로 봅니다.
 
@@ -187,8 +223,11 @@ expectedTotalSteps = currentSteps + estimatedSteps
 
 같은 route ID를 두 타입에 중복 배정하지 않습니다. 이미 목표 걸음을 채운
 사용자에게는 baseline 후보만 사용하므로 경로 수가 1개일 수 있습니다.
+남은 걸음이 있으면 `primaryRecommendationId`는 GOAL, GOAL이 없으면
+BALANCED를 가리키며 UI가 이 경로를 처음부터 선택합니다. 목표를 이미
+달성한 경우 FAST가 기본입니다.
 
-## 9. 부분 장애와 warning
+## 10. 부분 장애와 warning
 
 실제 후보 일부만 실패하면 성공 후보로 계속 계산하고
 `PARTIAL_CANDIDATE_FAILURE`를 반환할 수 있습니다.
@@ -199,3 +238,16 @@ TAGO 실시간 도착이 없으면 `REALTIME_UNAVAILABLE`, 주변 정류장 갱�
 
 공급자 경로가 없는 직선 거리 결과를 생성하지 않습니다. 지도 SDK가
 실패하는 경우에만 이미 성공한 추천 응답 좌표를 SVG로 다시 그립니다.
+
+## 11. 보폭 연구 근거와 한계
+
+- Han et al., *Development of a Multivariable Equation for Predicting
+  Healthy Step Length*, 2026,
+  <https://doi.org/10.1080/1091367X.2026.2634091>
+- Senden et al., *Importance of correcting for individual differences in
+  the clinical diagnosis of gait disorders*, 2012,
+  <https://doi.org/10.1016/j.physio.2011.06.002>
+
+`HAN_2026_V1` 연구는 건강한 성인 252명, 만 18~90세와 BMI 30 미만을
+중심으로 내부 교차검증됐습니다. CHIMap의 값은 의료 진단이나 실측값이
+아니며 연구 범위 밖 사용자는 오차가 더 클 수 있습니다.

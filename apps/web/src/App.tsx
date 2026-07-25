@@ -1,4 +1,5 @@
 import {
+  estimatePersonalizedStepLengthMeters,
   recommendationRequestSchema,
   type Coordinate,
   type Place,
@@ -33,6 +34,7 @@ import { PlaceCombobox } from "./components/PlaceCombobox.js";
 import { RecommendationCard } from "./components/RecommendationCard.js";
 import { RecommendationProgress } from "./components/RecommendationProgress.js";
 import { RouteDetails } from "./components/RouteDetails.js";
+import { WalkingProfileDialog } from "./components/WalkingProfileDialog.js";
 import {
   ApiClientError,
   createRecommendations,
@@ -40,6 +42,7 @@ import {
   reverseGeocode,
 } from "./lib/api.js";
 import {
+  clearPreferences,
   loadLastTrip,
   saveLastTrip,
   savePreferences,
@@ -102,14 +105,19 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
     goalSteps,
     deadlineLocal,
     maxExtraMinutes,
-    strideLengthMeters,
+    walkingProfile,
     safetyBufferMinutes,
     selectedRouteId,
     setOrigin,
     setDestination,
     swapPlaces,
+    setWalkingProfile,
     setSelectedRouteId,
   } = useTripStore();
+  const [profileEditorOpen, setProfileEditorOpen] = useState(
+    walkingProfile === undefined,
+  );
+  const [profileEditorVersion, setProfileEditorVersion] = useState(0);
   const [currentLocation, setCurrentLocation] = useState<
     Coordinate | undefined
   >();
@@ -131,7 +139,7 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
       return createRecommendations(request, controller.signal);
     },
     onSuccess: (response) => {
-      setSelectedRouteId(response.recommendations[0]?.id);
+      setSelectedRouteId(response.primaryRecommendationId);
       setExpandedRouteId(undefined);
       setFormError(undefined);
     },
@@ -166,11 +174,14 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
   }, [expandedRouteId]);
 
   useEffect(() => {
+    if (walkingProfile === undefined) {
+      return;
+    }
     const timeout = window.setTimeout(() => {
       savePreferences({
-        version: 1,
+        version: 2,
         dailyGoalSteps: goalSteps,
-        strideLengthMeters,
+        walkingProfile,
         maxExtraMinutes,
         safetyBufferMinutes,
         ...(origin === undefined ? {} : { lastOrigin: origin }),
@@ -186,12 +197,15 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
     maxExtraMinutes,
     origin,
     safetyBufferMinutes,
-    strideLengthMeters,
+    walkingProfile,
   ]);
 
   const result = recommendationMutation.data;
   const selectedRecommendation =
     result?.recommendations.find((route) => route.id === selectedRouteId) ??
+    result?.recommendations.find(
+      (route) => route.id === result.primaryRecommendationId,
+    ) ??
     result?.recommendations[0];
   const selectedBusLegs = useMemo(
     () =>
@@ -328,6 +342,11 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
   }
 
   function submitRecommendation(): void {
+    if (walkingProfile === undefined) {
+      setProfileEditorOpen(true);
+      setFormError("개인화 걸음 설정을 먼저 완료해 주세요.");
+      return;
+    }
     if (origin === undefined || destination === undefined) {
       setFormError("출발지와 목적지를 먼저 선택해 주세요.");
       return;
@@ -340,7 +359,12 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
         currentSteps,
         goalSteps,
         maxExtraMinutes,
-        strideLengthMeters,
+        walkingMetric: {
+          stepLengthMeters:
+            estimatePersonalizedStepLengthMeters(walkingProfile),
+          source: "RESEARCH_ESTIMATE",
+          modelVersion: "HAN_2026_V1",
+        },
         safetyBufferMinutes,
       });
       setFormError(undefined);
@@ -387,9 +411,29 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
           onComplete={completeIntro}
         />
       ) : null}
+      {!introActive && profileEditorOpen ? (
+        <WalkingProfileDialog
+          key={profileEditorVersion}
+          {...(walkingProfile === undefined
+            ? {}
+            : {
+                initialProfile: walkingProfile,
+                onCancel: () => setProfileEditorOpen(false),
+                onClear: () => {
+                  clearPreferences();
+                  setWalkingProfile(undefined);
+                  setProfileEditorVersion((version) => version + 1);
+                },
+              })}
+          onSave={(profile) => {
+            setWalkingProfile(profile);
+            setProfileEditorOpen(false);
+          }}
+        />
+      ) : null}
       <div
         className={`app-shell ${appEntered ? "is-entered" : "is-intro-pending"}`}
-        inert={introActive || undefined}
+        inert={introActive || profileEditorOpen || undefined}
       >
       <header className="app-header">
         <div className="brand">
@@ -509,10 +553,11 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
             <RecommendationProgress />
           ) : result === undefined ? (
             <GoalForm
-              canSubmit={hasPlaces}
+              canSubmit={hasPlaces && walkingProfile !== undefined}
               isSubmitting={false}
               {...(formError === undefined ? {} : { errorMessage: formError })}
               onSubmit={submitRecommendation}
+              onEditWalkingProfile={() => setProfileEditorOpen(true)}
             />
           ) : (
             <div className="results">
@@ -589,9 +634,10 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
                   <ChevronDown aria-hidden="true" size={18} />
                 </summary>
                 <GoalForm
-                  canSubmit={hasPlaces}
+                  canSubmit={hasPlaces && walkingProfile !== undefined}
                   isSubmitting={false}
                   onSubmit={submitRecommendation}
+                  onEditWalkingProfile={() => setProfileEditorOpen(true)}
                 />
               </details>
             </div>

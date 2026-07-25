@@ -1,10 +1,12 @@
 # CHIMap 실제 데이터 운영 구현 계획과 완료 상태
 
-기준 시각은 2026-07-25 23:59 KST입니다. 실제 데이터 전환, NAVER Client Secret
+기준 시각은 2026-07-26 KST입니다. 실제 데이터 전환, NAVER Client Secret
 재발급, 운영 재배포, 백업·교통 동기화 자동화와 장애 알림 계층까지
-완료했습니다. `feat/tago-transit` 브랜치의 구현·CI 반영은 완료됐습니다.
-외부 webhook 입력과 기본 브랜치 병합·보호 규칙 설정은 사용자 작업으로
-남아 있습니다. 운영 수치와 검증 근거는
+완료했습니다. `bf05003`까지의 기반 구현·CI는 `feat/tago-transit`에
+반영됐고, 이후 개인화 한 걸음 길이·조기 하차 우선·지도 도보 표현 변경도
+운영 배포와 검증을 마쳐 같은 기능 브랜치에 반영했습니다. 외부 webhook
+입력과 기본 브랜치 병합·보호 규칙 설정은 남아 있습니다. 운영 수치와
+검증 근거는
 [구현·운영 현황](./docs/current-state.md)을 참고합니다.
 
 ## 1. 확정된 기술 결정
@@ -33,6 +35,9 @@
 | PostgreSQL/PostGIS | 완료 | migration, COPY, 공간 검색, 정류장번호 정확 병합, transaction |
 | TAGO 실제 버스 | 완료 | 정류장·노선·도착·차량, KAIST/대전역 동기화 |
 | 추천 | 완료 | 노선 0건 제외, 500m→800m→1.2km 확장, 직행/1회 환승, Kakao 도보·도로 매칭 |
+| 개인화 한 걸음 길이 | 완료 | 계정 없이 출생연도·신장·체중·필수 생물학적 성별, `HAN_2026_V1`, localStorage v2 |
+| 목표 도보 조정 | 완료 | 실제 TAGO 정류장 순서로 조기 하차 우선, 부족 시 늦은 탑승·양쪽 조합 |
+| 목표 기본 선택 | 완료 | 남은 목표가 있으면 GOAL/최접근, 달성 후 FAST |
 | Compose 운영 | 완료 | API/DB/Prometheus/Alertmanager/relay healthcheck, MTU 1400 |
 | 실제 데이터 import | 완료 | 전국 정류장과 대전 초기 노선 |
 | 백업·restore | 완료 | 일일 systemd timer, checksum, 월간 별도 DB 복구 검증 |
@@ -41,7 +46,7 @@
 | 외부 알림 URL | 사용자 작업 | Alertmanager/relay 배포·형식 검증, 루트 `needs.md`의 webhook 입력 필요 |
 | 공개 배포·E2E | 완료 | 검색→추천→지도→저장·반응형 검증 |
 | NAVER Secret 재발급 | 완료 | 교체 후 geocode/reverse 200과 번들 미검출 확인 |
-| Git 기능 브랜치 | 완료 | `feat/tago-transit` push, GitHub 품질·PostGIS CI 성공 |
+| Git 기능 브랜치 | 완료 | 개인화·조기 하차·지도 표현까지 `feat/tago-transit`에 반영 |
 | Git 기본 브랜치 | 사용자 작업 | `main` 병합, 수동 공개 E2E와 보호 규칙 설정 |
 
 ## 3. 완료된 공개 계약
@@ -64,6 +69,13 @@
 - `stops`, `linkedStops`, `routes`, `routeStops`가 모두 0보다 큼
 - `/api/v1/readiness` HTTP 200
 - KAIST→대전역 추천이 실제 경로를 반환
+- 최초 개인화에서 출생연도·신장·체중·생물학적 성별을 모두 요구하고
+  직접 보폭 입력이나 20m 보행 측정 필드를 제공하지 않음
+- 원본 개인화 프로필은 브라우저 localStorage v2에만 저장되고 API에는
+  파생된 `walkingMetric`만 전달됨
+- 조기 하차 후보를 늦은 탑승보다 먼저 조회하며 목표 ±5%를 충족하면
+  늦은 탑승 후보를 만들지 않음
+- KAIST→대전역 8,000보 검증에서 조기 하차 7,995보, 오차 -5보 반환
 - KAIST 본원 중심→대전 갤러리아 추천이 확장 정류장과 실제 승차 도보를
   포함해 반환
 - NAVER 지도에 경로가 표시됨
@@ -80,7 +92,7 @@
 - Alertmanager와 relay의 Slack 형식 HTTP 전달 검증
 - 외부 운영 채널 전달은 webhook 입력 후 별도 확인
 - 타입검사, 테스트, build, 공개 strict E2E 통과
-- 구현 기준 GitHub CI run `30162100952`의 두 job 통과
+- 기반 commit GitHub CI run `30162100952`의 두 job 통과
 - 폐기 대상 용어·변수 내용 검색 0건
 - 공개 health 계약과 운영 도메인 정상
 

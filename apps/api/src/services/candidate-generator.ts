@@ -1,40 +1,32 @@
 import {
   haversineDistanceMeters,
   normalizedRouteSchema,
+  type BusRouteStop,
   type Coordinate,
   type NormalizedRoute,
-  type Place,
   type RecommendationRequest,
+  type RouteLeg,
+  type TransitBusLeg,
+  type WalkingRole,
 } from "@chimap/contracts";
 import pLimit, { type LimitFunction } from "p-limit";
 
 import { ProviderError } from "../errors.js";
 import type { MobilityProvider } from "../providers/types.js";
 import {
-  coordinateCacheKey,
-  MemoryCache,
-  normalizeSearchTerm,
-} from "./cache.js";
-import {
   calculateRemainingSteps,
   calculateTargetWalkDistanceMeters,
 } from "./calculations.js";
-import {
-  distanceToPolylineMeters,
-  firstRouteCoordinate,
-  lastRouteCoordinate,
-} from "./geometry.js";
 
-export type CandidateKind = "BASE" | "EARLY_EXIT" | "POI_FALLBACK";
+export type CandidateKind =
+  | "BASE"
+  | "EARLY_ALIGHT"
+  | "LATE_BOARD"
+  | "BOTH_ENDS";
 
 export type RouteCandidate = {
   route: NormalizedRoute;
   kind: CandidateKind;
-  connectionPenalty: number;
-  connectionGapMeters: number;
-  resolutionConfidence?: number;
-  sourcePlace?: Place;
-  failedChecks: string[];
 };
 
 export type CandidateGenerationResult = {
@@ -44,15 +36,15 @@ export type CandidateGenerationResult = {
   routeApiCallCount: number;
 };
 
-type ResolvedPlace = {
-  place: Place;
-  confidence: number;
-  distanceToRouteMeters: number;
-};
-
-type RankedPlace = ResolvedPlace & {
-  directDistanceToDestination: number;
-  distanceFit: number;
+type AdjustmentSpec = {
+  route: NormalizedRoute;
+  kind: Exclude<CandidateKind, "BASE">;
+  firstBusIndex: number;
+  lastBusIndex: number;
+  boardingIndex?: number;
+  alightingIndex?: number;
+  estimatedWalkDistanceMeters: number;
+  fit: number;
 };
 
 class RouteCallBudget {
@@ -70,19 +62,12 @@ class RouteCallBudget {
     return this.#transitCalls + this.#walkCalls;
   }
 
-  public get remainingCandidatePairs(): number {
-    return Math.max(
-      0,
-      Math.min(5 - this.#transitCalls, 4 - this.#walkCalls),
-    );
-  }
-
   public transit(
-    origin: Place,
-    destination: Place,
+    origin: RecommendationRequest["origin"],
+    destination: RecommendationRequest["destination"],
     signal?: AbortSignal,
   ): Promise<NormalizedRoute[]> {
-    if (this.#transitCalls >= 5) {
+    if (this.#transitCalls >= 1) {
       return Promise.reject(
         new ProviderError({
           kind: "UPSTREAM",
@@ -105,7 +90,7 @@ class RouteCallBudget {
     destination: Coordinate,
     signal?: AbortSignal,
   ): Promise<NormalizedRoute> {
-    if (this.#walkCalls >= 4) {
+    if (this.#walkCalls >= 8) {
       return Promise.reject(
         new ProviderError({
           kind: "UPSTREAM",
@@ -123,305 +108,502 @@ class RouteCallBudget {
       }),
     );
   }
-
-  public placeSearch<T>(operation: () => Promise<T>): Promise<T> {
-    return this.#limit(operation);
-  }
 }
 
-function normalizePlaceName(value: string): string {
-  return normalizeSearchTerm(value).replace(/[^\p{L}\p{N}]/gu, "");
+function stopCoordinate(stop: BusRouteStop): Coordinate {
+  return { lat: stop.latitude, lng: stop.longitude };
 }
 
-function bigrams(value: string): Set<string> {
-  if (value.length <= 1) {
-    return new Set([value]);
+function routeStopAsBusStop(stop: BusRouteStop) {
+  return {
+    id: stop.stopId,
+    cityCode: stop.cityCode,
+    nodeId: stop.nodeId,
+    sourceStopNo: null,
+    arsId: null,
+    name: stop.stopName,
+    latitude: stop.latitude,
+    longitude: stop.longitude,
+    source: "database" as const,
+  };
+}
+
+function polylineDistanceMeters(coordinates: readonly Coordinate[]): number {
+  let distance = 0;
+  for (let index = 0; index < coordinates.length - 1; index += 1) {
+    distance += haversineDistanceMeters(
+      coordinates[index]!,
+      coordinates[index + 1]!,
+    );
   }
-  return new Set(
-    Array.from({ length: value.length - 1 }, (_, index) =>
-      value.slice(index, index + 2),
-    ),
+  return Math.round(distance);
+}
+
+function closestCoordinateIndex(
+  coordinates: readonly Coordinate[],
+  target: Coordinate,
+): number {
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  coordinates.forEach((coordinate, index) => {
+    const distance = haversineDistanceMeters(coordinate, target);
+    if (distance < bestDistance) {
+      bestIndex = index;
+      bestDistance = distance;
+    }
+  });
+  return bestIndex;
+}
+
+function sliceBusPolyline(
+  coordinates: readonly Coordinate[],
+  firstStop: BusRouteStop,
+  lastStop: BusRouteStop,
+): Coordinate[] {
+  const fallback = [stopCoordinate(firstStop), stopCoordinate(lastStop)];
+  if (coordinates.length < 2) {
+    return fallback;
+  }
+  const startIndex = closestCoordinateIndex(
+    coordinates,
+    stopCoordinate(firstStop),
+  );
+  const endIndex = closestCoordinateIndex(
+    coordinates,
+    stopCoordinate(lastStop),
+  );
+  if (endIndex <= startIndex) {
+    return fallback;
+  }
+  const result = coordinates.slice(startIndex, endIndex + 1);
+  return result.length >= 2 ? result : fallback;
+}
+
+function busLegIndexes(route: NormalizedRoute): {
+  first: number;
+  last: number;
+} | null {
+  const indexes = route.legs.flatMap((leg, index) =>
+    leg.mode === "BUS" && leg.bus !== undefined ? [index] : [],
+  );
+  const first = indexes[0];
+  const last = indexes.at(-1);
+  return first === undefined || last === undefined
+    ? null
+    : { first, last };
+}
+
+function walkingDistance(
+  legs: readonly RouteLeg[],
+  from: number,
+  to: number,
+): number {
+  return legs
+    .slice(from, to)
+    .filter((leg) => leg.mode === "WALK")
+    .reduce((total, leg) => total + leg.distanceMeters, 0);
+}
+
+function adjustmentFit(
+  estimatedWalkDistanceMeters: number,
+  targetWalkDistanceMeters: number,
+): number {
+  return (
+    Math.abs(estimatedWalkDistanceMeters - targetWalkDistanceMeters) /
+    Math.max(targetWalkDistanceMeters, 300)
   );
 }
 
-export function nameSimilarity(first: string, second: string): number {
-  const normalizedFirst = normalizePlaceName(first);
-  const normalizedSecond = normalizePlaceName(second);
-  if (normalizedFirst === normalizedSecond) {
-    return 1;
-  }
-  if (
-    normalizedFirst.includes(normalizedSecond) ||
-    normalizedSecond.includes(normalizedFirst)
-  ) {
-    return 0.88;
-  }
+function enumerateAdjustments(
+  routes: readonly NormalizedRoute[],
+  request: RecommendationRequest,
+  targetWalkDistanceMeters: number,
+): {
+  early: AdjustmentSpec[];
+  late: AdjustmentSpec[];
+  combined: AdjustmentSpec[];
+} {
+  const early: AdjustmentSpec[] = [];
+  const late: AdjustmentSpec[] = [];
+  const combined: AdjustmentSpec[] = [];
 
-  const firstBigrams = bigrams(normalizedFirst);
-  const secondBigrams = bigrams(normalizedSecond);
-  const intersection = [...firstBigrams].filter((value) =>
-    secondBigrams.has(value),
-  ).length;
-  const union = new Set([...firstBigrams, ...secondBigrams]).size;
-  return union === 0 ? 0 : intersection / union;
-}
-
-class StopResolver {
-  readonly #provider: MobilityProvider;
-  readonly #cache: MemoryCache;
-  readonly #budget: RouteCallBudget;
-
-  public constructor(
-    provider: MobilityProvider,
-    budget: RouteCallBudget,
-    cache: MemoryCache,
-  ) {
-    this.#provider = provider;
-    this.#budget = budget;
-    this.#cache = cache;
-  }
-
-  public resolve(
-    stopName: string,
-    destination: Coordinate,
-    routeLine: Coordinate[],
-    signal?: AbortSignal,
-  ): Promise<ResolvedPlace | null> {
-    const routeStart = routeLine[0];
-    const routeEnd = routeLine[routeLine.length - 1];
-    const routeSignature =
-      routeStart === undefined || routeEnd === undefined
-        ? "empty"
-        : `${coordinateCacheKey(routeStart)}-${coordinateCacheKey(routeEnd)}`;
-    const key = [
-      "resolved-stop",
-      normalizePlaceName(stopName),
-      coordinateCacheKey(destination),
-      routeSignature,
-    ].join(":");
-
-    return this.#cache.getOrLoad(key, 6 * 60 * 60 * 1000, async () => {
-      const places = await this.#budget.placeSearch(() =>
-        this.#provider.searchPlaces(stopName, {
-          center: destination,
-          limit: 5,
-          radiusMeters: 10_000,
-          ...(signal === undefined ? {} : { signal }),
-        }),
-      );
-
-      const ranked = places
-        .map((place) => {
-          const nameScore = nameSimilarity(stopName, place.name);
-          const transportScore =
-            /교통|지하철|기차|버스|정류장|역/u.test(
-              `${place.category} ${place.name}`,
-            )
-              ? 1
-              : 0;
-          const distanceToRouteMeters = distanceToPolylineMeters(
-            place.location,
-            routeLine,
-          );
-          const routeScore = Number.isFinite(distanceToRouteMeters)
-            ? Math.max(0, 1 - distanceToRouteMeters / 1000)
-            : 0;
-          const confidence =
-            0.55 * nameScore + 0.2 * transportScore + 0.25 * routeScore;
-          return { place, confidence, distanceToRouteMeters };
-        })
-        .sort(
-          (first, second) =>
-            second.confidence - first.confidence ||
-            first.distanceToRouteMeters - second.distanceToRouteMeters,
-        );
-      const best = ranked[0];
-      if (
-        best === undefined ||
-        best.confidence < 0.58 ||
-        best.distanceToRouteMeters > 1500
-      ) {
-        return null;
-      }
-      return best;
-    });
-  }
-}
-
-function getLastTransitLeg(route: NormalizedRoute) {
-  for (let index = route.legs.length - 1; index >= 0; index -= 1) {
-    const leg = route.legs[index];
-    if (leg?.mode === "BUS" || leg?.mode === "SUBWAY") {
-      return leg;
-    }
-  }
-  return undefined;
-}
-
-function extractStopTasks(routes: NormalizedRoute[]): Array<{
-  stopName: string;
-  routeLine: Coordinate[];
-}> {
-  const seen = new Set<string>();
-  const tasks: Array<{ stopName: string; routeLine: Coordinate[] }> = [];
   for (const route of routes) {
-    const leg = getLastTransitLeg(route);
-    const stops = leg?.stops;
-    if (leg === undefined || stops === undefined || stops.length <= 1) {
+    const indexes = busLegIndexes(route);
+    if (indexes === null) {
       continue;
     }
-    const nearbyStops = stops.slice(Math.max(0, stops.length - 7), -1);
-    for (const stopName of nearbyStops) {
-      const normalized = normalizePlaceName(stopName);
-      if (!seen.has(normalized)) {
-        seen.add(normalized);
-        tasks.push({ stopName, routeLine: leg.coordinates });
-      }
+    const firstBus = route.legs[indexes.first]?.bus;
+    const lastBus = route.legs[indexes.last]?.bus;
+    if (firstBus === undefined || lastBus === undefined) {
+      continue;
     }
-  }
-  return tasks.slice(-12);
-}
-
-function rankResolvedPlaces(
-  places: Array<ResolvedPlace | null>,
-  destination: Coordinate,
-  desiredDirectDistance: number,
-): RankedPlace[] {
-  const unique = new Map<string, ResolvedPlace>();
-  for (const place of places) {
-    if (place !== null) {
-      const existing = unique.get(place.place.id);
-      if (existing === undefined || existing.confidence < place.confidence) {
-        unique.set(place.place.id, place);
-      }
-    }
-  }
-
-  return [...unique.values()]
-    .map((resolved) => {
-      const directDistanceToDestination = haversineDistanceMeters(
-        resolved.place.location,
-        destination,
-      );
-      const distanceFit =
-        Math.abs(directDistanceToDestination - desiredDirectDistance) /
-        Math.max(desiredDirectDistance, 300);
-      return {
-        ...resolved,
-        directDistanceToDestination,
-        distanceFit,
-      };
-    })
-    .filter((place) => place.directDistanceToDestination >= 50)
-    .sort(
-      (first, second) =>
-        first.distanceFit - second.distanceFit ||
-        second.confidence - first.confidence,
+    const walkBeforeFirst = walkingDistance(route.legs, 0, indexes.first);
+    const walkAfterLast = walkingDistance(
+      route.legs,
+      indexes.last + 1,
+      route.legs.length,
     );
+    const fixedMiddleWalk =
+      route.walkDistanceMeters - walkBeforeFirst - walkAfterLast;
+
+    for (
+      let alightingIndex = 1;
+      alightingIndex < lastBus.stops.length - 1;
+      alightingIndex += 1
+    ) {
+      const stop = lastBus.stops[alightingIndex]!;
+      const estimatedWalkDistanceMeters =
+        walkBeforeFirst +
+        fixedMiddleWalk +
+        haversineDistanceMeters(
+          stopCoordinate(stop),
+          request.destination.location,
+        ) *
+          1.25;
+      early.push({
+        route,
+        kind: "EARLY_ALIGHT",
+        firstBusIndex: indexes.first,
+        lastBusIndex: indexes.last,
+        alightingIndex,
+        estimatedWalkDistanceMeters,
+        fit: adjustmentFit(
+          estimatedWalkDistanceMeters,
+          targetWalkDistanceMeters,
+        ),
+      });
+    }
+
+    for (
+      let boardingIndex = 1;
+      boardingIndex < firstBus.stops.length - 1;
+      boardingIndex += 1
+    ) {
+      const stop = firstBus.stops[boardingIndex]!;
+      const estimatedWalkDistanceMeters =
+        fixedMiddleWalk +
+        walkAfterLast +
+        haversineDistanceMeters(
+          request.origin.location,
+          stopCoordinate(stop),
+        ) *
+          1.25;
+      late.push({
+        route,
+        kind: "LATE_BOARD",
+        firstBusIndex: indexes.first,
+        lastBusIndex: indexes.last,
+        boardingIndex,
+        estimatedWalkDistanceMeters,
+        fit: adjustmentFit(
+          estimatedWalkDistanceMeters,
+          targetWalkDistanceMeters,
+        ),
+      });
+    }
+
+    for (
+      let boardingIndex = 1;
+      boardingIndex < firstBus.stops.length - 1;
+      boardingIndex += 1
+    ) {
+      for (
+        let alightingIndex = 1;
+        alightingIndex < lastBus.stops.length - 1;
+        alightingIndex += 1
+      ) {
+        if (
+          indexes.first === indexes.last &&
+          boardingIndex >= alightingIndex
+        ) {
+          continue;
+        }
+        const boardingStop = firstBus.stops[boardingIndex]!;
+        const alightingStop = lastBus.stops[alightingIndex]!;
+        const estimatedWalkDistanceMeters =
+          fixedMiddleWalk +
+          haversineDistanceMeters(
+            request.origin.location,
+            stopCoordinate(boardingStop),
+          ) *
+            1.25 +
+          haversineDistanceMeters(
+            stopCoordinate(alightingStop),
+            request.destination.location,
+          ) *
+            1.25;
+        combined.push({
+          route,
+          kind: "BOTH_ENDS",
+          firstBusIndex: indexes.first,
+          lastBusIndex: indexes.last,
+          boardingIndex,
+          alightingIndex,
+          estimatedWalkDistanceMeters,
+          fit: adjustmentFit(
+            estimatedWalkDistanceMeters,
+            targetWalkDistanceMeters,
+          ),
+        });
+      }
+    }
+  }
+
+  const rank = (first: AdjustmentSpec, second: AdjustmentSpec) =>
+    first.fit - second.fit ||
+    first.route.durationSeconds - second.route.durationSeconds;
+  return {
+    early: early.sort(rank),
+    late: late.sort(rank),
+    combined: combined.sort(rank),
+  };
 }
 
-function combineRoutes(input: {
-  transitRoute: NormalizedRoute;
-  walkingRoute: NormalizedRoute;
-  destination: Coordinate;
-  sourcePlace: Place;
-  kind: "EARLY_EXIT" | "POI_FALLBACK";
-  confidence: number;
-}): RouteCandidate | null {
-  const transitEnd = lastRouteCoordinate(input.transitRoute);
-  const walkStart = firstRouteCoordinate(input.walkingRoute);
-  const walkEnd = lastRouteCoordinate(input.walkingRoute);
-  if (
-    transitEnd === undefined ||
-    walkStart === undefined ||
-    walkEnd === undefined
-  ) {
-    return null;
-  }
-
-  const connectionGapMeters = haversineDistanceMeters(transitEnd, walkStart);
-  const destinationGapMeters = haversineDistanceMeters(
-    walkEnd,
-    input.destination,
-  );
-  if (connectionGapMeters > 120 || destinationGapMeters > 250) {
-    return null;
-  }
-
-  const exerciseLegs = input.walkingRoute.legs.map((leg, index) => ({
+function walkingLegs(
+  route: NormalizedRoute,
+  idPrefix: string,
+  role: WalkingRole,
+  guidance: string,
+): RouteLeg[] {
+  return route.legs.map((leg, index) => ({
     ...leg,
-    id: `${input.kind.toLocaleLowerCase()}-${input.sourcePlace.id}-exercise-${index}`,
+    id: `${idPrefix}-${index}`,
+    guidance: leg.guidance ?? guidance,
     isExerciseSegment: true,
+    walkingRole: role,
   }));
-  const legs = [...input.transitRoute.legs, ...exerciseLegs];
+}
+
+function adjustedBusLeg(
+  leg: RouteLeg,
+  startIndex: number,
+  endIndex: number,
+  lateBoarding: boolean,
+): RouteLeg {
+  const bus = leg.bus;
+  if (bus === undefined) {
+    throw new TypeError("버스 정보가 없는 구간은 조정할 수 없습니다.");
+  }
+  const stops = bus.stops.slice(startIndex, endIndex + 1);
+  const boarding = stops[0];
+  const alighting = stops.at(-1);
+  if (boarding === undefined || alighting === undefined || stops.length < 2) {
+    throw new RangeError("조정한 버스 구간에는 두 개 이상의 정류장이 필요합니다.");
+  }
+  const polyline = sliceBusPolyline(
+    leg.coordinates.length >= 2 ? leg.coordinates : bus.polyline,
+    boarding,
+    alighting,
+  );
+  const distanceMeters = Math.max(1, polylineDistanceMeters(polyline));
+  const distanceRatio =
+    leg.distanceMeters <= 0
+      ? stops.length / bus.stops.length
+      : distanceMeters / leg.distanceMeters;
+  const expectedRideSeconds = Math.max(
+    60,
+    Math.round(bus.expectedRideSeconds * Math.min(distanceRatio, 1)),
+  );
+  const adjustedBus: TransitBusLeg = {
+    ...bus,
+    boardingStop: routeStopAsBusStop(boarding),
+    alightingStop: routeStopAsBusStop(alighting),
+    stopCount: stops.length - 1,
+    boardingNodeOrder: boarding.nodeOrder,
+    alightingNodeOrder: alighting.nodeOrder,
+    expectedRideSeconds,
+    vehicleNo: lateBoarding ? null : bus.vehicleNo,
+    isArrivalRealtime: lateBoarding ? false : bus.isArrivalRealtime,
+    polyline,
+    stops,
+  };
+  return {
+    ...leg,
+    guidance: `${boarding.stopName}에서 ${bus.routeNo}번 버스를 타고 ${alighting.stopName}까지 이동`,
+    distanceMeters,
+    durationSeconds:
+      adjustedBus.expectedArrivalSeconds + adjustedBus.expectedRideSeconds,
+    stops: stops.map((stop) => stop.stopName),
+    coordinates: polyline,
+    bus: adjustedBus,
+  };
+}
+
+function rebuildRoute(
+  base: NormalizedRoute,
+  legs: RouteLeg[],
+  id: string,
+  kind: AdjustmentSpec["kind"],
+): NormalizedRoute {
   const walkDistanceMeters = legs
     .filter((leg) => leg.mode === "WALK")
     .reduce((total, leg) => total + leg.distanceMeters, 0);
   const transitDistanceMeters = legs
     .filter((leg) => leg.mode !== "WALK")
     .reduce((total, leg) => total + leg.distanceMeters, 0);
-  const route = normalizedRouteSchema.parse({
-    id: `${input.kind.toLocaleLowerCase()}-${input.sourcePlace.id}`,
-    source: input.transitRoute.source,
-    durationSeconds:
-      input.transitRoute.durationSeconds + input.walkingRoute.durationSeconds,
+  const busLegs = legs.flatMap((leg) =>
+    leg.bus === undefined ? [] : [leg.bus],
+  );
+  return normalizedRouteSchema.parse({
+    ...base,
+    id,
+    durationSeconds: legs.reduce(
+      (total, leg) => total + leg.durationSeconds,
+      0,
+    ),
     distanceMeters: walkDistanceMeters + transitDistanceMeters,
     walkDistanceMeters,
     transitDistanceMeters,
-    transferCount: input.transitRoute.transferCount,
-    ...(input.transitRoute.fareWon === undefined
-      ? {}
-      : { fareWon: input.transitRoute.fareWon }),
-    ...(input.transitRoute.waitingDurationSeconds === undefined
-      ? {}
-      : {
-          waitingDurationSeconds:
-            input.transitRoute.waitingDurationSeconds,
-        }),
-    ...(input.transitRoute.ridingDurationSeconds === undefined
-      ? {}
-      : {
-          ridingDurationSeconds:
-            input.transitRoute.ridingDurationSeconds,
-        }),
-    ...(input.transitRoute.isRealtime === undefined
-      ? {}
-      : { isRealtime: input.transitRoute.isRealtime }),
-    ...(input.transitRoute.isPartial === undefined
-      ? {}
-      : { isPartial: input.transitRoute.isPartial }),
-    ...(input.transitRoute.estimationNotes === undefined
-      ? {}
-      : { estimationNotes: input.transitRoute.estimationNotes }),
+    waitingDurationSeconds: busLegs.reduce(
+      (total, bus) => total + bus.expectedArrivalSeconds,
+      0,
+    ),
+    ridingDurationSeconds: busLegs.reduce(
+      (total, bus) => total + bus.expectedRideSeconds,
+      0,
+    ),
+    isRealtime: busLegs.every((bus) => bus.isArrivalRealtime),
+    estimationNotes: [
+      ...(base.estimationNotes ?? []),
+      ...(kind === "LATE_BOARD" || kind === "BOTH_ENDS"
+        ? [
+            "늦은 탑승 정류장의 실시간 도착정보는 다시 조회하지 않아 기존 노선 대기시간을 예상값으로 사용했습니다.",
+          ]
+        : []),
+    ],
     legs,
   });
+}
 
+async function buildAdjustedCandidate(
+  spec: AdjustmentSpec,
+  request: RecommendationRequest,
+  budget: RouteCallBudget,
+  signal?: AbortSignal,
+): Promise<RouteCandidate> {
+  const firstBusLeg = spec.route.legs[spec.firstBusIndex];
+  const lastBusLeg = spec.route.legs[spec.lastBusIndex];
+  if (firstBusLeg?.bus === undefined || lastBusLeg?.bus === undefined) {
+    throw new TypeError("조정 대상 버스 구간을 찾지 못했습니다.");
+  }
+  const boardingStop =
+    spec.boardingIndex === undefined
+      ? undefined
+      : firstBusLeg.bus.stops[spec.boardingIndex];
+  const alightingStop =
+    spec.alightingIndex === undefined
+      ? undefined
+      : lastBusLeg.bus.stops[spec.alightingIndex];
+  if (
+    (spec.boardingIndex !== undefined && boardingStop === undefined) ||
+    (spec.alightingIndex !== undefined && alightingStop === undefined)
+  ) {
+    throw new RangeError("조정 대상 정류장 인덱스가 유효하지 않습니다.");
+  }
+
+  const [startWalkingRoute, endWalkingRoute] = await Promise.all([
+    boardingStop === undefined
+      ? Promise.resolve(undefined)
+      : budget.walk(
+          request.origin.location,
+          stopCoordinate(boardingStop),
+          signal,
+        ),
+    alightingStop === undefined
+      ? Promise.resolve(undefined)
+      : budget.walk(
+          stopCoordinate(alightingStop),
+          request.destination.location,
+          signal,
+        ),
+  ]);
+
+  let legs = [...spec.route.legs];
+  const sameBus = spec.firstBusIndex === spec.lastBusIndex;
+  if (sameBus) {
+    const startIndex = spec.boardingIndex ?? 0;
+    const endIndex =
+      spec.alightingIndex ?? firstBusLeg.bus.stops.length - 1;
+    legs[spec.firstBusIndex] = adjustedBusLeg(
+      firstBusLeg,
+      startIndex,
+      endIndex,
+      spec.boardingIndex !== undefined,
+    );
+  } else {
+    if (spec.boardingIndex !== undefined) {
+      legs[spec.firstBusIndex] = adjustedBusLeg(
+        firstBusLeg,
+        spec.boardingIndex,
+        firstBusLeg.bus.stops.length - 1,
+        true,
+      );
+    }
+    if (spec.alightingIndex !== undefined) {
+      legs[spec.lastBusIndex] = adjustedBusLeg(
+        lastBusLeg,
+        0,
+        spec.alightingIndex,
+        false,
+      );
+    }
+  }
+
+  if (startWalkingRoute !== undefined && boardingStop !== undefined) {
+    legs = [
+      ...walkingLegs(
+        startWalkingRoute,
+        `${spec.route.id}-late-board-walk`,
+        "GOAL_LATE_BOARDING",
+        `${boardingStop.stopName} 정류장까지 걸어가 탑승`,
+      ),
+      ...legs.slice(spec.firstBusIndex),
+    ];
+  }
+  if (endWalkingRoute !== undefined && alightingStop !== undefined) {
+    const adjustedLastBusIndex =
+      startWalkingRoute === undefined
+        ? spec.lastBusIndex
+        : spec.lastBusIndex - spec.firstBusIndex +
+          startWalkingRoute.legs.length;
+    legs = [
+      ...legs.slice(0, adjustedLastBusIndex + 1),
+      ...walkingLegs(
+        endWalkingRoute,
+        `${spec.route.id}-early-alight-walk`,
+        "GOAL_EARLY_ALIGHTING",
+        `${alightingStop.stopName} 정류장에서 미리 내려 목적지까지 걷기`,
+      ),
+    ];
+  }
+
+  const id = [
+    spec.kind.toLocaleLowerCase(),
+    spec.route.id,
+    boardingStop?.nodeId ?? "same-board",
+    alightingStop?.nodeId ?? "same-alight",
+  ].join("-");
   return {
-    route,
-    kind: input.kind,
-    connectionPenalty: Math.min(
-      1,
-      0.3 +
-        connectionGapMeters / 500 +
-        (1 - Math.min(Math.max(input.confidence, 0), 1)) * 0.2,
-    ),
-    connectionGapMeters,
-    resolutionConfidence: input.confidence,
-    sourcePlace: input.sourcePlace,
-    failedChecks: [],
+    route: rebuildRoute(spec.route, legs, id, spec.kind),
+    kind: spec.kind,
   };
+}
+
+function withinGoalTolerance(
+  route: NormalizedRoute,
+  targetWalkDistanceMeters: number,
+): boolean {
+  return (
+    Math.abs(route.walkDistanceMeters - targetWalkDistanceMeters) <=
+    targetWalkDistanceMeters * 0.05
+  );
 }
 
 export class CandidateGenerator {
   readonly #provider: MobilityProvider;
-  readonly #resolutionCache: MemoryCache;
 
-  public constructor(
-    provider: MobilityProvider,
-    resolutionCache = new MemoryCache(16 * 1024 * 1024),
-  ) {
+  public constructor(provider: MobilityProvider) {
     this.#provider = provider;
-    this.#resolutionCache = resolutionCache;
   }
 
   public async generate(
@@ -444,13 +626,9 @@ export class CandidateGenerator {
         message: "기본 대중교통 경로가 없습니다.",
       });
     }
-
     const candidates: RouteCandidate[] = sortedBaselineRoutes.map((route) => ({
       route,
       kind: "BASE",
-      connectionPenalty: 0,
-      connectionGapMeters: 0,
-      failedChecks: [],
     }));
     const remainingSteps = calculateRemainingSteps(
       request.currentSteps,
@@ -464,168 +642,65 @@ export class CandidateGenerator {
         routeApiCallCount: budget.totalCalls,
       };
     }
-
-    const targetTripDistance = calculateTargetWalkDistanceMeters(
+    const targetWalkDistanceMeters = calculateTargetWalkDistanceMeters(
       remainingSteps,
-      request.strideLengthMeters,
+      request.walkingMetric.stepLengthMeters,
     );
-    const additionalNeededDistance = Math.max(
-      targetTripDistance - baseline.walkDistanceMeters,
-      0,
-    );
-    const desiredDirectDistance = Math.max(
-      300,
-      additionalNeededDistance * 0.75,
-    );
-    const resolver = new StopResolver(
-      this.#provider,
-      budget,
-      this.#resolutionCache,
-    );
-    const stopTasks = extractStopTasks(sortedBaselineRoutes);
-    const resolvedStops = await Promise.all(
-      stopTasks.map((task) =>
-        resolver.resolve(
-          task.stopName,
-          request.destination.location,
-          task.routeLine,
-          signal,
-        ),
-      ),
-    );
-    const rankedStops = rankResolvedPlaces(
-      resolvedStops,
-      request.destination.location,
-      desiredDirectDistance,
-    ).slice(0, 4);
-
-    let candidateFailureCount = 0;
-    let exerciseCandidateCount = 0;
-
-    const buildCandidate = async (
-      place: Place,
-      kind: "EARLY_EXIT" | "POI_FALLBACK",
-      confidence: number,
-    ): Promise<RouteCandidate | null> => {
-      try {
-        const [transitRoutes, walkingRoute] = await Promise.all([
-          budget.transit(request.origin, place, signal),
-          budget.walk(place.location, request.destination.location, signal),
-        ]);
-        const transitRoute = [...transitRoutes].sort(
-          (first, second) => first.durationSeconds - second.durationSeconds,
-        )[0];
-        if (transitRoute === undefined) {
-          candidateFailureCount += 1;
-          return null;
-        }
-        const combined = combineRoutes({
-          transitRoute,
-          walkingRoute,
-          destination: request.destination.location,
-          sourcePlace: place,
-          kind,
-          confidence,
-        });
-        if (combined === null) {
-          candidateFailureCount += 1;
-        }
-        return combined;
-      } catch (error) {
-        candidateFailureCount += 1;
-        if (
-          error instanceof ProviderError &&
-          error.kind === "ABORTED"
-        ) {
-          throw error;
-        }
-        return null;
-      }
-    };
-
-    const earlyCandidates = await Promise.all(
-      rankedStops
-        .slice(0, budget.remainingCandidatePairs)
-        .map((stop) =>
-          buildCandidate(stop.place, "EARLY_EXIT", stop.confidence),
-        ),
-    );
-    for (const candidate of earlyCandidates) {
-      if (candidate !== null) {
-        candidates.push(candidate);
-        exerciseCandidateCount += 1;
-      }
+    if (
+      sortedBaselineRoutes.some((route) =>
+        withinGoalTolerance(route, targetWalkDistanceMeters),
+      )
+    ) {
+      return {
+        baseline,
+        candidates,
+        candidateFailureCount: 0,
+        routeApiCallCount: budget.totalCalls,
+      };
     }
 
+    const specs = enumerateAdjustments(
+      sortedBaselineRoutes,
+      request,
+      targetWalkDistanceMeters,
+    );
+    let candidateFailureCount = 0;
+    const buildBatch = async (batch: AdjustmentSpec[]) => {
+      const settled = await Promise.allSettled(
+        batch.map((spec) =>
+          buildAdjustedCandidate(spec, request, budget, signal),
+        ),
+      );
+      const built = settled.flatMap((result) => {
+        if (result.status === "fulfilled") {
+          return [result.value];
+        }
+        candidateFailureCount += 1;
+        if (
+          result.reason instanceof ProviderError &&
+          result.reason.kind === "ABORTED"
+        ) {
+          throw result.reason;
+        }
+        return [];
+      });
+      candidates.push(...built);
+      return built;
+    };
+
+    const early = await buildBatch(specs.early.slice(0, 4));
     if (
-      exerciseCandidateCount < 2 &&
-      budget.remainingCandidatePairs > 0
+      !early.some((candidate) =>
+        withinGoalTolerance(candidate.route, targetWalkDistanceMeters),
+      )
     ) {
-      const poiSearches = ["공원", "광장", "역", "공공시설"].map((query) =>
-        budget.placeSearch(() =>
-          this.#provider.searchPlaces(query, {
-            center: request.destination.location,
-            limit: 5,
-            radiusMeters: Math.min(
-              20_000,
-              Math.max(1000, desiredDirectDistance * 2),
-            ),
-            ...(signal === undefined ? {} : { signal }),
-          }),
-        ),
-      );
-      const poiResults = (await Promise.all(poiSearches)).flat();
-      const uniquePois = new Map<string, Place>();
-      for (const place of poiResults) {
-        if (
-          !/공원|광장|역|공공|수목원/u.test(
-            `${place.name} ${place.category}`,
-          ) ||
-          /백화점|쇼핑|병원|학교|아파트/u.test(
-            `${place.name} ${place.category}`,
-          )
-        ) {
-          continue;
-        }
-        if (
-          haversineDistanceMeters(
-            place.location,
-            request.destination.location,
-          ) < 100
-        ) {
-          continue;
-        }
-        uniquePois.set(place.id, place);
-      }
-      const poiCandidates = [...uniquePois.values()]
-        .map((place) => ({
-          place,
-          fit:
-            Math.abs(
-              haversineDistanceMeters(
-                place.location,
-                request.destination.location,
-              ) - desiredDirectDistance,
-            ) / Math.max(desiredDirectDistance, 300),
-        }))
-        .sort((first, second) => first.fit - second.fit)
-        .slice(
-          0,
-          Math.min(
-            2,
-            budget.remainingCandidatePairs,
-            4 - exerciseCandidateCount,
-          ),
-        );
-      const fallbackCandidates = await Promise.all(
-        poiCandidates.map(({ place }) =>
-          buildCandidate(place, "POI_FALLBACK", 0.75),
-        ),
-      );
-      for (const candidate of fallbackCandidates) {
-        if (candidate !== null) {
-          candidates.push(candidate);
-        }
+      const late = await buildBatch(specs.late.slice(0, 2));
+      if (
+        !late.some((candidate) =>
+          withinGoalTolerance(candidate.route, targetWalkDistanceMeters),
+        )
+      ) {
+        await buildBatch(specs.combined.slice(0, 1));
       }
     }
 

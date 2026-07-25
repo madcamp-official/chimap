@@ -220,7 +220,7 @@ function legStyle(leg: RouteLeg): {
   width: number;
   dash: "solid" | "shortdash";
 } {
-  if (leg.isExerciseSegment) {
+  if (leg.mode === "WALK") {
     return { color: "#f47b35", width: 8, dash: "solid" };
   }
   if (leg.mode === "BUS") {
@@ -236,7 +236,6 @@ function createMarkerElement(
   label: string,
   tone:
     | "origin"
-    | "exercise"
     | "destination"
     | "boarding"
     | "transfer"
@@ -395,23 +394,6 @@ function RoutePreview({
           </text>
         </g>
       )}
-      {route.legs
-        .filter((leg) => leg.isExerciseSegment)
-        .slice(0, 1)
-        .map((leg) => {
-          const point = leg.coordinates[0];
-          return point === undefined ? null : (
-            <g
-              key={leg.id}
-              transform={`translate(${geometry.project(point).join(" ")})`}
-            >
-              <circle r="8" fill="#f47b35" stroke="white" strokeWidth="3" />
-              <text x="11" y="4" className="preview-label">
-                운동 시작
-              </text>
-            </g>
-          );
-        })}
       {destination === undefined ? null : (
         <g
           transform={`translate(${geometry.project(destination.location).join(" ")})`}
@@ -622,7 +604,6 @@ export function MapView({
       label: string;
       tone:
         | "origin"
-        | "exercise"
         | "destination"
         | "boarding"
         | "transfer"
@@ -649,16 +630,6 @@ export function MapView({
             },
           ]),
     ];
-    const exerciseStart = selectedRoute?.legs
-      .find((leg) => leg.isExerciseSegment)
-      ?.coordinates[0];
-    if (exerciseStart !== undefined) {
-      markerPoints.push({
-        coordinate: exerciseStart,
-        label: "운동 시작",
-        tone: "exercise",
-      });
-    }
     markerPoints.push(...transitMarkers(selectedRoute));
     vehiclePositions.forEach((vehicle) => {
       markerPoints.push({
@@ -815,8 +786,7 @@ export function MapView({
       <div className="map-legend" aria-label="지도 경로 범례">
         <span><i className="legend-bus" />버스</span>
         <span><i className="legend-subway" />지하철</span>
-        <span><i className="legend-walk" />일반 도보</span>
-        <span><i className="legend-exercise" />추가 운동</span>
+        <span><i className="legend-walk" />도보</span>
       </div>
     </section>
   );

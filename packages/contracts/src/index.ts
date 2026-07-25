@@ -140,6 +140,15 @@ export type TransitBusLeg = z.infer<typeof transitBusLegSchema>;
 export const routeModeSchema = z.enum(["WALK", "BUS", "SUBWAY"]);
 export type RouteMode = z.infer<typeof routeModeSchema>;
 
+export const walkingRoleSchema = z.enum([
+  "ACCESS",
+  "TRANSFER",
+  "GOAL_LATE_BOARDING",
+  "GOAL_EARLY_ALIGHTING",
+]);
+
+export type WalkingRole = z.infer<typeof walkingRoleSchema>;
+
 export const routeLegSchema = z
   .object({
     id: z.string().min(1).max(200),
@@ -151,6 +160,7 @@ export const routeLegSchema = z
     stops: z.array(z.string().min(1).max(100)).max(200).optional(),
     coordinates: z.array(coordinateSchema),
     isExerciseSegment: z.boolean(),
+    walkingRole: walkingRoleSchema.optional(),
     bus: transitBusLegSchema.optional(),
   })
   .strict()
@@ -160,6 +170,23 @@ export const routeLegSchema = z
         code: "custom",
         path: ["isExerciseSegment"],
         message: "운동 구간은 도보 구간에만 지정할 수 있습니다.",
+      });
+    }
+    if (leg.mode !== "WALK" && leg.walkingRole !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["walkingRole"],
+        message: "도보 역할은 도보 구간에만 지정할 수 있습니다.",
+      });
+    }
+    if (
+      leg.walkingRole?.startsWith("GOAL_") === true &&
+      !leg.isExerciseSegment
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["isExerciseSegment"],
+        message: "목표 도보 구간은 운동 구간으로 표시해야 합니다.",
       });
     }
   });
@@ -273,6 +300,52 @@ export type ReverseGeocodeResponse = z.infer<
   typeof reverseGeocodeResponseSchema
 >;
 
+export const biologicalSexSchema = z.enum(["MALE", "FEMALE"]);
+export type BiologicalSex = z.infer<typeof biologicalSexSchema>;
+
+export const walkingProfileSchema = z
+  .object({
+    birthYear: z.number().int().min(1900).max(2100),
+    heightCm: z.number().finite().min(120).max(220),
+    weightKg: z.number().finite().min(30).max(200),
+    biologicalSex: biologicalSexSchema,
+  })
+  .strict();
+
+export type WalkingProfile = z.infer<typeof walkingProfileSchema>;
+
+export const walkingMetricSchema = z
+  .object({
+    stepLengthMeters: z.number().finite().min(0.3).max(1.2),
+    source: z.literal("RESEARCH_ESTIMATE"),
+    modelVersion: z.literal("HAN_2026_V1"),
+  })
+  .strict();
+
+export type WalkingMetric = z.infer<typeof walkingMetricSchema>;
+
+export const HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND = 128.35;
+
+export function estimatePersonalizedStepLengthMeters(
+  profile: WalkingProfile,
+  currentYear = new Date().getFullYear(),
+): number {
+  const parsed = walkingProfileSchema.parse(profile);
+  const age = currentYear - parsed.birthYear;
+  if (age < 18 || age > 90) {
+    throw new RangeError("보폭 연구식은 만 18~90세에 적용할 수 있습니다.");
+  }
+  const sexCode = parsed.biologicalSex === "FEMALE" ? 1 : 0;
+  const stepLengthCentimeters =
+    -16.14 -
+    0.06 * age +
+    0.31 * parsed.heightCm -
+    0.04 * parsed.weightKg +
+    0.02 * sexCode +
+    0.3 * HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND;
+  return Math.round((stepLengthCentimeters / 100) * 10_000) / 10_000;
+}
+
 export const recommendationRequestSchema = z
   .object({
     origin: placeSchema,
@@ -281,7 +354,7 @@ export const recommendationRequestSchema = z
     currentSteps: z.number().int().min(0).max(100_000),
     goalSteps: z.number().int().min(1).max(100_000),
     maxExtraMinutes: z.number().int().min(0).max(120),
-    strideLengthMeters: z.number().finite().min(0.3).max(1.2),
+    walkingMetric: walkingMetricSchema,
     safetyBufferMinutes: z.number().int().min(0).max(15).default(3),
   })
   .strict();
@@ -320,6 +393,8 @@ export const recommendationSchema = z
     extraMinutes: z.number().int(),
     walkDistanceMeters: z.number().int().nonnegative(),
     estimatedSteps: z.number().int().nonnegative(),
+    stepDifference: z.number().int(),
+    goalFit: z.enum(["WITHIN_TOLERANCE", "UNDER", "OVER"]),
     expectedTotalSteps: z.number().int().nonnegative(),
     dailyGoalCompletionRate: z.number().finite().min(0).max(1),
     shortfallCoverageRate: z.number().finite().min(0).max(1),
@@ -379,12 +454,26 @@ export const apiWarningSchema = z
 
 export type ApiWarning = z.infer<typeof apiWarningSchema>;
 
+export const walkingGoalSchema = z
+  .object({
+    remainingSteps: z.number().int().nonnegative(),
+    targetWalkDistanceMeters: z.number().int().nonnegative(),
+    toleranceSteps: z.number().int().nonnegative(),
+    effectiveStepLengthMeters: z.number().finite().min(0.3).max(1.2),
+    source: z.literal("RESEARCH_ESTIMATE"),
+  })
+  .strict();
+
+export type WalkingGoal = z.infer<typeof walkingGoalSchema>;
+
 export const recommendationResponseSchema = z
   .object({
     requestId: z.uuid(),
     generatedAt: z.iso.datetime({ offset: true }),
     departureAt: z.iso.datetime({ offset: true }),
     baseline: baselineSummarySchema,
+    walkingGoal: walkingGoalSchema,
+    primaryRecommendationId: z.string().min(1).max(200),
     recommendations: z.array(recommendationSchema).min(1).max(3),
     warnings: z.array(apiWarningSchema),
   })
@@ -410,6 +499,18 @@ export const recommendationResponseSchema = z
       routeIds.add(recommendation.id);
       routeTypes.add(recommendation.type);
     });
+    if (
+      !response.recommendations.some(
+        (recommendation) =>
+          recommendation.id === response.primaryRecommendationId,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["primaryRecommendationId"],
+        message: "기본 추천 ID는 추천 목록에 포함돼야 합니다.",
+      });
+    }
   });
 
 export type RecommendationResponse = z.infer<
@@ -561,6 +662,22 @@ export const storedPreferencesV1Schema = z
 
 export type StoredPreferencesV1 = z.infer<
   typeof storedPreferencesV1Schema
+>;
+
+export const storedPreferencesV2Schema = z
+  .object({
+    version: z.literal(2),
+    dailyGoalSteps: z.number().int().min(1).max(100_000),
+    walkingProfile: walkingProfileSchema,
+    maxExtraMinutes: z.number().int().min(0).max(120),
+    safetyBufferMinutes: z.number().int().min(0).max(15),
+    lastOrigin: placeSchema.optional(),
+    lastDestination: placeSchema.optional(),
+  })
+  .strict();
+
+export type StoredPreferencesV2 = z.infer<
+  typeof storedPreferencesV2Schema
 >;
 
 export const storedTripV1Schema = z

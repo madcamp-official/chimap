@@ -26,6 +26,12 @@ beforeEach(() => {
   useTripStore.setState({
     origin: undefined,
     destination: undefined,
+    walkingProfile: {
+      birthYear: 2000,
+      heightCm: 170,
+      weightKg: 65,
+      biologicalSex: "FEMALE",
+    },
     selectedRouteId: undefined,
   });
 });

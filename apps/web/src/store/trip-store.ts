@@ -1,4 +1,4 @@
-import type { Place } from "@chimap/contracts";
+import type { Place, WalkingProfile } from "@chimap/contracts";
 import { create } from "zustand";
 
 import { loadPreferences } from "../lib/storage.js";
@@ -11,7 +11,7 @@ type TripState = {
   goalSteps: number;
   deadlineLocal: string;
   maxExtraMinutes: number;
-  strideLengthMeters: number;
+  walkingProfile: WalkingProfile | undefined;
   safetyBufferMinutes: number;
   selectedRouteId: string | undefined;
   setOrigin: (place: Place | undefined) => void;
@@ -21,7 +21,7 @@ type TripState = {
   setGoalSteps: (value: number) => void;
   setDeadlineLocal: (value: string) => void;
   setMaxExtraMinutes: (value: number) => void;
-  setStrideLengthMeters: (value: number) => void;
+  setWalkingProfile: (value: WalkingProfile | undefined) => void;
   setSafetyBufferMinutes: (value: number) => void;
   setSelectedRouteId: (value: string | undefined) => void;
 };
@@ -35,7 +35,8 @@ export const useTripStore = create<TripState>((set) => ({
   goalSteps: preferences?.dailyGoalSteps ?? 8000,
   deadlineLocal: defaultDeadline(),
   maxExtraMinutes: preferences?.maxExtraMinutes ?? 20,
-  strideLengthMeters: preferences?.strideLengthMeters ?? 0.7,
+  walkingProfile:
+    preferences?.version === 2 ? preferences.walkingProfile : undefined,
   safetyBufferMinutes: preferences?.safetyBufferMinutes ?? 3,
   selectedRouteId: undefined,
   setOrigin: (origin) => set({ origin, selectedRouteId: undefined }),
@@ -51,8 +52,7 @@ export const useTripStore = create<TripState>((set) => ({
   setGoalSteps: (goalSteps) => set({ goalSteps }),
   setDeadlineLocal: (deadlineLocal) => set({ deadlineLocal }),
   setMaxExtraMinutes: (maxExtraMinutes) => set({ maxExtraMinutes }),
-  setStrideLengthMeters: (strideLengthMeters) =>
-    set({ strideLengthMeters }),
+  setWalkingProfile: (walkingProfile) => set({ walkingProfile }),
   setSafetyBufferMinutes: (safetyBufferMinutes) =>
     set({ safetyBufferMinutes }),
   setSelectedRouteId: (selectedRouteId) => set({ selectedRouteId }),

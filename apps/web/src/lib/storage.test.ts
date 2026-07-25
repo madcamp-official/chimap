@@ -13,15 +13,20 @@ describe("버전형 localStorage", () => {
   it("정상 설정과 마지막 선택 요약을 저장하고 복원한다", () => {
     expect(
       savePreferences({
-        version: 1,
+        version: 2,
         dailyGoalSteps: 8000,
-        strideLengthMeters: 0.7,
+        walkingProfile: {
+          birthYear: 2000,
+          heightCm: 170,
+          weightKg: 65,
+          biologicalSex: "FEMALE",
+        },
         maxExtraMinutes: 20,
         safetyBufferMinutes: 3,
       }),
     ).toBe(true);
     expect(loadPreferences()).toMatchObject({
-      version: 1,
+      version: 2,
       dailyGoalSteps: 8000,
     });
 

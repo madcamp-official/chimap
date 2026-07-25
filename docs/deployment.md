@@ -285,14 +285,16 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 
 1. `GET /api/v1/health`
 2. `GET /api/v1/readiness`
-3. KAIST 장소 검색과 명시 선택
-4. 대전역 검색과 명시 선택
-5. KAIST→대전역 추천 카드
-6. 역지오코딩
-7. NAVER 지도 경로선
-8. 차량 마커 수가 선택 버스 구간 수 이하
-9. 저장·새로고침
-10. 1440/768/390/320px overflow
+3. 최초 이용 개인화에서 출생연도·신장·체중·생물학적 성별 필수 확인
+4. 직접 한 걸음 길이 입력·20m 보행 측정 필드가 없는지 확인
+5. KAIST 장소 검색과 명시 선택
+6. 대전역 검색과 명시 선택
+7. 8,000보 목표에서 조기 하차 우선 추천과 목표 오차 확인
+8. 역지오코딩
+9. NAVER 지도 경로선
+10. 차량 마커 수가 선택 버스 구간 수 이하
+11. localStorage v2 저장·새로고침 복구
+12. 1440/768/390/320px overflow
 
 자동 E2E:
 
@@ -301,6 +303,13 @@ E2E_BASE_URL=https://chimap.madcamp-kaist.org \
 E2E_REQUIRE_NAVER_MAP=1 \
 pnpm test:e2e
 ```
+
+배포 호스트에서 Playwright Docker image로 strict E2E를 실행할 때 기본
+bridge가 `oapi.map.naver.com` 연결을 timeout하면 저장소의 Playwright
+version과 같은 image를 `--network host`로 실행합니다. 현재 검증 image는
+`mcr.microsoft.com/playwright:v1.61.1-noble`입니다. 이 우회는 테스트
+컨테이너의 outbound 경로에만 적용하며 운영 Compose network 설정을
+변경하지 않습니다.
 
 ### GitHub release gate
 
@@ -312,9 +321,10 @@ pnpm test:e2e
 
 두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
-수동 실행합니다. 구현 기준 commit `bf05003`의 CI run `30162100952`에서
-두 job이 모두 성공했습니다. 기본 브랜치 병합과 보호 규칙은
-[사용자 작업](../needs.md)을 따릅니다.
+수동 실행합니다. 기반 운영 commit `bf05003`의 CI run `30162100952`에서
+두 job이 모두 성공했습니다. 이후 개인화·조기 하차·지도 표현 변경도
+기능 브랜치에 push한 뒤 새 commit의 CI까지 통과한 경우에만 병합합니다.
+기본 브랜치 병합과 보호 규칙은 [사용자 작업](../needs.md)을 따릅니다.
 
 ## 12. 공개 번들 비밀값 검사
 
@@ -411,7 +421,7 @@ docker compose up -d --no-build --force-recreate alert-relay
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
 외부 URL이 아직 없다면 [사용자 작업](../needs.md)을 따릅니다.
 
-2026-07-25 23:59 KST 현재 Alertmanager와 relay health, 라우팅 설정과
+2026-07-26 01:19 KST 현재 Alertmanager와 relay health, 라우팅 설정과
 격리 수신처 메시지 변환은 정상입니다. 외부 URL은 비어 있어
 `chimap_alert_relay_configured=0`과
 `ChimapAlertDeliveryNotConfigured`가 발생하는 상태가 정상입니다. URL 입력

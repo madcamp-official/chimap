@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   coordinateSchema,
+  estimatePersonalizedStepLengthMeters,
   haversineDistanceMeters,
   recommendationRequestSchema,
   routeLegSchema,
   storedPreferencesV1Schema,
+  storedPreferencesV2Schema,
 } from "./index.js";
 
 describe("공유 계약", () => {
@@ -35,7 +37,7 @@ describe("공유 계약", () => {
     expect(result.success).toBe(false);
   });
 
-  it("추천 입력의 걸음 수와 보폭 경계를 검증한다", () => {
+  it("추천 입력의 걸음 수와 개인화 한 걸음 길이 경계를 검증한다", () => {
     const baseRequest = {
       origin: {
         id: "kaist",
@@ -57,7 +59,11 @@ describe("공유 계약", () => {
       currentSteps: 5200,
       goalSteps: 8000,
       maxExtraMinutes: 25,
-      strideLengthMeters: 0.7,
+      walkingMetric: {
+        stepLengthMeters: 0.69,
+        source: "RESEARCH_ESTIMATE",
+        modelVersion: "HAN_2026_V1",
+      },
       safetyBufferMinutes: 3,
     };
 
@@ -67,12 +73,53 @@ describe("공유 계약", () => {
     expect(
       recommendationRequestSchema.safeParse({
         ...baseRequest,
-        strideLengthMeters: 0,
+        walkingMetric: {
+          ...baseRequest.walkingMetric,
+          stepLengthMeters: 0,
+        },
       }).success,
     ).toBe(false);
   });
 
-  it("알 수 없는 localStorage 버전과 손상된 값을 거절한다", () => {
+  it("연구식으로 필수 신체정보를 개인화 한 걸음 길이로 환산한다", () => {
+    expect(
+      estimatePersonalizedStepLengthMeters(
+        {
+          birthYear: 1976,
+          heightCm: 170.73,
+          weightKg: 72.92,
+          biologicalSex: "FEMALE",
+        },
+        2026,
+      ),
+    ).toBeCloseTo(0.694, 3);
+    expect(() =>
+      estimatePersonalizedStepLengthMeters(
+        {
+          birthYear: 2010,
+          heightCm: 170,
+          weightKg: 65,
+          biologicalSex: "MALE",
+        },
+        2026,
+      ),
+    ).toThrow(/18~90세/u);
+  });
+
+  it("v2 설정에서 생물학적 성별을 필수로 검증한다", () => {
+    expect(
+      storedPreferencesV2Schema.safeParse({
+        version: 2,
+        dailyGoalSteps: 8000,
+        walkingProfile: {
+          birthYear: 2000,
+          heightCm: 170,
+          weightKg: 65,
+        },
+        maxExtraMinutes: 20,
+        safetyBufferMinutes: 3,
+      }).success,
+    ).toBe(false);
     expect(
       storedPreferencesV1Schema.safeParse({
         version: 2,

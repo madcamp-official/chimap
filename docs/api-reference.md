@@ -41,7 +41,7 @@ DB를 조회하지 않습니다.
 ```json
 {
   "status": "ok",
-  "timestamp": "2026-07-25T07:00:00.000Z"
+  "timestamp": "2026-07-25T16:19:00.000Z"
 }
 ```
 
@@ -52,7 +52,7 @@ DB를 조회하지 않습니다.
 ```json
 {
   "status": "ready",
-  "timestamp": "2026-07-25T07:00:00.000Z",
+  "timestamp": "2026-07-25T16:19:00.000Z",
   "database": {
     "connected": true,
     "postgis": true,
@@ -64,15 +64,15 @@ DB를 조회하지 않습니다.
     "tago": true
   },
   "transit": {
-    "stops": 227187,
-    "linkedStops": 2741,
+    "stops": 227223,
+    "linkedStops": 2797,
     "routes": 134,
-    "routeStops": 5535
+    "routeStops": 5638
   }
 }
 ```
 
-위 통계는 2026-07-25 23:59 KST 운영 스냅샷 예시이며 실제 데이터
+위 통계는 2026-07-26 01:19 KST 운영 스냅샷 예시이며 실제 데이터
 동기화에 따라 증가할 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
@@ -183,10 +183,19 @@ type RecommendationRequest = {
   currentSteps: number;       // 0~100000
   goalSteps: number;          // 1~100000
   maxExtraMinutes: number;    // 0~120
-  strideLengthMeters: number; // 0.3~1.2
+  walkingMetric: {
+    stepLengthMeters: number; // 0.3~1.2, 한 걸음 길이
+    source: "RESEARCH_ESTIMATE";
+    modelVersion: "HAN_2026_V1";
+  };
   safetyBufferMinutes: number;// 0~15
 };
 ```
+
+브라우저는 필수 출생연도·신장·체중·생물학적 성별로 한 걸음 길이를
+계산합니다. 이 원본 프로필은 요청 계약에 포함하지 않으며 서버에는 위
+`walkingMetric` 파생값만 전송합니다. API는 직접 보폭 입력이나 20m 보행
+측정값을 받지 않습니다.
 
 추가 검증:
 
@@ -204,6 +213,14 @@ type RecommendationResponse = {
   generatedAt: string;
   departureAt: string;
   baseline: BaselineSummary;
+  walkingGoal: {
+    remainingSteps: number;
+    targetWalkDistanceMeters: number;
+    toleranceSteps: number; // 남은 걸음의 5%
+    effectiveStepLengthMeters: number;
+    source: "RESEARCH_ESTIMATE";
+  };
+  primaryRecommendationId: string;
   recommendations: Recommendation[]; // 1~3개, 타입·ID 중복 없음
   warnings: ApiWarning[];
 };
@@ -211,6 +228,18 @@ type RecommendationResponse = {
 
 추천 타입은 `FAST`, `BALANCED`, `GOAL`입니다. 모든 경로 좌표와 거리는
 정규화된 Kakao/TAGO 응답에서 가져옵니다.
+
+각 추천은 `stepDifference`와
+`goalFit: "WITHIN_TOLERANCE" | "UNDER" | "OVER"`를 포함합니다.
+`primaryRecommendationId`는 남은 목표가 있을 때 목표에 가장 가까운 경로,
+목표를 이미 달성했을 때 빠른 경로를 가리킵니다.
+
+도보 leg의 `walkingRole`은 `ACCESS`, `TRANSFER`,
+`GOAL_LATE_BOARDING`, `GOAL_EARLY_ALIGHTING` 중 하나입니다. 마지막
+하차점을 앞당기는 `GOAL_EARLY_ALIGHTING` 후보를 먼저 조회하고 부족한
+경우에만 늦은 탑승과 양쪽 조합을 추가합니다. 후보 생성기 호출 예산은
+대중교통 경로 1회와 조정 도보 최대 8회이며 조기 하차 후보가 목표 ±5%를
+충족하면 나머지 호출을 생략합니다.
 
 버스 leg의 `bus.stops`는 승차부터 하차까지의 실제 TAGO 정류장 순서를
 유지합니다. `coordinates`와 `bus.polyline`은 그 정류장 순서를 Kakao
@@ -228,7 +257,7 @@ Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이�
 | `REALTIME_UNAVAILABLE` | 일부 도착정보를 정적 노선으로 추정 |
 | `PARTIAL_TRANSIT_DATA` | 일부 TAGO 갱신 실패 |
 | `PARTIAL_CANDIDATE_FAILURE` | 일부 후보만 계산 성공 |
-| `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 제한 안에서 목표 걸음 미달 |
+| `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 제한 안에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
 | `LIMITED_ROUTE_VARIETY` | 충분히 다른 경로가 3개 미만 |
 
 ## 6. 교통 조회

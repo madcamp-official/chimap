@@ -14,6 +14,8 @@ const recommendation: Recommendation = {
   extraMinutes: 8,
   walkDistanceMeters: 1_120,
   estimatedSteps: 1_600,
+  stepDifference: -2_400,
+  goalFit: "UNDER",
   expectedTotalSteps: 5_200,
   dailyGoalCompletionRate: 0.65,
   shortfallCoverageRate: 0.4,

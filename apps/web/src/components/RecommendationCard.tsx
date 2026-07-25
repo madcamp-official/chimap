@@ -35,6 +35,12 @@ function legLabel(leg: RouteLeg): string {
   if (leg.mode === "SUBWAY") {
     return leg.name ?? "지하철";
   }
+  if (leg.walkingRole === "GOAL_EARLY_ALIGHTING") {
+    return "미리 내려 걷기";
+  }
+  if (leg.walkingRole === "GOAL_LATE_BOARDING") {
+    return "더 걸어 탑승";
+  }
   return leg.isExerciseSegment ? "추가 도보" : "도보";
 }
 
@@ -184,6 +190,19 @@ export function RecommendationCard({
           <span>
             {recommendation.estimatedSteps.toLocaleString("ko-KR")}걸음 · 목표{" "}
             {completionPercent}%
+          </span>
+          <span
+            className={
+              recommendation.goalFit === "WITHIN_TOLERANCE"
+                ? "goal-fit"
+                : "goal-gap"
+            }
+          >
+            {recommendation.goalFit === "WITHIN_TOLERANCE"
+              ? "목표 범위 안"
+              : recommendation.stepDifference < 0
+                ? `${Math.abs(recommendation.stepDifference).toLocaleString("ko-KR")}걸음 부족`
+                : `${recommendation.stepDifference.toLocaleString("ko-KR")}걸음 초과`}
           </span>
         </span>
       </button>

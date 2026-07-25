@@ -15,6 +15,7 @@ import { deduplicateRoutes } from "./route-deduplicator.js";
 
 export type RecommendationSelection = {
   recommendations: Recommendation[];
+  primaryRecommendationId?: string;
   validCandidateCount: number;
   goalReachable: boolean;
   diversityReduced: boolean;
@@ -67,8 +68,12 @@ function byBalanced(
 function toRecommendation(
   candidate: EvaluatedCandidate,
   type: RecommendationType,
+  remainingSteps: number,
 ): Recommendation {
   const copy = TYPE_COPY[type];
+  const stepDifference =
+    remainingSteps === 0 ? 0 : candidate.estimatedSteps - remainingSteps;
+  const toleranceSteps = Math.round(remainingSteps * 0.05);
   return {
     id: candidate.route.id,
     type,
@@ -79,6 +84,13 @@ function toRecommendation(
     extraMinutes: Math.max(0, Math.round(candidate.extraMinutesRaw)),
     walkDistanceMeters: candidate.route.walkDistanceMeters,
     estimatedSteps: candidate.estimatedSteps,
+    stepDifference,
+    goalFit:
+      Math.abs(stepDifference) <= toleranceSteps
+        ? "WITHIN_TOLERANCE"
+        : stepDifference < 0
+          ? "UNDER"
+          : "OVER",
     expectedTotalSteps: candidate.expectedTotalSteps,
     dailyGoalCompletionRate: candidate.dailyGoalCompletionRate,
     shortfallCoverageRate: candidate.shortfallCoverageRate,
@@ -136,9 +148,14 @@ export function selectRecommendations(input: {
     input.request.currentSteps,
     input.request.goalSteps,
   );
-  const goalReachable = unique.some(
-    (candidate) => candidate.expectedTotalSteps >= input.request.goalSteps,
-  );
+  const toleranceSteps = Math.round(remainingSteps * 0.05);
+  const goalReachable =
+    remainingSteps === 0 ||
+    unique.some(
+      (candidate) =>
+        Math.abs(candidate.estimatedSteps - remainingSteps) <=
+        toleranceSteps,
+    );
 
   if (unique.length === 0) {
     return {
@@ -179,11 +196,18 @@ export function selectRecommendations(input: {
     const candidate = selected.get(type);
     return candidate === undefined
       ? []
-      : [toRecommendation(candidate, type)];
+      : [toRecommendation(candidate, type, remainingSteps)];
   });
+  const primaryRecommendationId =
+    recommendations.find((item) => item.type === "GOAL")?.id ??
+    recommendations.find((item) => item.type === "BALANCED")?.id ??
+    recommendations[0]?.id;
 
   return {
     recommendations,
+    ...(primaryRecommendationId === undefined
+      ? {}
+      : { primaryRecommendationId }),
     validCandidateCount: unique.length,
     goalReachable,
     diversityReduced: recommendations.length < Math.min(3, unique.length),

@@ -1,8 +1,8 @@
 # CHIMap 데이터베이스 및 공개 계약
 
-기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-25 23:59 KST
-운영 DB에서 정류장 227,187개, TAGO 연결 정류장 2,741개, 노선 134개,
-노선-정류장 관계 5,535개를 확인했습니다. 운영 수치는
+기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 01:19 KST
+운영 DB에서 정류장 227,223개, TAGO 연결 정류장 2,797개, 노선 134개,
+노선-정류장 관계 5,638개를 확인했습니다. 운영 수치는
 [구현·운영 현황](./docs/current-state.md)에서 갱신합니다.
 
 ## 1. 경계와 원칙
@@ -16,12 +16,15 @@ TAGO 식별자, 노선과 노선-정류장 순서처럼 재사용 가능한 정�
 - 사용자의 검색어와 자동완성 결과
 - 현재 위치와 출발지·목적지 선택
 - 걸음 수, 목표, 마감시간과 추천 요청
+- 출생연도, 신장, 체중, 생물학적 성별과 개인화 프로필
 - TAGO 도착·차량의 실시간 응답
 - Kakao·NAVER·TAGO 원문 응답
 - API 자격 증명
 
 장소·주소·경로·실시간 교통 정보는 메모리 캐시의 TTL이 끝나면 제거됩니다.
-브라우저의 사용자 환경설정은 versioned localStorage 계약으로만 관리합니다.
+브라우저의 사용자 환경설정과 개인화 걸음 프로필은 versioned localStorage
+계약으로만 관리합니다. API에는 연구식으로 계산한 한 걸음 길이와 모델
+버전만 전달합니다.
 
 ## 2. 연결 정책
 
@@ -326,18 +329,74 @@ type ReverseGeocodeResponse = {
 ```ts
 type RouteSource = "KAKAO" | "TAGO";
 
+type RecommendationRequest = {
+  origin: Place;
+  destination: Place;
+  deadline: string;
+  currentSteps: number;
+  goalSteps: number;
+  maxExtraMinutes: number;
+  walkingMetric: {
+    stepLengthMeters: number;
+    source: "RESEARCH_ESTIMATE";
+    modelVersion: "HAN_2026_V1";
+  };
+  safetyBufferMinutes: number;
+};
+
 type RecommendationResponse = {
   requestId: string;
   generatedAt: string;
   departureAt: string;
   baseline: BaselineSummary;
+  walkingGoal: {
+    remainingSteps: number;
+    targetWalkDistanceMeters: number;
+    toleranceSteps: number;
+    effectiveStepLengthMeters: number;
+    source: "RESEARCH_ESTIMATE";
+  };
+  primaryRecommendationId: string;
   recommendations: Recommendation[];
   warnings: ApiWarning[];
 };
 ```
 
+`Recommendation`은 `stepDifference`,
+`goalFit: "WITHIN_TOLERANCE" | "UNDER" | "OVER"`와 도보 leg별
+`walkingRole`을 포함합니다. 목표 운동 역할은 조기 하차
+`GOAL_EARLY_ALIGHTING`과 늦은 탑승 `GOAL_LATE_BOARDING`으로 구분합니다.
+마지막 버스의 조기 하차 후보를 먼저 조회하고 목표 ±5% 후보가 없을 때만
+늦은 탑승과 양쪽 조합을 보완합니다.
+
 공급자 원문 모델은 API 밖으로 노출하지 않으며 모든 경로 좌표는 WGS84
 `{lng,lat}`로 정규화합니다.
+
+### 8.6 브라우저 개인화 저장 계약
+
+```ts
+type StoredPreferencesV2 = {
+  version: 2;
+  dailyGoalSteps: number;
+  walkingProfile: {
+    birthYear: number;
+    heightCm: number;
+    weightKg: number;
+    biologicalSex: "MALE" | "FEMALE";
+  };
+  maxExtraMinutes: number;
+  safetyBufferMinutes: number;
+  lastOrigin?: Place;
+  lastDestination?: Place;
+};
+```
+
+생물학적 성별을 포함한 네 프로필 항목은 모두 필수입니다. 직접 한 걸음
+길이를 입력하거나 20m를 걷게 하는 측정값은 저장하지 않습니다. version 1
+계약은 기존 브라우저 값을 안전하게 읽는 용도로만 남기며 프로필이 없으므로
+온보딩을 다시 표시합니다. 새 저장은 version 2만 사용합니다. 이 객체는
+PostgreSQL에 복제하지 않으며 API 요청에는 연구식으로 계산한
+`walkingMetric`만 포함합니다.
 
 ## 9. 백업과 복구
 

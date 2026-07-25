@@ -35,7 +35,11 @@ const request: RecommendationRequest = {
   currentSteps: 5200,
   goalSteps: 8000,
   maxExtraMinutes: 30,
-  strideLengthMeters: 0.7,
+  walkingMetric: {
+    stepLengthMeters: 0.7,
+    source: "RESEARCH_ESTIMATE",
+    modelVersion: "HAN_2026_V1",
+  },
   safetyBufferMinutes: 3,
 };
 
@@ -92,9 +96,6 @@ function candidate(route: NormalizedRoute): RouteCandidate {
   return {
     route,
     kind: "BASE",
-    connectionPenalty: 0,
-    connectionGapMeters: 0,
-    failedChecks: [],
   };
 }
 
@@ -133,6 +134,7 @@ describe("건강 경로 추천 선정", () => {
     ]);
     expect(new Set(result.recommendations.map((item) => item.id)).size).toBe(3);
     expect(result.goalReachable).toBe(true);
+    expect(result.primaryRecommendationId).toBe("actual-goal-511");
     expect(
       result.recommendations.find((item) => item.type === "GOAL")
         ?.expectedTotalSteps,

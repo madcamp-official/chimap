@@ -1,4 +1,10 @@
-import { ChevronDown, Footprints, Sparkles } from "lucide-react";
+import { estimatePersonalizedStepLengthMeters } from "@chimap/contracts";
+import {
+  ChevronDown,
+  Footprints,
+  Pencil,
+  Sparkles,
+} from "lucide-react";
 import { type FormEvent, useMemo } from "react";
 
 import { defaultDeadline, toKstDateTimeLocal } from "../lib/time.js";
@@ -9,6 +15,7 @@ type GoalFormProps = {
   isSubmitting: boolean;
   errorMessage?: string;
   onSubmit: () => void;
+  onEditWalkingProfile: () => void;
 };
 
 export function GoalForm({
@@ -16,23 +23,27 @@ export function GoalForm({
   isSubmitting,
   errorMessage,
   onSubmit,
+  onEditWalkingProfile,
 }: GoalFormProps) {
   const {
     currentSteps,
     goalSteps,
     deadlineLocal,
     maxExtraMinutes,
-    strideLengthMeters,
+    walkingProfile,
     safetyBufferMinutes,
     setCurrentSteps,
     setGoalSteps,
     setDeadlineLocal,
     setMaxExtraMinutes,
-    setStrideLengthMeters,
     setSafetyBufferMinutes,
   } = useTripStore();
+  const stepLengthMeters =
+    walkingProfile === undefined
+      ? 0
+      : estimatePersonalizedStepLengthMeters(walkingProfile);
   const remainingSteps = Math.max(goalSteps - currentSteps, 0);
-  const targetDistance = remainingSteps * strideLengthMeters;
+  const targetDistance = remainingSteps * stepLengthMeters;
   const deadlineBounds = useMemo(() => {
     const now = new Date();
     return {
@@ -177,25 +188,24 @@ export function GoalForm({
         </div>
       </div>
 
-      <div className="field">
-        <label htmlFor="stride-length">평균 보폭</label>
-        <div className="number-field">
-          <input
-            id="stride-length"
-            name="strideLengthMeters"
-            type="number"
-            inputMode="decimal"
-            min={0.3}
-            max={1.2}
-            step={0.05}
-            required
-            value={strideLengthMeters}
-            onChange={(event) =>
-              setStrideLengthMeters(Number(event.target.value))
-            }
-          />
-          <span>m</span>
+      <div className="walking-profile-summary">
+        <div>
+          <span>개인화 한 걸음 길이</span>
+          <strong>
+            {walkingProfile === undefined
+              ? "프로필 필요"
+              : `${Math.round(stepLengthMeters * 100)}cm`}
+          </strong>
+          <small>신장·체중·나이·생물학적 성별 기반 연구 추정값</small>
         </div>
+        <button
+          type="button"
+          className="profile-edit-button"
+          onClick={onEditWalkingProfile}
+        >
+          <Pencil aria-hidden="true" size={16} />
+          수정
+        </button>
       </div>
 
       <details className="advanced-settings">

@@ -32,6 +32,8 @@ const route: Recommendation = {
   extraMinutes: 0,
   walkDistanceMeters: 8_100,
   estimatedSteps: 11_570,
+  stepDifference: 3_570,
+  goalFit: "OVER",
   expectedTotalSteps: 11_570,
   dailyGoalCompletionRate: 1,
   shortfallCoverageRate: 1,
@@ -45,6 +47,35 @@ const route: Recommendation = {
       durationSeconds: 4_800,
       coordinates: [origin.location, destination.location],
       isExerciseSegment: false,
+    },
+  ],
+};
+
+const walkingDisplayRoute: Recommendation = {
+  ...route,
+  id: "kakao:walk:all-walking-orange",
+  legs: [
+    {
+      ...route.legs[0]!,
+      id: "walk-access",
+      distanceMeters: 4_000,
+      coordinates: [
+        origin.location,
+        { lng: 127.399, lat: 36.35 },
+      ],
+      isExerciseSegment: false,
+      walkingRole: "ACCESS",
+    },
+    {
+      ...route.legs[0]!,
+      id: "walk-goal",
+      distanceMeters: 4_100,
+      coordinates: [
+        { lng: 127.399, lat: 36.35 },
+        destination.location,
+      ],
+      isExerciseSegment: true,
+      walkingRole: "GOAL_EARLY_ALIGHTING",
     },
   ],
 };
@@ -91,5 +122,33 @@ describe("MapView", () => {
     expect(
       screen.getByText("장소를 선택하면 경로가 이곳에 표시돼요."),
     ).toBeInTheDocument();
+  });
+
+  it("모든 도보를 주황색 실선으로 그리고 운동 시작 마커는 표시하지 않는다", () => {
+    const { container } = render(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[walkingDisplayRoute]}
+        selectedRouteId={walkingDisplayRoute.id}
+      />,
+    );
+
+    const walkingLines = container.querySelectorAll(
+      ".route-preview-svg polyline",
+    );
+    expect(walkingLines).toHaveLength(2);
+    walkingLines.forEach((line) => {
+      expect(line).toHaveAttribute("stroke", "#f47b35");
+      expect(line).not.toHaveAttribute("stroke-dasharray");
+    });
+    expect(screen.queryByText("운동 시작")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("지도 경로 범례")).toHaveTextContent("도보");
+    expect(screen.getByLabelText("지도 경로 범례")).not.toHaveTextContent(
+      "일반 도보",
+    );
+    expect(screen.getByLabelText("지도 경로 범례")).not.toHaveTextContent(
+      "추가 운동",
+    );
   });
 });
