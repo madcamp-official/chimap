@@ -90,7 +90,9 @@ jobs:
           POSTGRES_USER: chimap
           POSTGRES_PASSWORD: ci-only-password
           VITE_NAVER_MAP_NCP_KEY_ID: ci-public-client-id
-        run: docker compose config --quiet
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
 
   postgis:
     name: PostgreSQL and PostGIS integration
@@ -124,6 +126,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build shared contracts
+        run: pnpm --filter @chimap/contracts build
 
       - name: Run real-data PostGIS scenarios
         env:
