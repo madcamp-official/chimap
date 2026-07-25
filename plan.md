@@ -1,8 +1,9 @@
 # CHIMap 실제 데이터 운영 구현 계획과 완료 상태
 
-기준일은 2026-07-25 KST입니다. 실제 데이터 전환, NAVER Client Secret
+기준 시각은 2026-07-25 23:59 KST입니다. 실제 데이터 전환, NAVER Client Secret
 재발급, 운영 재배포, 백업·교통 동기화 자동화와 장애 알림 계층까지
-완료했습니다. Git release도 반영했으며 외부 webhook 입력만 사용자 작업으로
+완료했습니다. `feat/tago-transit` 브랜치의 구현·CI 반영은 완료됐습니다.
+외부 webhook 입력과 기본 브랜치 병합·보호 규칙 설정은 사용자 작업으로
 남아 있습니다. 운영 수치와 검증 근거는
 [구현·운영 현황](./docs/current-state.md)을 참고합니다.
 
@@ -37,10 +38,11 @@
 | 백업·restore | 완료 | 일일 systemd timer, checksum, 월간 별도 DB 복구 검증 |
 | 교통 정기 동기화 | 완료 | KAIST·대전역 45개 노선, 일일 timer, 상태 지표 |
 | 모니터링 | 완료 | Prometheus 15초 수집, 20개 경보 규칙, Alertmanager/relay |
-| 외부 알림 URL | 사용자 작업 | 루트 `needs.md`의 webhook 입력 필요 |
+| 외부 알림 URL | 사용자 작업 | Alertmanager/relay 배포·형식 검증, 루트 `needs.md`의 webhook 입력 필요 |
 | 공개 배포·E2E | 완료 | 검색→추천→지도→저장·반응형 검증 |
 | NAVER Secret 재발급 | 완료 | 교체 후 geocode/reverse 200과 번들 미검출 확인 |
-| Git release | 완료 | `feat/tago-transit` commit/push와 GitHub CI 추가 |
+| Git 기능 브랜치 | 완료 | `feat/tago-transit` push, GitHub 품질·PostGIS CI 성공 |
+| Git 기본 브랜치 | 사용자 작업 | `main` 병합, 수동 공개 E2E와 보호 규칙 설정 |
 
 ## 3. 완료된 공개 계약
 
@@ -75,8 +77,10 @@
 - 일일 백업과 별도 PostGIS restore가 실제 통계로 통과
 - Prometheus 3개 target `up`, 지표·20개 경보 규칙 정상
 - 정기 교통 동기화 45개 성공·0개 실패
-- Alertmanager와 relay 실제 HTTP 전달 형식 검증
+- Alertmanager와 relay의 Slack 형식 HTTP 전달 검증
+- 외부 운영 채널 전달은 webhook 입력 후 별도 확인
 - 타입검사, 테스트, build, 공개 strict E2E 통과
+- 구현 기준 GitHub CI run `30162100952`의 두 job 통과
 - 폐기 대상 용어·변수 내용 검색 0건
 - 공개 health 계약과 운영 도메인 정상
 

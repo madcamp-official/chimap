@@ -212,6 +212,10 @@ PostgreSQL pool을 닫습니다.
 - Alertmanager는 긴급 경보를 10초, 주의 경보를 30초 동안 묶은 뒤 relay로
   보내며 복구 상태도 전달합니다. relay는 비밀 URL을 runtime에만 읽고
   메시지에 경보명·요약·조치 설명·상태 확인 링크를 제공합니다.
+- 외부 URL이 없을 때 relay health는 내부 수신 가능 상태를 유지하되
+  `chimap_alert_relay_configured=0`을 노출합니다. Prometheus는 이를
+  `ChimapAlertDeliveryNotConfigured`로 표시하며, 전달 실패 횟수에는
+  포함하지 않아 경보가 자기 자신을 증폭하지 않게 합니다.
 
 ## 10. PM2를 사용하지 않는 이유
 

@@ -302,6 +302,20 @@ E2E_REQUIRE_NAVER_MAP=1 \
 pnpm test:e2e
 ```
 
+### GitHub release gate
+
+`.github/workflows/ci.yml`은 `main`과 `feat/**` push, Pull Request에서 다음
+두 job을 실행합니다.
+
+- `Typecheck, tests, build, config`
+- `PostgreSQL and PostGIS integration`
+
+두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
+호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
+수동 실행합니다. 구현 기준 commit `bf05003`의 CI run `30162100952`에서
+두 job이 모두 성공했습니다. 기본 브랜치 병합과 보호 규칙은
+[사용자 작업](../needs.md)을 따릅니다.
+
 ## 12. 공개 번들 비밀값 검사
 
 배포 후 HTML의 JavaScript asset을 받아 서버 Client Secret이 포함되지
@@ -396,6 +410,13 @@ docker compose up -d --no-build --force-recreate alert-relay
 확인 스크립트는 Alertmanager API에 실제 점검 경보를 넣고 relay의 마지막
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
 외부 URL이 아직 없다면 [사용자 작업](../needs.md)을 따릅니다.
+
+2026-07-25 23:59 KST 현재 Alertmanager와 relay health, 라우팅 설정과
+격리 수신처 메시지 변환은 정상입니다. 외부 URL은 비어 있어
+`chimap_alert_relay_configured=0`과
+`ChimapAlertDeliveryNotConfigured`가 발생하는 상태가 정상입니다. URL 입력
+후에는 구성 지표가 `1`인지, 점검 경보와 복구 알림이 실제 운영 채널에 모두
+도착했는지 확인해야 활성화가 완료됩니다.
 
 ## 16. 롤백
 

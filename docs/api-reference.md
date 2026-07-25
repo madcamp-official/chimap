@@ -64,13 +64,16 @@ DB를 조회하지 않습니다.
     "tago": true
   },
   "transit": {
-    "stops": 228119,
-    "linkedStops": 2188,
-    "routes": 127,
-    "routeStops": 4469
+    "stops": 227187,
+    "linkedStops": 2741,
+    "routes": 134,
+    "routeStops": 5535
   }
 }
 ```
+
+위 통계는 2026-07-25 23:59 KST 운영 스냅샷 예시이며 실제 데이터
+동기화에 따라 증가할 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
 

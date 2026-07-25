@@ -1,8 +1,8 @@
 # 구현·운영 현황
 
-이 문서는 2026-07-25 KST에 실제 소스, 실행 컨테이너, 공개 도메인과
-PostgreSQL을 대조한 배포 스냅샷입니다. 수시로 바뀌는 운영 수치는 새 배포
-검증 때 갱신합니다.
+이 문서는 2026-07-25 23:59 KST에 실제 소스, 실행 컨테이너, 공개 도메인,
+PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니다.
+수시로 바뀌는 운영 수치는 새 배포 검증 때 갱신합니다.
 
 ## 1. 진행 이력 요약
 
@@ -65,7 +65,7 @@ PostgreSQL을 대조한 배포 스냅샷입니다. 수시로 바뀌는 운영 �
 | API | `chimap:actual-data`, 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
-| 장애 알림 | Alertmanager 0.32.1 + relay healthy, 외부 webhook 입력 대기 |
+| 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
 | 장소·주소 | Kakao 우선, NAVER 주소 보완 |
 | 도보 | Kakao Routing |
@@ -73,6 +73,8 @@ PostgreSQL을 대조한 배포 스냅샷입니다. 수시로 바뀌는 운영 �
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
+| GitHub | `feat/tago-transit`, 구현 기준 CI run `30162100952` 두 job 성공 |
+| 기본 브랜치 | `main`은 아직 초기 commit, 병합·보호 규칙 사용자 작업 |
 | 공개 번들 비밀값 검사 | NAVER 서버 Client Secret 미검출 |
 
 ## 3. readiness 스냅샷
@@ -93,17 +95,18 @@ PostgreSQL을 대조한 배포 스냅샷입니다. 수시로 바뀌는 운영 �
     "tago": true
   },
   "transit": {
-    "stops": 227184,
-    "linkedStops": 2659,
-    "routes": 131,
-    "routeStops": 5411
+    "stops": 227187,
+    "linkedStops": 2741,
+    "routes": 134,
+    "routeStops": 5535
   }
 }
 ```
 
 `timestamp`는 호출마다 바뀌므로 스냅샷에서 생략했습니다. 네 교통 통계가
 모두 0보다 크고 DB·PostGIS·migration·공급자 키가 준비된 경우에만
-readiness가 HTTP 200을 반환합니다.
+readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
+노선을 저장하므로 이 수치는 백업 시점보다 증가할 수 있습니다.
 
 ## 4. 완료된 구현
 
@@ -177,6 +180,7 @@ readiness가 HTTP 200을 반환합니다.
 | 계약·API·웹·알림 릴레이 테스트 | 71개 통과 |
 | PostgreSQL/PostGIS 통합 테스트 | 5개 통과 |
 | 공개 strict 지도 E2E | 2개 통과 |
+| GitHub Actions | 구현 기준 run `30162100952`, 품질·PostGIS 두 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
 | KAIST 본원 중심→대전 갤러리아 | HTTP 200, 실제 추천 3건·Kakao 승차 도보 확인 |
@@ -187,7 +191,8 @@ readiness가 HTTP 200을 반환합니다.
 | Prometheus | API/relay/Alertmanager target `up`, 20개 rule healthy |
 | 교통 정기 동기화 | 45개 성공·0개 실패, 성공 시각과 실패 수 지표 확인 |
 | 정류장 병합 migration | 1,173쌍→0쌍, 관계 유지, migration 2 적용 |
-| 알림 릴레이 | 실제 HTTP 수신처에 Slack 형식 긴급 메시지·상태 버튼 전달 |
+| 알림 릴레이 형식 | 격리 HTTP 수신처에 Slack 형식 긴급 메시지·상태 버튼 전달 |
+| 외부 운영 채널 | webhook 미입력, 구성 지표 `0`과 설정 필요 경보 발생 확인 |
 | 공개 번들 서버 비밀값 검사 | 미검출 |
 | 폐기 대상 용어·설정 내용 검색 | 0건 |
 | `git diff --check` | 통과 |
@@ -205,8 +210,9 @@ SHA-256: e064e44f483960240596a0e4461829baba7e6c9d920ed3130ea322259a8c6b81
 
 별도 PostgreSQL/PostGIS 18 컨테이너의 `template0` 기반 빈 DB로 restore한
 뒤 `PostGIS=1`, `migration=2`, `227184/2659/131/5411` 통계를 다시
-확인했습니다. 성공 상태는 `/var/backups/chimap/latest.json`과
-`restore-latest.json`에 기록합니다.
+확인했습니다. 이는 14:19 UTC 백업 시점의 고정 통계이며, 23:59 KST 현재
+readiness의 `227187/2741/134/5535`와 구분합니다. 성공 상태는
+`/var/backups/chimap/latest.json`과 `restore-latest.json`에 기록합니다.
 
 설치된 timer:
 
@@ -230,9 +236,20 @@ reverse 4건을 정상 수신했습니다.
 
 ## 8. Git release 상태
 
-현재 운영 이미지와 문서·테스트·운영 설정은 같은 최종 소스에서 생성했고
-`feat/tago-transit` 브랜치에 release commit으로 반영했습니다. GitHub에는
-결정적 품질 검사와 별도 PostGIS 통합 job을 추가했으며, 기본 브랜치의 필수
+애플리케이션·운영 설정·테스트·문서 변경은
+`556b484 Complete live routing operations and alerting`에 반영했습니다.
+새 checkout의 계약 build와 Compose 검사 환경을 보완한
+`bf05003 Fix CI environment preparation`까지 `feat/tago-transit`에
+push했습니다.
+
+GitHub CI run `30162100952`에서 다음 두 job이 모두 성공했습니다.
+
+- `Typecheck, tests, build, config`
+- `PostgreSQL and PostGIS integration`
+
+감사 시점의 로컬·원격 기능 브랜치 SHA는 일치했고 작업 트리는
+clean이었습니다. 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며
+보호 설정도 꺼져 있습니다. 병합, 병합 후 수동 `Public live E2E`, 필수
 check 지정은 [사용자 작업](../needs.md)에 기록했습니다.
 
 ## 9. 현재 한계와 확장 조건
@@ -248,5 +265,7 @@ check 지정은 [사용자 작업](../needs.md)에 기록했습니다.
 - 정류장 탐색은 최대 1.2km와 1회 환승까지만 지원하므로 이 범위 밖의
   연결은 구체적인 위치 선택 안내 또는 연결 범위 안내와 함께 404가 됩니다.
 - Alertmanager와 relay는 배포됐지만 외부 webhook URL은 아직 비어 있습니다.
+  Alertmanager 라우팅 설정과 relay 메시지 형식은 격리 수신처로 검증됐고
+  `ChimapAlertDeliveryNotConfigured` 경보가 의도대로 발생 중입니다.
   [사용자 작업](../needs.md)의 1번을 완료해야 실제 운영 채널 전달이
   활성화됩니다.

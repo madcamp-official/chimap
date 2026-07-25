@@ -51,7 +51,7 @@ git diff --check
 - web: 23개
 - 합계: 71개
 
-PostgreSQL 전용 4개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
+PostgreSQL 전용 5개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
 건너뜁니다.
 
 ## 3. 공급자 테스트
@@ -221,6 +221,7 @@ UI 전체 흐름:
 - Alertmanager 설정을 `amtool`로 검증
 - relay가 긴급·주의·복구 메시지를 Slack/Discord/일반 형식으로 변환
 - 격리 HTTP 수신처로 실제 긴급 메시지와 상태 확인 버튼 전달
+- 외부 URL 미설정 시 relay 구성 지표 `0`과 설정 필요 경보 확인
 - 지표와 로그에 검색어·좌표·키·원문 없음
 
 ## 11. 폐기 대상 잔존 검사
@@ -244,11 +245,14 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - 공개 strict 지도 E2E 2개 통과
 - KAIST 본원 중심→대전 갤러리아 HTTP 200, 추천 3건
 - NAVER geocode/reverse HTTP 200
-- readiness `227184/2659/131/5411`
+- readiness `227187/2741/134/5535`
+- 백업 restore 스냅샷 `227184/2659/131/5411`
 - 공개 bundle 서버 비밀값 미검출
 - 백업 restore 통과
 - Prometheus 3개 target `up`, 20개 rule healthy
 - 교통 동기화 45개 성공·0개 실패와 상태 지표 확인
-- Alertmanager 0.32.1 ready, relay 실제 HTTP 전달 확인
+- Alertmanager 0.32.1 ready, 격리 수신처 relay HTTP 전달 확인
+- 외부 운영 채널은 webhook 입력 전이며 구성 필요 경보 확인
+- 구현 기준 GitHub CI run `30162100952`의 품질·PostGIS 두 job 성공
 
 새 배포 후 이 절을 갱신하거나 별도 release 기록으로 이동합니다.

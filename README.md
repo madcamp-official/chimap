@@ -4,12 +4,16 @@ CHIMap은 목적지와 도착 마감시간을 유지하면서 더 많이 걸을 
 대중교통 경로를 비교·추천하는 웹 애플리케이션입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 최종 운영 검증: 2026-07-25 KST
+- 최종 운영 검증: 2026-07-25 23:59 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
+- GitHub 기준: `feat/tago-transit`, 품질·PostGIS CI 성공
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
+현재 공개 readiness는 정류장 227,187개, TAGO 연결 정류장 2,741개,
+노선 134개, 노선-정류장 관계 5,535개입니다. 추천 요청이 새 지역의 실제
+노선을 동기화하면 이 수치는 증가할 수 있습니다.
 
 ## 핵심 사용자 흐름
 
@@ -216,6 +220,11 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 경보: API·검색·DB·TAGO·백업·동기화·알림 전달 20개
 - 전달: Alertmanager→alert-relay→Slack/Discord/일반 webhook
 - 로그 제외: 검색어, 좌표, 키, 외부 원문
+
+Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
+검증됐습니다. 외부 운영 채널은 `ALERT_WEBHOOK_URL` 입력 전이므로 아직
+활성화되지 않았으며, 필요한 작업은
+[사용자가 완료할 운영 작업](./needs.md)에 기록합니다.
 
 ## 문서
 
