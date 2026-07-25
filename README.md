@@ -4,10 +4,10 @@ CHIMap은 목적지와 도착 마감시간을 유지하면서 더 많이 걸을 
 대중교통 경로를 비교·추천하는 웹 애플리케이션입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 최종 운영 검증: 2026-07-26 01:19 KST
+- 최종 운영 검증: 2026-07-26 01:26 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- GitHub 기반: `feat/tago-transit`의 `bf05003`, 품질·PostGIS CI 성공
+- GitHub 최신 구현: `feat/tago-transit`의 `b294a4d`, 품질·PostGIS CI 성공
 - Git 상태: 개인화·조기 하차·지도 표현 변경을 `feat/tago-transit`에 반영
 
 현재 배포 상태와 남은 운영 조치는

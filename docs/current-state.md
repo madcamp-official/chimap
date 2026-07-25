@@ -1,6 +1,6 @@
 # 구현·운영 현황
 
-이 문서는 2026-07-26 01:19 KST에 실제 소스, 실행 컨테이너, 공개 도메인,
+이 문서는 2026-07-26 01:26 KST에 실제 소스, 실행 컨테이너, 공개 도메인,
 PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니다.
 수시로 바뀌는 운영 수치는 새 배포 검증 때 갱신합니다.
 
@@ -75,7 +75,7 @@ PostgreSQL, systemd timer와 GitHub Actions를 대조한 배포 스냅샷입니�
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 기반 GitHub | `feat/tago-transit`의 `bf05003`, CI run `30162100952` 두 job 성공 |
+| 최신 GitHub 구현 | `feat/tago-transit`의 `b294a4d`, CI run `30165571376` 두 job 성공 |
 | 기본 브랜치 | `main`은 아직 초기 commit, 병합·보호 규칙 사용자 작업 |
 | 공개 번들 비밀값 검사 | NAVER 서버 Client Secret 미검출 |
 
@@ -188,7 +188,7 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | 계약·API·웹·알림 릴레이 테스트 | 74개 통과 |
 | PostgreSQL/PostGIS 통합 테스트 | 5개 통과 |
 | 공개 strict 지도 E2E | 2개 통과 |
-| GitHub Actions | 기반 commit run `30162100952`, 품질·PostGIS 두 job 성공 |
+| GitHub Actions | 구현 commit `b294a4d`, run `30165571376`, 품질·PostGIS 두 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
 | 개인화 8,000보 실제 추천 | 7,995보·목표 오차 -5보·조기 하차 경로를 기본 선택 |
@@ -220,7 +220,7 @@ SHA-256: e064e44f483960240596a0e4461829baba7e6c9d920ed3130ea322259a8c6b81
 
 별도 PostgreSQL/PostGIS 18 컨테이너의 `template0` 기반 빈 DB로 restore한
 뒤 `PostGIS=1`, `migration=2`, `227184/2659/131/5411` 통계를 다시
-확인했습니다. 이는 14:19 UTC 백업 시점의 고정 통계이며, 01:19 KST 최신
+확인했습니다. 이는 14:19 UTC 백업 시점의 고정 통계이며, 01:26 KST 최신
 readiness의 `227223/2797/134/5638`과 구분합니다. 성공 상태는
 `/var/backups/chimap/latest.json`과 `restore-latest.json`에 기록합니다.
 
@@ -257,15 +257,17 @@ SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치�
 `bf05003 Fix CI environment preparation`까지 `feat/tago-transit`에
 push했습니다.
 
-GitHub CI run `30162100952`에서 다음 두 job이 모두 성공했습니다.
+개인화 보폭, 조기 하차 우선 추천과 지도 도보 표현은
+`b294a4d Add personalized walking route recommendations`로 같은 브랜치에
+push했습니다. GitHub CI run `30165571376`에서 다음 두 job이 모두
+성공했습니다.
 
 - `Typecheck, tests, build, config`
 - `PostgreSQL and PostGIS integration`
 
-`bf05003` 이후 개인화 보폭, 조기 하차 우선 추천과 지도 도보 표현 변경도
-운영 배포·검증 후 `feat/tago-transit`에 반영했습니다. 기본 브랜치 `main`은
-`321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져 있습니다. 병합, 병합
-후 수동 `Public live E2E`, 필수 check 지정은
+해당 구현은 운영 배포·검증과 기능 브랜치 push까지 완료했습니다. 기본
+브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
+있습니다. 병합, 병합 후 수동 `Public live E2E`, 필수 check 지정은
 [사용자 작업](../needs.md)에 기록했습니다.
 
 ## 9. 현재 한계와 확장 조건

@@ -253,7 +253,7 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 
 ## 12. 현재 검증 기록
 
-2026-07-26 01:19 KST:
+2026-07-26 01:26 KST:
 
 - typecheck 통과
 - 결정적 테스트 74개 통과
@@ -271,6 +271,6 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - 교통 동기화 45개 성공·0개 실패와 상태 지표 확인
 - Alertmanager 0.32.1 ready, 격리 수신처 relay HTTP 전달 확인
 - 외부 운영 채널은 webhook 입력 전이며 구성 필요 경보 확인
-- 기반 commit GitHub CI run `30162100952`의 품질·PostGIS 두 job 성공
+- 구현 commit `b294a4d`의 GitHub CI run `30165571376` 품질·PostGIS 두 job 성공
 
 새 배포 후 이 절을 갱신하거나 별도 release 기록으로 이동합니다.

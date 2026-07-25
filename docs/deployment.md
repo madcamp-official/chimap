@@ -321,10 +321,9 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 
 두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
-수동 실행합니다. 기반 운영 commit `bf05003`의 CI run `30162100952`에서
-두 job이 모두 성공했습니다. 이후 개인화·조기 하차·지도 표현 변경도
-기능 브랜치에 push한 뒤 새 commit의 CI까지 통과한 경우에만 병합합니다.
-기본 브랜치 병합과 보호 규칙은 [사용자 작업](../needs.md)을 따릅니다.
+수동 실행합니다. 최신 구현 commit `b294a4d`의 CI run `30165571376`에서
+두 job이 모두 성공했습니다. 기본 브랜치 병합과 보호 규칙은
+[사용자 작업](../needs.md)을 따릅니다.
 
 ## 12. 공개 번들 비밀값 검사
 
@@ -421,7 +420,7 @@ docker compose up -d --no-build --force-recreate alert-relay
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
 외부 URL이 아직 없다면 [사용자 작업](../needs.md)을 따릅니다.
 
-2026-07-26 01:19 KST 현재 Alertmanager와 relay health, 라우팅 설정과
+2026-07-26 01:26 KST 현재 Alertmanager와 relay health, 라우팅 설정과
 격리 수신처 메시지 변환은 정상입니다. 외부 URL은 비어 있어
 `chimap_alert_relay_configured=0`과
 `ChimapAlertDeliveryNotConfigured`가 발생하는 상태가 정상입니다. URL 입력
