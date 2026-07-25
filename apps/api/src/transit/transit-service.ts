@@ -24,15 +24,16 @@ function roundedCoordinate(value: number): string {
 function uniqueStops(stops: BusStop[]): BusStop[] {
   const result = new Map<string, BusStop>();
   for (const stop of stops) {
+    const identity = stop.nodeId ?? stop.sourceStopNo;
     const key =
-      stop.cityCode !== null && stop.nodeId !== null
-        ? `${stop.cityCode}:${stop.nodeId}`
-        : `${stop.name}:${stop.latitude.toFixed(5)}:${stop.longitude.toFixed(5)}`;
+      identity ??
+      `${stop.name}:${stop.latitude.toFixed(5)}:${stop.longitude.toFixed(5)}`;
     const existing = result.get(key);
     if (
       existing === undefined ||
       (stop.distanceMeters ?? Infinity) <
-        (existing.distanceMeters ?? Infinity)
+        (existing.distanceMeters ?? Infinity) ||
+      (existing.nodeId === null && stop.nodeId !== null)
     ) {
       result.set(key, stop);
     }
@@ -103,17 +104,20 @@ export class TransitService {
   ): Promise<NearbyStopsResult> {
     const radius = Math.min(
       Math.max(1, radiusMeters),
-      this.#config.transit.maxNearbyStopDistanceMeters,
+      this.#config.transit.routeSearchMaxDistanceMeters,
     );
     const databaseStops = await this.repository.findNearbyStops(
       coordinate.lat,
       coordinate.lng,
       radius,
     );
-    const linkedDatabaseStops = databaseStops.filter(
+    const linkedDatabaseStopCount = databaseStops.filter(
       (stop) => stop.cityCode !== null && stop.nodeId !== null,
-    );
-    if (linkedDatabaseStops.length > 0) {
+    ).length;
+    const linkedCoverageIsSufficient =
+      linkedDatabaseStopCount >= 8 &&
+      linkedDatabaseStopCount / Math.max(databaseStops.length, 1) >= 0.8;
+    if (linkedCoverageIsSufficient) {
       return { items: uniqueStops(databaseStops), partial: false };
     }
 
@@ -283,11 +287,8 @@ export class TransitService {
     routeId: string,
     signal?: AbortSignal,
   ): Promise<{ route: BusRoute; stops: BusRouteStop[] }> {
-    const storedRoute = await this.repository.getRoute(cityCode, routeId);
     const [route, stops] = await Promise.all([
-      storedRoute === undefined
-        ? this.client.getRouteInfo(cityCode, routeId, signal)
-        : Promise.resolve(storedRoute),
+      this.client.getRouteInfo(cityCode, routeId, signal),
       this.client.getRouteStops(cityCode, routeId, signal),
     ]);
     await this.repository.replaceRouteStops(route, stops);

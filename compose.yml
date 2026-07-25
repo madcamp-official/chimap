@@ -33,7 +33,7 @@ services:
     build:
       context: .
       args:
-        VITE_NAVER_MAP_NCP_KEY_ID: ${VITE_NAVER_MAP_NCP_KEY_ID:?VITE_NAVER_MAP_NCP_KEY_ID is required}
+        NAVER_MAP_BROWSER_CLIENT_ID: ${VITE_NAVER_MAP_NCP_KEY_ID:?VITE_NAVER_MAP_NCP_KEY_ID is required}
     restart: unless-stopped
     env_file:
       - .env
@@ -43,6 +43,11 @@ services:
       WEB_ORIGIN: https://chimap.madcamp-kaist.org
       WEB_DIST_PATH: /app/web
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      METRICS_ENABLED: "1"
+      METRICS_PORT: 9091
+      APP_COMMIT_SHA: ${APP_COMMIT_SHA:-unknown}
+      BACKUP_STATUS_PATH: /backups/latest.json
+      TRANSIT_SYNC_STATUS_PATH: /backups/transit-sync/transit-sync-latest.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,13 +63,114 @@ services:
       start_period: 20s
     ports:
       - 127.0.0.1:3000:3000
+    volumes:
+      - ${BACKUP_DIR:-/var/backups/chimap}:/backups:ro
+    networks:
+      - internal
+
+  alert-relay:
+    image: chimap:actual-data
+    restart: unless-stopped
+    command:
+      - node
+      - /app/alert-relay/server.js
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      ALERT_RELAY_PORT: 9080
+      ALERT_STATUS_URL: https://chimap.madcamp-kaist.org/api/v1/health
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:9080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 128m
+    networks:
+      - internal
+
+  alertmanager:
+    image: prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --data.retention=120h
+      - --web.external-url=http://127.0.0.1:9093
+      - --enable-feature=utf8-strict-mode
+    depends_on:
+      alert-relay:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --spider
+        - -q
+        - http://127.0.0.1:9093/-/ready
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 128m
+    volumes:
+      - ./ops/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - chimap-alertmanager:/alertmanager
+    ports:
+      - 127.0.0.1:9093:9093
+    networks:
+      - internal
+
+  prometheus:
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-lifecycle
+    depends_on:
+      api:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --spider
+        - -q
+        - http://127.0.0.1:9090/-/healthy
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 384m
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/prometheus/chimap-alerts.yml:/etc/prometheus/chimap-alerts.yml:ro
+      - chimap-prometheus:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
     networks:
       - internal
 
 networks:
   internal:
     driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
 
 volumes:
   chimap-postgres:
     name: chimap-postgres
+  chimap-prometheus:
+    name: chimap-prometheus
+  chimap-alertmanager:
+    name: chimap-alertmanager

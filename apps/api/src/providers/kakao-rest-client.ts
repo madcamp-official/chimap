@@ -8,6 +8,11 @@ export type KakaoRequestOptions = {
   signal?: AbortSignal;
 };
 
+type KakaoRequestBody = {
+  method: "POST";
+  value: unknown;
+};
+
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(resolve, milliseconds);
@@ -41,7 +46,25 @@ export class KakaoRestClient {
   ): Promise<unknown> {
     const url = new URL(path, KAKAO_BASE_URL);
     url.search = parameters.toString();
+    return this.#requestJson(url, options);
+  }
 
+  public requestJsonBody(
+    url: URL,
+    body: unknown,
+    options: KakaoRequestOptions,
+  ): Promise<unknown> {
+    return this.#requestJson(url, options, {
+      method: "POST",
+      value: body,
+    });
+  }
+
+  async #requestJson(
+    url: URL,
+    options: KakaoRequestOptions,
+    body?: KakaoRequestBody,
+  ): Promise<unknown> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const timeoutSignal = AbortSignal.timeout(options.timeoutMilliseconds);
       const signal =
@@ -50,11 +73,17 @@ export class KakaoRestClient {
           : AbortSignal.any([options.signal, timeoutSignal]);
       try {
         const response = await this.#fetch(url, {
-          method: "GET",
+          method: body?.method ?? "GET",
           headers: {
             Authorization: `KakaoAK ${this.#restApiKey}`,
             Accept: "application/json",
+            ...(body === undefined
+              ? {}
+              : { "Content-Type": "application/json" }),
           },
+          ...(body === undefined
+            ? {}
+            : { body: JSON.stringify(body.value) }),
           signal,
         });
 

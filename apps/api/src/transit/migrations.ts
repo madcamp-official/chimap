@@ -75,4 +75,47 @@ export const TRANSIT_MIGRATIONS: ReadonlyArray<{
         ON bus_route_stops(stop_internal_id);
     `,
   },
+  {
+    version: 2,
+    name: "merge_exact_tago_stop_numbers",
+    sql: `
+      CREATE TEMP TABLE exact_stop_merges ON COMMIT DROP AS
+      SELECT
+        csv.id AS keep_id,
+        tago.id AS remove_id,
+        tago.city_code,
+        tago.node_id,
+        tago.ars_id,
+        tago.name,
+        tago.location,
+        tago.source_updated_at
+      FROM bus_stops AS csv
+      JOIN bus_stops AS tago
+        ON csv.node_id IS NULL
+       AND csv.source_stop_no = tago.node_id
+       AND tago.city_code IS NOT NULL
+       AND tago.node_id IS NOT NULL;
+
+      UPDATE bus_route_stops AS relation
+      SET stop_internal_id = merge.keep_id,
+          updated_at = now()
+      FROM exact_stop_merges AS merge
+      WHERE relation.stop_internal_id = merge.remove_id;
+
+      DELETE FROM bus_stops AS stop
+      USING exact_stop_merges AS merge
+      WHERE stop.id = merge.remove_id;
+
+      UPDATE bus_stops AS stop
+      SET city_code = merge.city_code,
+          node_id = merge.node_id,
+          ars_id = COALESCE(merge.ars_id, stop.ars_id),
+          name = merge.name,
+          location = merge.location,
+          source_updated_at = merge.source_updated_at,
+          updated_at = now()
+      FROM exact_stop_merges AS merge
+      WHERE stop.id = merge.keep_id;
+    `,
+  },
 ];

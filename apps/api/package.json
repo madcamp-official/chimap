@@ -16,6 +16,7 @@
     "bus:import-stops": "tsx src/cli/transit.ts import-stops",
     "bus:sync-route": "tsx src/cli/transit.ts sync-route",
     "bus:sync-area": "tsx src/cli/transit.ts sync-area",
+    "bus:sync-areas": "tsx src/cli/transit.ts sync-areas",
     "bus:stats": "tsx src/cli/transit.ts stats",
     "start": "node dist/server.js",
     "test": "vitest run",
@@ -35,6 +36,7 @@
     "pg": "^8.22.0",
     "pg-copy-streams": "^7.0.0",
     "pino": "^9.9.4",
+    "prom-client": "^15.1.3",
     "zod": "^4.1.5"
   },
   "devDependencies": {

@@ -1,10 +1,12 @@
-import type {
-  Coordinate,
-  NormalizedRoute,
-  Place,
+import {
+  haversineDistanceMeters,
+  type Coordinate,
+  type NormalizedRoute,
+  type Place,
 } from "@chimap/contracts";
 
 import {
+  normalizeKakaoDrivingGeometry,
   normalizeKakaoTransitResponse,
   normalizeKakaoWalkResponse,
 } from "./kakao-normalizers.js";
@@ -13,9 +15,15 @@ import { KakaoRestClient } from "./kakao-rest-client.js";
 import type {
   MobilityProvider,
   PlaceSearchOptions,
+  RoadGeometryProvider,
+  RoadRouteRequest,
   TransitRouteRequest,
   WalkRouteRequest,
 } from "./types.js";
+
+const KAKAO_DIRECTIONS_URL =
+  "https://apis-navi.kakaomobility.com/v1/waypoints/directions";
+const MAX_DIRECTIONS_POINTS = 32;
 
 function appendCoordinate(
   parameters: URLSearchParams,
@@ -26,7 +34,37 @@ function appendCoordinate(
   parameters.set(`${prefix}_y`, coordinate.lat.toString());
 }
 
-export class KakaoMobilityProvider implements MobilityProvider {
+function distinctRoadPoints(points: Coordinate[]): Coordinate[] {
+  const result: Coordinate[] = [];
+  for (const point of points) {
+    const previous = result.at(-1);
+    if (
+      previous === undefined ||
+      haversineDistanceMeters(previous, point) > 3
+    ) {
+      result.push(point);
+    }
+  }
+  return result;
+}
+
+function chunkRoadPoints(points: Coordinate[]): Coordinate[][] {
+  const chunks: Coordinate[][] = [];
+  let start = 0;
+  while (start < points.length - 1) {
+    const end = Math.min(
+      start + MAX_DIRECTIONS_POINTS - 1,
+      points.length - 1,
+    );
+    chunks.push(points.slice(start, end + 1));
+    start = end;
+  }
+  return chunks;
+}
+
+export class KakaoMobilityProvider
+  implements MobilityProvider, RoadGeometryProvider
+{
   public readonly source = "KAKAO" as const;
   public readonly local: KakaoLocalClient;
 
@@ -92,5 +130,59 @@ export class KakaoMobilityProvider implements MobilityProvider {
       },
     );
     return normalizeKakaoWalkResponse(response);
+  }
+
+  public async getRoadRouteGeometry(
+    request: RoadRouteRequest,
+  ): Promise<Coordinate[]> {
+    const points = distinctRoadPoints(request.points);
+    if (points.length < 2) {
+      return points;
+    }
+    const geometries = await Promise.all(
+      chunkRoadPoints(points).map(async (chunk) => {
+        const origin = chunk[0]!;
+        const destination = chunk.at(-1)!;
+        const response = await this.#rest.requestJsonBody(
+          new URL(KAKAO_DIRECTIONS_URL),
+          {
+            origin: { x: origin.lng, y: origin.lat },
+            destination: {
+              x: destination.lng,
+              y: destination.lat,
+            },
+            waypoints: chunk.slice(1, -1).map((point) => ({
+              x: point.lng,
+              y: point.lat,
+            })),
+            priority: "RECOMMEND",
+            alternatives: false,
+            road_details: false,
+            summary: false,
+          },
+          {
+            timeoutMilliseconds: 5_000,
+            ...(request.signal === undefined
+              ? {}
+              : { signal: request.signal }),
+          },
+        );
+        return normalizeKakaoDrivingGeometry(response);
+      }),
+    );
+    const joined: Coordinate[] = [];
+    for (const geometry of geometries) {
+      for (const coordinate of geometry) {
+        const previous = joined.at(-1);
+        if (
+          previous === undefined ||
+          previous.lng !== coordinate.lng ||
+          previous.lat !== coordinate.lat
+        ) {
+          joined.push(coordinate);
+        }
+      }
+    }
+    return joined;
   }
 }

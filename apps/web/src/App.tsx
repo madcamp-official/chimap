@@ -49,6 +49,7 @@ import {
   formatDuration,
   kstDateTimeLocalToIso,
 } from "./lib/time.js";
+import { selectRelevantVehiclePositions } from "./lib/vehicle-positions.js";
 import { useTripStore } from "./store/trip-store.js";
 
 const naverMapNcpKeyId =
@@ -87,7 +88,11 @@ function ResultsNotice({
   );
 }
 
-export function App() {
+type AppProps = {
+  reverseAddress?: typeof reverseGeocode;
+};
+
+export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
   const [introActive, setIntroActive] = useState(shouldPlayIntro);
   const [appEntered, setAppEntered] = useState(() => !shouldPlayIntro());
   const {
@@ -110,6 +115,7 @@ export function App() {
   >();
   const [locationMessage, setLocationMessage] = useState<string>();
   const [formError, setFormError] = useState<string>();
+  const [expandedRouteId, setExpandedRouteId] = useState<string>();
   const requestAbortController = useRef<AbortController | undefined>(
     undefined,
   );
@@ -126,6 +132,7 @@ export function App() {
     },
     onSuccess: (response) => {
       setSelectedRouteId(response.recommendations[0]?.id);
+      setExpandedRouteId(undefined);
       setFormError(undefined);
     },
     onError: (error) => {
@@ -139,6 +146,24 @@ export function App() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (expandedRouteId === undefined) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById(`route-details-${expandedRouteId}`)
+        ?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+            .matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [expandedRouteId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -179,12 +204,21 @@ export function App() {
     queryKey: [
       "bus-vehicles",
       ...selectedBusLegs.map(
-        (leg) => `${leg.cityCode}:${leg.routeId}`,
+        (leg) =>
+          `${leg.cityCode}:${leg.routeId}:${leg.boardingNodeOrder}:${leg.alightingNodeOrder}`,
       ),
     ],
     queryFn: async ({ signal }) => {
+      const uniqueRoutes = Array.from(
+        new Map(
+          selectedBusLegs.map((leg) => [
+            `${leg.cityCode}:${leg.routeId}`,
+            leg,
+          ]),
+        ).values(),
+      );
       const responses = await Promise.all(
-        selectedBusLegs.map((leg) =>
+        uniqueRoutes.map((leg) =>
           getBusVehicles({
             cityCode: leg.cityCode,
             routeId: leg.routeId,
@@ -192,11 +226,15 @@ export function App() {
           }),
         ),
       );
+      const items = selectRelevantVehiclePositions(
+        selectedBusLegs,
+        responses.flatMap((response) => response.items),
+      );
       return {
-        items: responses.flatMap((response) => response.items),
+        items,
         realtimeAvailable: responses.some(
           (response) => response.realtimeAvailable,
-        ),
+        ) && items.length > 0,
       };
     },
     enabled: selectedBusLegs.length > 0,
@@ -212,6 +250,7 @@ export function App() {
     requestAbortController.current?.abort();
     recommendationMutation.reset();
     setSelectedRouteId(undefined);
+    setExpandedRouteId(undefined);
     setFormError(undefined);
   }
 
@@ -241,7 +280,7 @@ export function App() {
         };
         setCurrentLocation(location);
         setLocationMessage("현재 위치의 주소를 확인하고 있어요.");
-        void reverseGeocode(location)
+        void reverseAddress(location)
           .then((result) => {
             chooseOrigin(
               result.place ?? {
@@ -315,6 +354,9 @@ export function App() {
     if (origin === undefined || destination === undefined) {
       return;
     }
+    if (selectedRouteId !== recommendation.id) {
+      setExpandedRouteId(undefined);
+    }
     setSelectedRouteId(recommendation.id);
     saveLastTrip({
       version: 1,
@@ -325,6 +367,14 @@ export function App() {
       expectedSteps: recommendation.estimatedSteps,
       expectedArrivalAt: recommendation.arrivalAt,
     });
+  }
+
+  function toggleRecommendationDetails(
+    recommendation: Recommendation,
+  ): void {
+    const willOpen = expandedRouteId !== recommendation.id;
+    selectRecommendation(recommendation);
+    setExpandedRouteId(willOpen ? recommendation.id : undefined);
   }
 
   const hasPlaces = origin !== undefined && destination !== undefined;
@@ -477,26 +527,50 @@ export function App() {
                 </p>
               </div>
 
-              <ul className="warning-list">
-                {result.warnings.map((warning) => (
-                  <ResultsNotice key={warning.code} warning={warning} />
-                ))}
-              </ul>
+              {result.warnings.length === 0 ? null : (
+                <details className="results-notices">
+                  <summary>
+                    <Info aria-hidden="true" size={16} />
+                    운행 안내 {result.warnings.length}건
+                    <ChevronDown aria-hidden="true" size={17} />
+                  </summary>
+                  <ul className="warning-list">
+                    {result.warnings.map((warning) => (
+                      <ResultsNotice key={warning.code} warning={warning} />
+                    ))}
+                  </ul>
+                </details>
+              )}
 
               <div className="recommendation-list">
-                {result.recommendations.map((recommendation) => (
-                  <RecommendationCard
-                    key={recommendation.id}
-                    recommendation={recommendation}
-                    selected={recommendation.id === selectedRecommendation?.id}
-                    onSelect={() => selectRecommendation(recommendation)}
-                  />
-                ))}
+                {result.recommendations.map((recommendation) => {
+                  const detailsId = `route-details-${recommendation.id}`;
+                  return (
+                    <RecommendationCard
+                      key={recommendation.id}
+                      recommendation={recommendation}
+                      selected={
+                        recommendation.id === selectedRecommendation?.id
+                      }
+                      detailsOpen={expandedRouteId === recommendation.id}
+                      detailsId={detailsId}
+                      onSelect={() => selectRecommendation(recommendation)}
+                      onToggleDetails={() =>
+                        toggleRecommendationDetails(recommendation)
+                      }
+                    />
+                  );
+                })}
               </div>
 
-              {selectedRecommendation === undefined ? null : (
+              {selectedRecommendation === undefined ||
+              expandedRouteId !== selectedRecommendation.id ? null : (
                 <>
-                  <RouteDetails recommendation={selectedRecommendation} />
+                  <RouteDetails
+                    id={`route-details-${selectedRecommendation.id}`}
+                    recommendation={selectedRecommendation}
+                    onCollapse={() => setExpandedRouteId(undefined)}
+                  />
                   {selectedBusLegs.length > 0 &&
                   (vehicleQuery.isError ||
                     vehicleQuery.data?.realtimeAvailable === false) ? (

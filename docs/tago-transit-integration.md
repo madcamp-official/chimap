@@ -62,13 +62,20 @@ pagination은 `totalCount`와 `numOfRows`를 기준으로 모든 page를 조회�
 ## 4. 주변 정류장 조회
 
 1. PostGIS에서 요청 좌표 500m 안의 정류장을 거리 순으로 조회합니다.
-2. 이미 TAGO ID가 연결된 DB 정류장이 있으면 DB 결과를 우선 사용합니다.
-3. 연결 정류장이 없으면 TAGO 주변 정류장을 호출합니다.
+2. TAGO ID 연결 정류장이 8개 이상이고 DB 결과의 80% 이상이면 DB 결과를
+   우선 사용합니다.
+3. 연결 범위가 부족하면 TAGO 주변 정류장을 호출합니다.
 4. TAGO 결과를 CSV 정류장과 reconcile합니다.
 5. 실제 공급자가 일시 실패하고 DB 정류장이 있으면 `partial=true`로
    DB 결과를 반환할 수 있습니다.
 
 API는 최대 100개를 반환합니다.
+
+위 500m는 공개 주변 정류장 API와 일반 조회의 상한입니다. 추천 계산은
+`TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS`를 별도 적용해 500m→800m→기본
+1.2km 순으로 확장합니다. 각 단계에서 정류장별 실제 노선을 확인해 0건인
+정류장을 제외하고, 양쪽에 운행 정류장이 있어도 직행/1회 환승 연결이
+없으면 다음 단계로 진행합니다.
 
 ## 5. CSV↔TAGO reconcile
 
@@ -77,11 +84,12 @@ API는 최대 100개를 반환합니다.
 
 없으면:
 
-1. TAGO 좌표 30m 안에서 아직 `node_id`가 없는 CSV row 탐색
-2. 정규화한 이름 유사도 0.82 이상만 후보
-3. 1위가 2위보다 0.1 이상 높으면 기존 row에 TAGO ID 연결
-4. 후보가 비슷하면 ambiguous event 기록
-5. 적합 후보가 없으면 TAGO row 추가
+1. TAGO `node_id`와 CSV `source_stop_no`가 정확히 같은 단일 row 연결
+2. 정확 일치가 없으면 TAGO 좌표 30m 안의 미연결 CSV row 탐색
+3. 정규화한 이름 유사도 0.82 이상만 후보
+4. 1위가 2위보다 0.1 이상 높으면 기존 row에 TAGO ID 연결
+5. 후보가 비슷하면 ambiguous event 기록
+6. 적합 후보가 없으면 TAGO row 추가
 
 노선 동기화 transaction 안의 ambiguous 정류장은 별도 TAGO row로
 저장해 route-stop 관계를 잃지 않습니다.
@@ -96,7 +104,8 @@ API는 최대 100개를 반환합니다.
 - PostgreSQL deadlock `40P01`만 transaction 전체를 최대 두 번 재시도
 
 전국 정류장은 일괄 적재하지만 노선 관계는 사용 지역을 중심으로 점진적으로
-동기화합니다.
+동기화합니다. 운영 timer는 매일 KAIST 1.2km와 대전역 500m를 갱신하고
+상태 파일에 마지막 성공 시각과 실패 노선·코드를 기록합니다.
 
 ## 7. 캐시·timeout·재시도
 
@@ -127,7 +136,10 @@ pnpm bus:import-stops -- --path "/path/bus data.csv"
 pnpm bus:sync-route -- --cityCode 25 --routeId <routeId>
 pnpm bus:sync-area -- \
   --lat 36.3723 --lng 127.3604 \
-  --radiusMeters 500 --maxRoutes 40 --concurrency 2
+  --radiusMeters 1200 --maxRoutes 60 --concurrency 2
+pnpm bus:sync-areas -- \
+  --path ops/transit-sync-areas.json \
+  --statusPath /var/backups/chimap/transit-sync/transit-sync-latest.json
 pnpm bus:stats
 ```
 
@@ -147,6 +159,9 @@ CLI는 root `.env`를 Node `process.loadEnvFile`로 읽고 DB pool을 최대
 
 로그는 서비스 종류, operation을 노출하지 않는 안전한 result code, 결과 수,
 처리시간만 기록합니다. service key와 원문 응답은 제외합니다.
+
+`NO_TRANSIT_ROUTE`의 사용자 메시지는 운행 정류장 자체를 찾지 못한 경우와,
+운행 정류장은 있지만 직행/1회 환승 연결이 없는 경우를 구분합니다.
 
 ## 10. 운영 관측
 

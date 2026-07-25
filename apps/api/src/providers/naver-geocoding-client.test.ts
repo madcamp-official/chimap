@@ -4,9 +4,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  NaverGeocodingClient,
   normalizeNaverGeocodeResponse,
   normalizeNaverReverseGeocodeResponse,
 } from "./naver-geocoding-client.js";
+import { ProviderError } from "../errors.js";
 
 type Capture = {
   api: string;
@@ -80,5 +82,47 @@ describe("실제 NAVER 응답 정규화", () => {
       category: "NAVER 주소",
       location: coordinate,
     });
+  });
+});
+
+describe("NAVER Geocoding 오류 경계", () => {
+  it("403 권한 오류를 설정 오류로 즉시 반환한다", async () => {
+    let calls = 0;
+    const client = new NaverGeocodingClient(
+      "key-id",
+      "server-key",
+      async () => {
+        calls += 1;
+        return new Response("{}", { status: 403 });
+      },
+    );
+
+    await expect(
+      client.geocode("대전역"),
+    ).rejects.toMatchObject<Partial<ProviderError>>({
+      kind: "CONFIGURATION",
+      retryable: false,
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("429는 한 번 재시도한 뒤 사용량 오류로 분류한다", async () => {
+    let calls = 0;
+    const client = new NaverGeocodingClient(
+      "key-id",
+      "server-key",
+      async () => {
+        calls += 1;
+        return new Response("{}", { status: 429 });
+      },
+    );
+
+    await expect(
+      client.geocode("대전역"),
+    ).rejects.toMatchObject<Partial<ProviderError>>({
+      kind: "RATE_LIMIT",
+      retryable: true,
+    });
+    expect(calls).toBe(2);
   });
 });

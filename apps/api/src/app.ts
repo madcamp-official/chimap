@@ -38,6 +38,7 @@ import {
   ProviderError,
 } from "./errors.js";
 import { createLogger } from "./logger.js";
+import { AppMetrics } from "./monitoring/metrics.js";
 import { CachedMobilityProvider } from "./providers/cached-provider.js";
 import { KakaoMobilityProvider } from "./providers/kakao-provider.js";
 import { NaverGeocodingClient } from "./providers/naver-geocoding-client.js";
@@ -60,6 +61,7 @@ export type CreateAppOptions = {
   logger?: Logger;
   clock?: Clock;
   transitService?: TransitService;
+  metrics?: AppMetrics;
   rateLimits?: RateLimitOptions;
 };
 
@@ -71,6 +73,36 @@ function requestAbortSignal(request: Request): AbortSignal {
   const controller = new AbortController();
   request.once("aborted", () => controller.abort());
   return controller.signal;
+}
+
+function upstreamProvider(
+  error: unknown,
+  path: string,
+): "TAGO" | "KAKAO_NAVER" | "KAKAO_TAGO" | "UNKNOWN" {
+  let current = error;
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (current instanceof TagoApiError) {
+      return "TAGO";
+    }
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      !("cause" in current)
+    ) {
+      break;
+    }
+    current = current.cause;
+  }
+  if (path.startsWith("/api/v1/places")) {
+    return "KAKAO_NAVER";
+  }
+  if (
+    path === "/api/v1/recommendations" ||
+    path.endsWith("/recommendations")
+  ) {
+    return "KAKAO_TAGO";
+  }
+  return "UNKNOWN";
 }
 
 function fieldErrors(error: ZodError): Record<string, string[]> {
@@ -223,6 +255,13 @@ export function createApp(options: CreateAppOptions): Express {
     options.transitService ??
     new TransitService({ config: options.config, logger });
   app.locals.transitService = transitService;
+  const metrics =
+    options.metrics ??
+    new AppMetrics({
+      config: options.config,
+      repository: transitService.repository,
+    });
+  app.locals.metrics = metrics;
   const providers = createProviders(options.config, transitService);
   const provider = providers.mobility;
   const placeLookup = providers.places;
@@ -241,13 +280,20 @@ export function createApp(options: CreateAppOptions): Express {
     response.setHeader("x-request-id", id);
     const startedAt = performance.now();
     response.on("finish", () => {
+      const durationMilliseconds = performance.now() - startedAt;
       logger.info({
         event: "request.completed",
         requestId: id,
         method: request.method,
         path: request.path,
         httpStatus: response.statusCode,
-        durationMs: Math.round(performance.now() - startedAt),
+        durationMs: Math.round(durationMilliseconds),
+      });
+      metrics.observeHttp({
+        method: request.method,
+        path: request.path,
+        status: response.statusCode,
+        durationSeconds: durationMilliseconds / 1000,
       });
     });
     next();
@@ -350,6 +396,7 @@ export function createApp(options: CreateAppOptions): Express {
           signal: requestAbortSignal(request),
         }),
       );
+      metrics.observePlace(query.scope, result);
       logger.info({
         event: "place.lookup.completed",
         requestId: requestId(response),
@@ -376,6 +423,12 @@ export function createApp(options: CreateAppOptions): Express {
           requestAbortSignal(request),
         ),
       );
+      metrics.observeReverse({
+        provider: result.meta.provider,
+        fallbackUsed: result.meta.fallbackUsed,
+        degraded: result.meta.degraded,
+        found: result.place !== null,
+      });
       response.json(reverseGeocodeResponseSchema.parse(result));
     },
   );
@@ -384,6 +437,8 @@ export function createApp(options: CreateAppOptions): Express {
     request: Request,
     response: Response,
   ) => {
+    const startedAt = performance.now();
+    try {
       const parsedRequest = recommendationRequestSchema.parse(request.body);
       const abortController = new AbortController();
       request.once("aborted", () => abortController.abort());
@@ -392,8 +447,20 @@ export function createApp(options: CreateAppOptions): Express {
         requestId: requestId(response),
         signal: abortController.signal,
       });
+      metrics.observeRecommendation({
+        outcome: "success",
+        durationSeconds: (performance.now() - startedAt) / 1000,
+        resultCount: result.recommendations.length,
+      });
       response.json(result);
-    };
+    } catch (error) {
+      metrics.observeRecommendation({
+        outcome: "error",
+        durationSeconds: (performance.now() - startedAt) / 1000,
+      });
+      throw error;
+    }
+  };
 
   app.post(
     "/api/v1/recommendations",
@@ -587,7 +654,7 @@ export function createApp(options: CreateAppOptions): Express {
 
   const errorHandler: ErrorRequestHandler = (
     error: unknown,
-    _request,
+    request,
     response,
     _next,
   ) => {
@@ -619,6 +686,10 @@ export function createApp(options: CreateAppOptions): Express {
       errorCode: appError.code,
       httpStatus: appError.status,
     });
+    metrics.observeApiError(
+      appError.code,
+      upstreamProvider(appError, request.path),
+    );
     const payload = errorResponseSchema.parse({
       error: {
         code: appError.code,

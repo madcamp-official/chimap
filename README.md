@@ -14,25 +14,35 @@ CHIMap은 목적지와 도착 마감시간을 유지하면서 더 많이 걸을 
 ## 핵심 사용자 흐름
 
 1. 출발지와 목적지를 300ms 자동완성 또는 Enter/검색 버튼으로 조회합니다.
-2. 사용자가 검색 결과를 직접 선택합니다.
+2. 캠퍼스 중심·도로명 주소·출입구 표시를 확인하고 검색 결과를 직접
+   선택합니다.
 3. 현재 걸음, 목표 걸음, 마감시간, 추가 허용시간을 입력합니다.
-4. TAGO 버스와 Kakao 도보를 조합한 경로를 계산합니다.
-5. 빠른 경로, 균형 경로, 목표 달성 경로를 비교합니다.
-6. 선택한 경로를 NAVER 지도와 텍스트 이동 단계에서 확인합니다.
+4. TAGO 버스, Kakao 도보와 도로 매칭 geometry를 조합한 경로를
+   계산합니다.
+5. 빠른 경로, 균형 경로, 목표 달성 경로의 시간·수단·도보·환승을 간단히
+   비교합니다.
+6. 카드를 선택해 NAVER 지도 경로를 바꾸고, 필요한 경로만 `자세히`를
+   열어 전체 텍스트 이동 단계와 승하차 정보를 확인합니다.
 
 현재 위치 버튼은 브라우저 GPS 좌표를 받아 Kakao→NAVER 순서로 주소를
 확인합니다. 주소를 얻지 못해도 좌표 자체를 `현재 위치`로 사용할 수
 있습니다.
 
+추천은 출발·도착 각각 500m에서 운행 노선이 있는 정류장을 먼저 찾고,
+연결 경로가 없으면 800m, 최대 1.2km까지 단계적으로 확장합니다. 멀어진
+승하차 지점까지의 이동은 직선 추정이 아니라 Kakao 실제 도보 경로로
+추천에 포함합니다.
+
 ## 데이터 공급자와 저장 경계
 
 | 영역 | 공급자/저장소 | 역할 |
 | --- | --- | --- |
-| 지도 | NAVER Web Dynamic Map | 지도, 마커, 경로선, 차량 위치 표시 |
+| 지도 | NAVER Web Dynamic Map | 지도, 경로선, 승하차와 접근 차량 마커 |
 | 장소 | Kakao Local | 키워드·주소 검색 |
 | 주소 보완 | NAVER Geocoding | Kakao 0건 또는 복구 가능한 장애 시 주소 검색 |
 | 역지오코딩 | Kakao→NAVER | GPS 좌표를 주소로 변환 |
 | 도보 | Kakao Routing | 실제 도보 거리·시간·좌표 |
+| 버스 선 | Kakao Mobility Directions | TAGO 정류장 순서를 보존한 도로 매칭 geometry |
 | 버스 | 국토교통부 TAGO | 정류장·노선·도착·차량 |
 | 정적 교통 데이터 | PostgreSQL 18 + PostGIS | 전국 정류장, TAGO 연결, 노선 순서 |
 
@@ -51,25 +61,37 @@ Browser
        ↓
 Cloudflare Tunnel
        ↓ 127.0.0.1:3000
-Docker Compose / chimap-api (Node.js 단일 프로세스)
-       ↓ Docker internal network
-PostgreSQL 18 + PostGIS
+Docker Compose
+  ├─ chimap-api (Node.js 단일 프로세스)
+  ├─ PostgreSQL 18 + PostGIS
+  ├─ Prometheus 3.13.1
+  ├─ Alertmanager 0.32.1
+  └─ alert-relay (Slack/Discord/일반 webhook)
+       ↑ API·동기화·백업·알림 전달 상태
+
+systemd timers
+  ├─ 일일 custom-format 백업
+  ├─ 월간 별도 PostGIS restore 검증
+  └─ 일일 KAIST·대전역 TAGO 노선 동기화
 ```
 
 프로세스 관리와 재시작은 Docker Compose가 담당합니다. 다중 API 인스턴스로
 확장할 때는 Redis 기반 공유 캐시·single-flight·rate limit을 먼저
-도입합니다.
+도입합니다. Compose bridge는 NAVER TLS 연결을 위해 MTU 1400을 사용합니다.
 
 ## 저장소 구조
 
 ```text
 apps/api                 Express API, 공급자, 추천, 교통 DB/CLI
+apps/alert-relay         Alertmanager 메시지 정규화와 외부 webhook 전달
 apps/api/migrations      PostgreSQL/PostGIS migration 기준 DDL
 apps/api/test-data       출처와 checksum이 있는 실제 응답 캡처
 apps/web                 React 검색·지도·추천 UI와 Playwright E2E
+apps/web/test-data       출처와 checksum이 있는 실제 차량 응답 캡처
 packages/contracts       요청·응답·내부 정규화 Zod 계약
 docs                     아키텍처, 운영, 공급자, 테스트 문서
-compose.yml              운영 API와 PostgreSQL
+ops                      백업·동기화 timer, Prometheus와 Alertmanager 설정
+compose.yml              운영 API, DB, 모니터링과 장애 알림
 db_schema.md             물리 스키마와 공개 데이터 계약
 .env.example             유일한 환경변수 템플릿
 ```
@@ -115,7 +137,7 @@ docker compose run --rm \
   api node dist/cli/transit.js import-stops --path /data/bus-stops.csv
 
 docker compose run --rm api node dist/cli/transit.js sync-area \
-  --lat 36.3723 --lng 127.3604 --radiusMeters 500 --maxRoutes 40
+  --lat 36.3723 --lng 127.3604 --radiusMeters 1200 --maxRoutes 60
 
 docker compose run --rm api node dist/cli/transit.js sync-area \
   --lat 36.3321 --lng 127.4342 --radiusMeters 500 --maxRoutes 40
@@ -138,7 +160,12 @@ import해도 `source_identity` 기준으로 중복되지 않습니다.
 | `pnpm bus:import-stops -- --path <file>` | 전국 정류장 CSV import |
 | `pnpm bus:sync-route -- --cityCode 25 --routeId <id>` | 단일 노선 동기화 |
 | `pnpm bus:sync-area -- --lat <lat> --lng <lng>` | 주변 노선 동기화 |
+| `pnpm bus:sync-areas -- --path <file> --statusPath <file>` | 여러 운영 지역 동기화와 상태 기록 |
 | `pnpm bus:stats` | 정류장·연결·노선·관계 수 확인 |
+| `./ops/backup-postgres.sh` | 즉시 백업·checksum·보존 정책 실행 |
+| `./ops/verify-postgres-backup.sh` | 최신 백업을 별도 PostGIS에 복원 검증 |
+| `./ops/sync-transit.sh` | 운영 지역 TAGO 노선과 관계 즉시 갱신 |
+| `./ops/check-alert-delivery.sh` | Alertmanager→외부 webhook 실제 전달 확인 |
 
 CLI는 DB pool을 최대 2 connections로 제한합니다.
 
@@ -182,15 +209,18 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 배포 승인: `GET /api/v1/readiness`
 - API DB pool: 최대 10 connections
 - PostgreSQL: `max_connections=50`, `shared_buffers=128MB`, 768MiB 제한
-- 백업: 매일 `pg_dump -Fc`, 일간 7개·주간 4개 보관
-- 복구 검증: 월 1회 별도 DB에 restore
-- 관측: 검색 0건률, NAVER 보완률, 429/5xx, API p95, DB pool 대기,
-  TAGO timeout
+- 백업: systemd timer가 매일 `pg_dump -Fc`, 일간 7개·주간 4개 보관
+- 복구 검증: systemd timer가 월 1회 별도 PostGIS 18에 restore
+- 교통 갱신: systemd timer가 매일 KAIST 1.2km·대전역 500m 노선 동기화
+- 관측: Prometheus 15초 수집, 15일·2GiB 보존, loopback UI `:9090`
+- 경보: API·검색·DB·TAGO·백업·동기화·알림 전달 20개
+- 전달: Alertmanager→alert-relay→Slack/Discord/일반 webhook
 - 로그 제외: 검색어, 좌표, 키, 외부 원문
 
 ## 문서
 
 - [구현·운영 현황](./docs/current-state.md)
+- [사용자가 완료할 운영 작업](./needs.md)
 - [화면 구조와 상호작용](./IA.md)
 - [구현 계획과 완료 상태](./plan.md)
 - [시스템 아키텍처](./docs/architecture.md)

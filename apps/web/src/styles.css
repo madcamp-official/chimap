@@ -851,16 +851,28 @@ summary:focus-visible,
   white-space: nowrap;
 }
 
-.place-provider {
+.place-result-tags {
+  display: flex !important;
+  flex-flow: row wrap !important;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.place-provider,
+.place-kind {
   width: fit-content;
   padding: 2px 5px;
-  margin-top: 4px;
   border-radius: 5px;
   color: #145c55;
   background: #e0f1ec;
   font-size: 9px;
   font-style: normal;
   font-weight: 800;
+}
+
+.place-kind {
+  color: #8a4a20;
+  background: #fff0e5;
 }
 
 .place-popover strong {
@@ -1103,16 +1115,12 @@ summary:focus-visible,
   background: var(--green);
 }
 
-.map-marker-stop {
-  min-width: 22px;
-  padding: 1px;
-  color: var(--bus-blue);
-  background: white;
-  border-color: var(--bus-blue);
-}
-
 .map-marker-boarding {
   background: var(--bus-blue);
+}
+
+.map-marker-transfer {
+  background: var(--orange);
 }
 
 .map-marker-alighting {
@@ -1120,7 +1128,12 @@ summary:focus-visible,
 }
 
 .map-marker-vehicle {
+  min-width: 42px;
+  padding-inline: 8px;
   background: #0b6b50;
+  box-shadow:
+    0 0 0 3px rgb(255 255 255 / 82%),
+    0 6px 16px rgb(11 107 80 / 24%);
 }
 
 .trip-panel {
@@ -1591,17 +1604,54 @@ summary:focus-visible,
 .results-heading p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+.results-notices {
+  margin: 0 0 10px;
+  border: 1px solid #e1e6e2;
+  border-radius: 11px;
+  background: #f7f9f7;
+  animation: result-block-enter 0.55s 0.07s cubic-bezier(0.16, 1, 0.3, 1)
+    both;
+}
+
+.results-notices > summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  color: #607174;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+
+.results-notices > summary::-webkit-details-marker {
+  display: none;
+}
+
+.results-notices > summary > svg:first-child {
+  color: var(--teal);
+}
+
+.results-notices > summary > svg:last-child {
+  margin-left: auto;
+  transition: transform 0.2s ease;
+}
+
+.results-notices[open] > summary > svg:last-child {
+  transform: rotate(180deg);
 }
 
 .warning-list {
   display: grid;
   gap: 5px;
-  padding: 0;
-  margin: 0 0 12px;
+  padding: 0 7px 7px;
+  margin: 0;
   list-style: none;
-  animation: result-block-enter 0.55s 0.07s cubic-bezier(0.16, 1, 0.3, 1)
-    both;
 }
 
 .warning-list li {
@@ -1632,20 +1682,17 @@ summary:focus-visible,
 
 .recommendation-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .recommendation-card {
   width: 100%;
-  display: block;
-  padding: 13px;
+  overflow: hidden;
   border: 1px solid #dce2de;
-  border-radius: 17px;
+  border-radius: 15px;
   color: var(--ink);
   background: white;
-  box-shadow: 0 5px 16px rgb(30 52 55 / 6%);
-  text-align: left;
-  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(30 52 55 / 5%);
   animation: route-card-enter 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
   transition:
     border-color 0.22s ease,
@@ -1653,19 +1700,21 @@ summary:focus-visible,
     transform 0.22s ease;
 }
 
-.recommendation-card:hover {
+.recommendation-card:hover,
+.recommendation-card:focus-within {
   border-color: #9ebbb4;
-  box-shadow: 0 12px 28px rgb(30 52 55 / 11%);
-  transform: translateY(-3px);
+  box-shadow: 0 9px 22px rgb(30 52 55 / 9%);
+  transform: translateY(-2px);
 }
 
 .recommendation-card.is-selected {
-  border: 2px solid var(--teal);
-  padding: 12px;
+  border-color: var(--teal);
   background:
-    linear-gradient(145deg, rgb(235 247 241 / 65%), transparent 45%),
+    linear-gradient(145deg, rgb(235 247 241 / 72%), transparent 48%),
     white;
-  box-shadow: 0 8px 24px rgb(29 108 104 / 13%);
+  box-shadow:
+    0 0 0 1px var(--teal),
+    0 7px 20px rgb(29 108 104 / 11%);
 }
 
 .recommendation-card:nth-child(2) {
@@ -1691,8 +1740,6 @@ summary:focus-visible,
 }
 
 .card-topline,
-.arrival-row,
-.card-foot,
 .leg-heading {
   display: flex;
   align-items: center;
@@ -1707,12 +1754,12 @@ summary:focus-visible,
 .step-chip,
 .exercise-badge {
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 900;
 }
 
 .route-type {
-  padding: 5px 8px;
+  padding: 4px 7px;
 }
 
 .route-type-navy {
@@ -1734,15 +1781,151 @@ summary:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 4px 7px;
+  padding: 3px 6px;
   color: var(--teal);
   background: #e8f4ef;
 }
 
-.card-reason {
-  margin: 9px 0 12px;
-  color: var(--muted);
+.route-summary-button {
+  width: 100%;
+  display: block;
+  padding: 12px 13px 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.route-summary-button:focus-visible,
+.details-toggle:focus-visible {
+  outline: 3px solid rgb(29 108 104 / 22%);
+  outline-offset: -3px;
+}
+
+.route-time-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.route-time-summary > strong {
+  color: var(--navy-strong);
+  font-size: 23px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.route-time-summary > span {
+  color: #627275;
   font-size: 10px;
+  font-weight: 700;
+}
+
+.mode-duration-strip {
+  height: 5px;
+  display: flex;
+  gap: 2px;
+  margin: 10px 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0ed;
+}
+
+.mode-segment {
+  min-width: 5px;
+  height: 100%;
+  display: block;
+}
+
+.mode-segment.mode-walk {
+  background: #a8b2ae;
+}
+
+.mode-segment.mode-bus {
+  background: var(--bus-blue);
+}
+
+.mode-segment.mode-subway {
+  background: var(--purple);
+}
+
+.mode-segment.is-exercise {
+  background: var(--orange);
+}
+
+.compact-route {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: #405355;
+  white-space: nowrap;
+}
+
+.compact-leg-wrap,
+.compact-leg {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.compact-leg-wrap {
+  gap: 4px;
+}
+
+.compact-leg {
+  gap: 3px;
+  max-width: 96px;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+}
+
+.compact-leg svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.compact-leg-bus {
+  color: #245da5;
+}
+
+.compact-leg-subway {
+  color: var(--purple);
+}
+
+.compact-leg.is-exercise {
+  color: #b95114;
+}
+
+.compact-route-arrow {
+  color: #a2aba8;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.route-key-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 11px;
+  margin-top: 8px;
+  color: #768482;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.card-actions {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px 5px 13px;
+  border-top: 1px solid #edf0ed;
+  background: rgb(249 250 249 / 72%);
 }
 
 .realtime-badge,
@@ -1752,7 +1935,7 @@ summary:focus-visible,
   width: fit-content;
   padding: 3px 7px;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 900;
 }
 
@@ -1771,114 +1954,125 @@ summary:focus-visible,
   background: #e8ebfa;
 }
 
-.arrival-row {
-  gap: 6px;
-  padding: 9px 0;
-  border-top: 1px solid #edf0ed;
-  border-bottom: 1px solid #edf0ed;
-}
-
-.arrival-row > span {
+.details-toggle {
+  min-width: 67px;
+  min-height: 27px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  color: var(--muted);
+  justify-content: center;
+  gap: 3px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 8px;
+  color: #3f5e60;
+  background: transparent;
   font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
-.arrival-row > span svg {
-  color: var(--orange);
+.details-toggle:hover {
+  background: #eaf2ee;
 }
 
-.arrival-row > strong {
-  margin-left: auto;
-  color: var(--navy);
-  font-size: 18px;
+.details-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
 }
 
-.arrival-row > small {
-  color: var(--muted);
-  font-size: 9px;
-}
-
-.metric-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin: 11px 0;
-}
-
-.metric-pair > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.metric-pair > div + div {
-  padding-left: 12px;
-  border-left: 1px solid #e6eae7;
-}
-
-.metric-pair span {
-  color: var(--muted);
-  font-size: 9px;
-}
-
-.metric-pair strong {
-  color: var(--navy);
-  font-size: 15px;
-}
-
-.completion .label-row {
-  color: var(--muted);
-  font-size: 9px;
-}
-
-.completion .label-row strong {
-  color: var(--teal);
-  font-size: 11px;
-}
-
-.completion-track {
-  height: 7px;
-  margin-top: 5px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e5eae6;
-}
-
-.completion-track i {
-  height: 100%;
-  display: block;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--teal), #56b381);
-}
-
-.card-foot {
-  flex-wrap: wrap;
-  gap: 7px 12px;
-  padding-top: 11px;
-  margin-top: 11px;
-  border-top: 1px solid #edf0ed;
-}
-
-.card-foot span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #647477;
-  font-size: 9px;
-}
-
-.card-foot svg {
-  color: var(--teal);
+.details-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 
 .route-details {
+  scroll-margin-top: 10px;
   padding: 15px 2px 4px;
   margin-top: 13px;
   border-top: 1px solid var(--line);
   animation: result-block-enter 0.55s 0.2s cubic-bezier(0.16, 1, 0.3, 1)
     both;
+}
+
+.route-detail-reason {
+  margin: -5px 0 11px;
+  color: #647477;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.route-detail-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.route-detail-collapse {
+  min-height: 29px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 8px;
+  color: #496163;
+  background: #edf3f0;
+  font-size: 9px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.route-detail-collapse:hover {
+  background: #e2ece7;
+}
+
+.route-detail-collapse:focus-visible {
+  outline: 3px solid rgb(29 108 104 / 22%);
+  outline-offset: 1px;
+}
+
+.route-detail-collapse svg {
+  width: 13px;
+  height: 13px;
+}
+
+.route-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 15px;
+  padding: 10px 0;
+  border-top: 1px solid #edf0ed;
+  border-bottom: 1px solid #edf0ed;
+}
+
+.route-detail-facts > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+  color: #87928f;
+  font-size: 9px;
+}
+
+.route-detail-facts > span:first-child {
+  padding-left: 0;
+}
+
+.route-detail-facts > span + span {
+  border-left: 1px solid #e5e9e6;
+}
+
+.route-detail-facts strong {
+  overflow: hidden;
+  color: var(--navy);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-detail-facts svg {
+  display: none;
 }
 
 .step-chip {
@@ -1961,7 +2155,7 @@ summary:focus-visible,
 }
 
 .leg-heading strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .exercise-badge {
@@ -1974,13 +2168,13 @@ summary:focus-visible,
 .leg-list p {
   margin: 2px 0 3px;
   color: #5c6d70;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
 .leg-list small {
   color: #899694;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .bus-leg-meta {
@@ -1990,7 +2184,7 @@ summary:focus-visible,
   gap: 5px;
   margin-top: 6px;
   color: #536669;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .bus-leg-meta > span:first-child {
@@ -2225,12 +2419,13 @@ summary:focus-visible,
     padding-top: 12px;
   }
 
-  .recommendation-card {
-    padding: 15px;
+  .route-summary-button {
+    padding: 13px 15px 11px;
   }
 
-  .recommendation-card.is-selected {
-    padding: 14px;
+  .card-actions {
+    padding-right: 10px;
+    padding-left: 15px;
   }
 }
 

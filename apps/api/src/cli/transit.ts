@@ -1,4 +1,7 @@
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -43,6 +46,41 @@ function coordinateArgument(name: "lat" | "lng"): number {
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+const syncAreaSchema = z
+  .object({
+    id: z.string().trim().min(1).max(50),
+    name: z.string().trim().min(1).max(100),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+    radiusMeters: z.number().int().min(50).max(2000).default(500),
+    maxRoutes: z.number().int().min(1).max(200).default(40),
+  })
+  .strict();
+
+const syncAreasFileSchema = z
+  .object({
+    areas: z.array(syncAreaSchema).min(1).max(20),
+  })
+  .strict();
+
+type SyncArea = z.infer<typeof syncAreaSchema>;
+
+function safeFailureCode(error: unknown): string {
+  if (error instanceof TagoApiError) {
+    return error.resultCode;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[A-Z0-9]{2,10}$/u.test(error.code)
+  ) {
+    return `DATABASE_${error.code}`;
+  }
+  return "UNEXPECTED_ERROR";
 }
 
 const config = loadConfig();
@@ -105,6 +143,92 @@ async function health(): Promise<void> {
   printJson({ baseUrl: config.tagoBaseUrl, services: results });
 }
 
+async function syncArea(area: SyncArea, concurrency: number) {
+  const nearby = await transit.getNearbyStops(
+    { lat: area.lat, lng: area.lng },
+    area.radiusMeters,
+  );
+  const routes = new Map<
+    string,
+    { cityCode: string; routeId: string }
+  >();
+  for (const stop of nearby.items) {
+    if (stop.cityCode === null || stop.nodeId === null) {
+      continue;
+    }
+    const response = await transit.getRoutesByStop(
+      stop.cityCode,
+      stop.nodeId,
+    );
+    for (const route of response.items) {
+      routes.set(`${route.cityCode}:${route.routeId}`, {
+        cityCode: route.cityCode,
+        routeId: route.routeId,
+      });
+    }
+  }
+  const selected = [...routes.values()].slice(0, area.maxRoutes);
+  let nextIndex = 0;
+  let synced = 0;
+  let failed = 0;
+  const failureCodes = new Set<string>();
+  const failedRoutes: Array<{
+    cityCode: string;
+    routeId: string;
+    code: string;
+  }> = [];
+  const workers = Array.from(
+    { length: Math.min(concurrency, selected.length) },
+    async () => {
+      while (nextIndex < selected.length) {
+        const route = selected[nextIndex];
+        nextIndex += 1;
+        if (route !== undefined) {
+          try {
+            await transit.syncRoute(route.cityCode, route.routeId);
+            synced += 1;
+          } catch (error) {
+            failed += 1;
+            const code = safeFailureCode(error);
+            failureCodes.add(code);
+            failedRoutes.push({ ...route, code });
+          }
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  if (selected.length === 0) {
+    failed = 1;
+    failureCodes.add("NO_ROUTES_DISCOVERED");
+  }
+  return {
+    id: area.id,
+    name: area.name,
+    coordinate: { lat: area.lat, lng: area.lng },
+    radiusMeters: area.radiusMeters,
+    nearbyStopCount: nearby.items.length,
+    discoveredRouteCount: routes.size,
+    selectedRouteCount: selected.length,
+    syncedRouteCount: synced,
+    failedRouteCount: failed,
+    failureCodes: [...failureCodes],
+    failedRoutes,
+  };
+}
+
+async function writeSyncStatus(
+  path: string,
+  status: Record<string, unknown>,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}`;
+  await writeFile(temporary, `${JSON.stringify(status, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  await rename(temporary, path);
+}
+
 async function run(): Promise<void> {
   await transit.initialize();
   switch (command) {
@@ -155,91 +279,104 @@ async function run(): Promise<void> {
       break;
     }
     case "sync-area": {
-      const coordinate = {
+      const area = syncAreaSchema.parse({
+        id: "single-area",
+        name: "single-area",
         lat: coordinateArgument("lat"),
         lng: coordinateArgument("lng"),
-      };
-      const radiusMeters = Number(
+        radiusMeters: Number(
         argument("radiusMeters") ??
           config.transit.maxNearbyStopDistanceMeters,
-      );
-      const maxRoutes = Number(argument("maxRoutes") ?? 40);
+        ),
+        maxRoutes: Number(argument("maxRoutes") ?? 40),
+      });
       const concurrency = Math.min(
         Math.max(Number(argument("concurrency") ?? 2), 1),
         4,
       );
+      const result = await syncArea(area, concurrency);
+      printJson(result);
       if (
-        !Number.isInteger(radiusMeters) ||
-        radiusMeters < 1 ||
-        radiusMeters > config.transit.maxNearbyStopDistanceMeters
+        result.selectedRouteCount > 0 &&
+        result.syncedRouteCount === 0
       ) {
-        throw new Error("--radiusMeters 범위를 확인해 주세요.");
+        throw new Error("선택한 TAGO 노선을 하나도 동기화하지 못했습니다.");
       }
-      if (!Number.isInteger(maxRoutes) || maxRoutes < 1 || maxRoutes > 200) {
-        throw new Error("--maxRoutes 범위를 확인해 주세요.");
-      }
-      const nearby = await transit.getNearbyStops(
-        coordinate,
-        radiusMeters,
+      break;
+    }
+    case "sync-areas": {
+      const path = requiredArgument("path");
+      const statusPath = requiredArgument("statusPath");
+      const concurrency = Math.min(
+        Math.max(Number(argument("concurrency") ?? 2), 1),
+        4,
       );
-      const routes = new Map<
-        string,
-        { cityCode: string; routeId: string }
-      >();
-      for (const stop of nearby.items) {
-        if (stop.cityCode === null || stop.nodeId === null) {
-          continue;
-        }
-        const response = await transit.getRoutesByStop(
-          stop.cityCode,
-          stop.nodeId,
-        );
-        for (const route of response.items) {
-          routes.set(`${route.cityCode}:${route.routeId}`, {
-            cityCode: route.cityCode,
-            routeId: route.routeId,
+      const input = syncAreasFileSchema.parse(
+        JSON.parse(await readFile(path, "utf8")),
+      );
+      let previousLastSuccessAt: string | null = null;
+      try {
+        const previous = JSON.parse(await readFile(statusPath, "utf8")) as {
+          lastSuccessAt?: unknown;
+        };
+        previousLastSuccessAt =
+          typeof previous.lastSuccessAt === "string"
+            ? previous.lastSuccessAt
+            : null;
+      } catch {
+        previousLastSuccessAt = null;
+      }
+
+      const attemptedAt = new Date().toISOString();
+      const results = [];
+      for (const area of input.areas) {
+        try {
+          results.push(await syncArea(area, concurrency));
+        } catch (error) {
+          results.push({
+            id: area.id,
+            name: area.name,
+            coordinate: { lat: area.lat, lng: area.lng },
+            radiusMeters: area.radiusMeters,
+            nearbyStopCount: 0,
+            discoveredRouteCount: 0,
+            selectedRouteCount: 0,
+            syncedRouteCount: 0,
+            failedRouteCount: 1,
+            failureCodes: [safeFailureCode(error)],
+            failedRoutes: [],
           });
         }
       }
-      const selected = [...routes.values()].slice(0, maxRoutes);
-      let nextIndex = 0;
-      let synced = 0;
-      let failed = 0;
-      const failureCodes = new Set<string>();
-      const workers = Array.from(
-        { length: Math.min(concurrency, selected.length) },
-        async () => {
-          while (nextIndex < selected.length) {
-            const route = selected[nextIndex];
-            nextIndex += 1;
-            if (route !== undefined) {
-              try {
-                await transit.syncRoute(route.cityCode, route.routeId);
-                synced += 1;
-              } catch (error) {
-                failed += 1;
-                failureCodes.add(
-                  error instanceof TagoApiError
-                    ? error.resultCode
-                    : "UNEXPECTED_ERROR",
-                );
-              }
-            }
-          }
-        },
+      const syncedRouteCount = results.reduce(
+        (total, result) => total + result.syncedRouteCount,
+        0,
       );
-      await Promise.all(workers);
-      printJson({
-        coordinate,
-        radiusMeters,
-        nearbyStopCount: nearby.items.length,
-        discoveredRouteCount: routes.size,
-        syncedRouteCount: synced,
-        failedRouteCount: failed,
-        failureCodes: [...failureCodes],
-      });
-      if (selected.length > 0 && synced === 0) {
-        throw new Error("선택한 TAGO 노선을 하나도 동기화하지 못했습니다.");
+      const failedRouteCount = results.reduce(
+        (total, result) => total + result.failedRouteCount,
+        0,
+      );
+      const success = syncedRouteCount > 0 && failedRouteCount === 0;
+      const status = {
+        attemptedAt,
+        success,
+        lastSuccessAt: success ? new Date().toISOString() : previousLastSuccessAt,
+        areaCount: results.length,
+        syncedRouteCount,
+        failedRouteCount,
+        failureCodes: [
+          ...new Set(results.flatMap((result) => result.failureCodes)),
+        ],
+        failedRoutes: results.flatMap((result) => result.failedRoutes),
+        transit: await transit.repository.stats(),
+        areas: results,
+      };
+      await writeSyncStatus(statusPath, status);
+      printJson(status);
+      if (!success) {
+        throw new Error(
+          "교통 데이터 정기 동기화가 완전히 성공하지 못했습니다.",
+        );
       }
       break;
     }
@@ -268,7 +405,7 @@ async function run(): Promise<void> {
       break;
     default:
       throw new Error(
-        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, import-stops, stats 중 하나여야 합니다.",
+        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, sync-areas, import-stops, stats 중 하나여야 합니다.",
       );
   }
 }

@@ -1,0 +1,16 @@
+[Unit]
+Description=CHIMap TAGO route and route-stop refresh
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/chimap
+Environment=CHIMAP_REPO_ROOT=/root/chimap
+ExecStart=/root/chimap/ops/sync-transit.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
+TimeoutStartSec=45min

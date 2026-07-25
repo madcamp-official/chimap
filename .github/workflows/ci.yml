@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck, tests, build, config
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Deterministic tests
+        run: pnpm test
+
+      - name: Production build
+        run: pnpm build
+
+      - name: First-party actual-data boundary
+        shell: bash
+        run: |
+          if grep -RniE '\b(mock|fake|dummy|demo)\b' \
+            apps packages scripts docs README.md IA.md plan.md db_schema.md \
+            Dockerfile .env.example package.json \
+            --exclude-dir=node_modules --exclude-dir=dist \
+            --exclude='*.tsbuildinfo'; then
+            exit 1
+          fi
+
+      - name: Browser bundle secret boundary
+        shell: bash
+        run: |
+          if grep -RniE \
+            'KAKAO_REST_API_KEY|NAVER_MAP_NCP_KEY([^_I]|$)|DATA_GO_KR_SERVICE_KEY|TAGO_BUS_.*_SERVICE_KEY' \
+            apps/web/dist; then
+            exit 1
+          fi
+
+      - name: Validate Prometheus configuration
+        run: |
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/ops/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/ops/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
+            check rules /etc/prometheus/chimap-alerts.yml
+
+      - name: Validate Alertmanager configuration
+        run: |
+          docker run --rm \
+            --entrypoint /bin/amtool \
+            -v "$PWD/ops/alertmanager:/etc/alertmanager:ro" \
+            prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Validate Compose model
+        env:
+          POSTGRES_DB: chimap
+          POSTGRES_USER: chimap
+          POSTGRES_PASSWORD: ci-only-password
+          VITE_NAVER_MAP_NCP_KEY_ID: ci-public-client-id
+        run: docker compose config --quiet
+
+  postgis:
+    name: PostgreSQL and PostGIS integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6-alpine@sha256:4f8df0958dd321f520f917be5d0b338802928e4e1ebc4720f774168f4bbc2836
+        env:
+          POSTGRES_DB: chimap_test
+          POSTGRES_USER: chimap_test
+          POSTGRES_PASSWORD: chimap_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chimap_test -d chimap_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run real-data PostGIS scenarios
+        env:
+          DATABASE_TEST_URL: postgresql://chimap_test:chimap_test@127.0.0.1:5432/chimap_test
+        run: >-
+          pnpm --filter @chimap/api exec vitest run
+          src/transit/transit-repository.integration.test.ts

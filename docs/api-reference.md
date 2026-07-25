@@ -209,6 +209,13 @@ type RecommendationResponse = {
 추천 타입은 `FAST`, `BALANCED`, `GOAL`입니다. 모든 경로 좌표와 거리는
 정규화된 Kakao/TAGO 응답에서 가져옵니다.
 
+버스 leg의 `bus.stops`는 승차부터 하차까지의 실제 TAGO 정류장 순서를
+유지합니다. `coordinates`와 `bus.polyline`은 그 정류장 순서를 Kakao
+Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이는
+버스 운영사의 정밀 GPS 궤적과는 구분합니다. 클라이언트 지도는 전체
+`bus.stops`를 마커로 만들지 않고 첫 승차, 버스 간 환승, 최종 하차만
+표시합니다.
+
 주요 warning:
 
 | code | 의미 |
@@ -248,7 +255,7 @@ versioned prefix를 사용합니다.
 | `INVALID_LOCATION` | 400 | 공급자가 위치를 경로에 연결하지 못함 |
 | `NOT_FOUND` | 404 | API 경로 없음 |
 | `PLACE_NOT_FOUND` | 404 | 선택할 장소를 찾지 못함 |
-| `NO_TRANSIT_ROUTE` | 404 | 대중교통 경로 없음 |
+| `NO_TRANSIT_ROUTE` | 404 | 최대 탐색 범위 안의 운행 정류장 없음 또는 직행/1회 환승 연결 없음 |
 | `NO_ROUTE_WITHIN_DEADLINE` | 404 | 마감·추가시간을 만족하는 후보 없음 |
 | `UPSTREAM_RATE_LIMIT` | 429 | 외부 공급자 사용량 제한 |
 | `RATE_LIMITED` | 429 | CHIMap 자체 IP rate limit |

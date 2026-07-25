@@ -27,6 +27,15 @@ export type WalkRouteRequest = {
   signal?: AbortSignal;
 };
 
+export type RoadRouteRequest = {
+  points: Coordinate[];
+  signal?: AbortSignal;
+};
+
+export interface RoadGeometryProvider {
+  getRoadRouteGeometry(request: RoadRouteRequest): Promise<Coordinate[]>;
+}
+
 export interface MobilityProvider {
   readonly source: "KAKAO" | "TAGO";
 

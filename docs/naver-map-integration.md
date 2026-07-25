@@ -56,8 +56,12 @@ https://oapi.map.naver.com/openapi/v3/maps.js
 - 실패 시 script·map·overlay 정리
 - 사용자 재시도 시 SDK 재요청
 
-지도에는 추천 경로 polyline, 출발·도착, 운동 구간, 승하차, 중간 정류장과
-차량 위치를 표시합니다.
+지도에는 추천 경로 polyline, 출발·도착, 운동 구간, 첫 승차·환승·최종
+하차와 탑승 정류장에 가장 가까이 접근 중인 차량을 구간별 최대 1대
+표시합니다. 버스 중간 정류장은 마커로 표시하지 않습니다. 버스 polyline은
+TAGO 정류장 순서를 Kakao Mobility Directions 도로 vertex에 매칭한 좌표를
+사용합니다. 노선 전체 차량과 이미 탑승 순서를 지난 차량은 표시하지 않으며
+차량 좌표는 지도 bounds 계산에서 제외합니다.
 
 SDK 인증·network·timeout 장애가 발생해도 추천 데이터는 제거하지 않습니다.
 동일 추천 응답의 실제 좌표를 SVG로 표시하고 카드와 텍스트 이동 단계를
@@ -123,6 +127,19 @@ NAVER까지 정상 0건이면 검색은 빈 목록, 역지오코딩은 `place: n
 | timeout/network | 한 번 제한 재시도 | outbound/network |
 
 NAVER REST timeout은 3초이고 최대 두 번 시도합니다.
+
+host에서는 연결되지만 Docker 컨테이너에서 TLS handshake만 timeout 되면
+인증보다 먼저 bridge path MTU를 확인합니다. CHIMap Compose network는
+다음 값을 고정합니다.
+
+```yaml
+driver_opts:
+  com.docker.network.driver.mtu: "1400"
+```
+
+변경 후 network를 실제로 재생성하고 운영 컨테이너 안에서 geocode와 reverse
+HTTP 200을 다시 확인합니다. host 호출 성공만으로 서버 보완 경로가
+정상이라고 판정하지 않습니다.
 
 ## 7. 배포 전·후 검증
 

@@ -1,5 +1,4 @@
 import type {
-  BusVehiclePosition,
   Coordinate,
   Place,
   Recommendation,
@@ -7,6 +6,8 @@ import type {
 } from "@chimap/contracts";
 import { AlertTriangle, Map, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+
+import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
 
 type NaverLatLng = object;
 type NaverBounds = object;
@@ -90,6 +91,13 @@ const NAVER_SDK_SCRIPT_ID = "chimap-naver-maps-sdk";
 const NAVER_SDK_TIMEOUT_MS = 12_000;
 const NAVER_SDK_AUTH_SETTLE_MS = 500;
 const DEFAULT_CENTER: Coordinate = { lng: 127.3845, lat: 36.3504 };
+
+type TransitMarker = {
+  coordinate: Coordinate;
+  label: "탑승" | "환승" | "하차";
+  tone: "boarding" | "transfer" | "alighting";
+  title: string;
+};
 
 let sdkPromise: Promise<NaverMapsApi> | undefined;
 let sdkAuthenticationFailed = false;
@@ -230,21 +238,65 @@ function createMarkerElement(
     | "origin"
     | "exercise"
     | "destination"
-    | "stop"
     | "boarding"
+    | "transfer"
     | "alighting"
     | "vehicle",
+  title?: string,
 ): { element: HTMLElement; width: number } {
-  const width =
-    tone === "stop"
-      ? 22
-      : Math.max(48, Math.min(96, label.length * 13 + 22));
+  const width = Math.max(48, Math.min(96, label.length * 13 + 22));
   const element = document.createElement("div");
   element.className = `map-marker map-marker-${tone}`;
   element.textContent = label;
+  element.title = title ?? label;
   element.style.width = `${width}px`;
   element.setAttribute("aria-hidden", "true");
   return { element, width };
+}
+
+export function transitMarkers(
+  route: Recommendation | undefined,
+): TransitMarker[] {
+  const busLegs = route?.legs.filter((leg) => leg.bus !== undefined) ?? [];
+  if (busLegs.length === 0) {
+    return [];
+  }
+  const firstBus = busLegs[0]!.bus!;
+  const lastBus = busLegs.at(-1)!.bus!;
+  const markers: TransitMarker[] = [
+    {
+      coordinate: {
+        lat: firstBus.boardingStop.latitude,
+        lng: firstBus.boardingStop.longitude,
+      },
+      label: "탑승",
+      tone: "boarding",
+      title: `${firstBus.boardingStop.name} · ${firstBus.routeNo}번 탑승`,
+    },
+  ];
+  for (let index = 1; index < busLegs.length; index += 1) {
+    const previous = busLegs[index - 1]!.bus!;
+    const current = busLegs[index]!.bus!;
+    markers.push({
+      coordinate: {
+        lat: current.boardingStop.latitude,
+        lng: current.boardingStop.longitude,
+      },
+      label: "환승",
+      tone: "transfer",
+      title: `${current.boardingStop.name} · ${previous.routeNo}번에서 ${current.routeNo}번으로 환승`,
+    });
+  }
+  markers.push({
+    coordinate: {
+      lat: lastBus.alightingStop.latitude,
+      lng: lastBus.alightingStop.longitude,
+    },
+    label: "하차",
+    tone: "alighting",
+    title: `${lastBus.alightingStop.name} · ${lastBus.routeNo}번 하차`,
+  });
+  return markers;
 }
 
 function RoutePreview({
@@ -256,7 +308,7 @@ function RoutePreview({
   route: Recommendation | undefined;
   origin: Place | undefined;
   destination: Place | undefined;
-  vehiclePositions: BusVehiclePosition[];
+  vehiclePositions: RelevantVehiclePosition[];
 }) {
   const geometry = useMemo(() => {
     const coordinates = route?.legs.flatMap((leg) => leg.coordinates) ?? [];
@@ -264,10 +316,6 @@ function RoutePreview({
       ...coordinates,
       ...(origin === undefined ? [] : [origin.location]),
       ...(destination === undefined ? [] : [destination.location]),
-      ...vehiclePositions.map((vehicle) => ({
-        lat: vehicle.latitude,
-        lng: vehicle.longitude,
-      })),
     ];
     if (all.length === 0) {
       return undefined;
@@ -285,7 +333,7 @@ function RoutePreview({
       212 - ((point.lat - minLat) / latSpan) * 184,
     ];
     return { project };
-  }, [destination, origin, route, vehiclePositions]);
+  }, [destination, origin, route]);
 
   if (geometry === undefined || route === undefined) {
     return (
@@ -374,23 +422,24 @@ function RoutePreview({
           </text>
         </g>
       )}
-      {route.legs
-        .flatMap((leg) => leg.bus?.stops ?? [])
-        .map((stop) => {
-          const [x, y] = geometry.project({
-            lat: stop.latitude,
-            lng: stop.longitude,
-          });
+      {transitMarkers(route).map((marker) => {
+          const [x, y] = geometry.project(marker.coordinate);
+          const fill =
+            marker.tone === "boarding"
+              ? "#2e6dd8"
+              : marker.tone === "transfer"
+                ? "#f47b35"
+                : "#7957b8";
           return (
-            <circle
-              key={`${stop.routeId}:${stop.nodeOrder}:${stop.nodeId}`}
-              cx={x}
-              cy={y}
-              r="3"
-              fill="#ffffff"
-              stroke="#2e6dd8"
-              strokeWidth="2"
-            />
+            <g
+              key={`${marker.label}:${marker.coordinate.lat}:${marker.coordinate.lng}`}
+              transform={`translate(${x} ${y})`}
+            >
+              <circle r="7" fill={fill} stroke="white" strokeWidth="2" />
+              <text x="10" y="4" className="preview-label">
+                {marker.label}
+              </text>
+            </g>
           );
         })}
       {vehiclePositions.map((vehicle, index) => {
@@ -420,7 +469,7 @@ type MapViewProps = {
   recommendations: Recommendation[];
   selectedRouteId: string | undefined;
   ncpKeyId?: string;
-  vehiclePositions?: BusVehiclePosition[];
+  vehiclePositions?: RelevantVehiclePosition[];
 };
 
 export function MapView({
@@ -575,8 +624,8 @@ export function MapView({
         | "origin"
         | "exercise"
         | "destination"
-        | "stop"
         | "boarding"
+        | "transfer"
         | "alighting"
         | "vehicle";
       title?: string;
@@ -610,53 +659,27 @@ export function MapView({
         tone: "exercise",
       });
     }
-    const seenTransitMarkers = new Set<string>();
-    for (const leg of selectedRoute?.legs ?? []) {
-      if (leg.bus === undefined) {
-        continue;
-      }
-      for (const stop of leg.bus.stops) {
-        const isBoarding =
-          stop.nodeId === leg.bus.boardingStop.nodeId;
-        const isAlighting =
-          stop.nodeId === leg.bus.alightingStop.nodeId;
-        const tone = isBoarding
-          ? ("boarding" as const)
-          : isAlighting
-            ? ("alighting" as const)
-            : ("stop" as const);
-        const key = `${stop.latitude}:${stop.longitude}:${tone}`;
-        if (seenTransitMarkers.has(key)) {
-          continue;
-        }
-        seenTransitMarkers.add(key);
-        markerPoints.push({
-          coordinate: {
-            lat: stop.latitude,
-            lng: stop.longitude,
-          },
-          label: isBoarding ? "탑승" : isAlighting ? "하차" : "•",
-          tone,
-          title: stop.stopName,
-        });
-      }
-    }
+    markerPoints.push(...transitMarkers(selectedRoute));
     vehiclePositions.forEach((vehicle) => {
       markerPoints.push({
         coordinate: {
           lat: vehicle.latitude,
           lng: vehicle.longitude,
         },
-        label: `버스 ${vehicle.routeNo}`,
+        label: vehicle.routeNo,
         tone: "vehicle",
         title:
           vehicle.vehicleNo === null
-            ? `${vehicle.routeNo}번 운행 차량`
-            : `${vehicle.routeNo}번 ${vehicle.vehicleNo}`,
+            ? `${vehicle.routeNo}번 탑승 예정 차량 · ${vehicle.stopsUntilBoarding}정류장 전`
+            : `${vehicle.routeNo}번 탑승 예정 차량 ${vehicle.vehicleNo} · ${vehicle.stopsUntilBoarding}정류장 전`,
       });
     });
     markerPoints.forEach((marker) => {
-      const icon = createMarkerElement(marker.label, marker.tone);
+      const icon = createMarkerElement(
+        marker.label,
+        marker.tone,
+        marker.title,
+      );
       overlays.push(
         new maps.Marker({
           map,
@@ -683,10 +706,6 @@ export function MapView({
       ...selectedCoordinates,
       ...(origin === undefined ? [] : [origin.location]),
       ...(destination === undefined ? [] : [destination.location]),
-      ...vehiclePositions.map((vehicle) => ({
-        lat: vehicle.latitude,
-        lng: vehicle.longitude,
-      })),
     ];
     if (visibleCoordinates.length >= 2) {
       const latitudes = visibleCoordinates.map((point) => point.lat);

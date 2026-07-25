@@ -1,0 +1,40 @@
+name: Public live E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-live-e2e
+  cancel-in-progress: false
+
+jobs:
+  public:
+    name: Public NAVER map and real provider flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter @chimap/web exec playwright install --with-deps chromium
+
+      - name: Run limited public E2E
+        env:
+          E2E_BASE_URL: https://chimap.madcamp-kaist.org
+          E2E_REQUIRE_NAVER_MAP: "1"
+        run: pnpm test:e2e

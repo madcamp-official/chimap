@@ -1,7 +1,17 @@
 import type { Recommendation, RouteLeg } from "@chimap/contracts";
-import { BusFront, Footprints, TrainFront } from "lucide-react";
+import {
+  BusFront,
+  ChevronUp,
+  Footprints,
+  Ticket,
+  TrainFront,
+} from "lucide-react";
 
-import { formatDistance, formatDuration } from "../lib/time.js";
+import {
+  formatDistance,
+  formatDuration,
+  formatKstTime,
+} from "../lib/time.js";
 
 function LegIcon({ leg }: { leg: RouteLeg }) {
   if (leg.mode === "BUS") {
@@ -25,18 +35,59 @@ function modeLabel(leg: RouteLeg): string {
 
 export function RouteDetails({
   recommendation,
+  id,
+  onCollapse,
 }: {
   recommendation: Recommendation;
+  id: string;
+  onCollapse: () => void;
 }) {
+  const titleId = `${id}-title`;
   return (
-    <section className="route-details" aria-labelledby="route-details-title">
+    <section
+      id={id}
+      className="route-details"
+      aria-labelledby={titleId}
+    >
       <div className="section-heading compact">
         <div>
           <span className="eyebrow">선택 경로 상세</span>
-          <h2 id="route-details-title">{recommendation.title}</h2>
+          <h2 id={titleId}>{recommendation.title}</h2>
         </div>
-        <span className="step-chip">
-          부족분의 {Math.round(recommendation.shortfallCoverageRate * 100)}%
+        <div className="route-detail-heading-actions">
+          <span className="step-chip">
+            부족분의 {Math.round(recommendation.shortfallCoverageRate * 100)}%
+          </span>
+          <button
+            type="button"
+            className="route-detail-collapse"
+            onClick={onCollapse}
+            aria-label={`${recommendation.title} 간략히 보기`}
+          >
+            간략히
+            <ChevronUp aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <p className="route-detail-reason">{recommendation.reason}</p>
+      <div className="route-detail-facts" aria-label="선택 경로 핵심 정보">
+        <span>
+          <strong>{formatDuration(recommendation.durationSeconds)}</strong>
+          총 소요
+        </span>
+        <span>
+          <strong>{formatKstTime(recommendation.arrivalAt)}</strong>
+          예상 도착
+        </span>
+        <span>
+          <Ticket aria-hidden="true" />
+          <strong>
+            {recommendation.fareWon === undefined
+              ? "확인 필요"
+              : `${recommendation.fareWon.toLocaleString("ko-KR")}원`}
+          </strong>
+          예상 요금
         </span>
       </div>
 

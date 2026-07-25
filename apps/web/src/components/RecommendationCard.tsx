@@ -1,10 +1,10 @@
-import type { Recommendation } from "@chimap/contracts";
+import type { Recommendation, RouteLeg } from "@chimap/contracts";
 import {
   BusFront,
   Check,
-  Clock3,
+  ChevronDown,
   Footprints,
-  Ticket,
+  TrainFront,
 } from "lucide-react";
 
 import {
@@ -16,7 +16,10 @@ import {
 type RecommendationCardProps = {
   recommendation: Recommendation;
   selected: boolean;
+  detailsOpen: boolean;
+  detailsId: string;
   onSelect: () => void;
+  onToggleDetails: () => void;
 };
 
 const TYPE_META = {
@@ -25,106 +28,190 @@ const TYPE_META = {
   GOAL: { badge: "목표에 가까움", tone: "orange" },
 } as const;
 
+function legLabel(leg: RouteLeg): string {
+  if (leg.mode === "BUS") {
+    return leg.name ?? "버스";
+  }
+  if (leg.mode === "SUBWAY") {
+    return leg.name ?? "지하철";
+  }
+  return leg.isExerciseSegment ? "추가 도보" : "도보";
+}
+
+function compactLegs(legs: RouteLeg[]): Array<{
+  key: string;
+  label: string;
+  mode: RouteLeg["mode"];
+  isExercise: boolean;
+}> {
+  const result: Array<{
+    key: string;
+    label: string;
+    mode: RouteLeg["mode"];
+    isExercise: boolean;
+  }> = [];
+
+  for (const leg of legs) {
+    const label = legLabel(leg);
+    const previous = result.at(-1);
+    if (
+      leg.mode === "WALK" &&
+      previous?.mode === "WALK" &&
+      previous.isExercise === leg.isExerciseSegment
+    ) {
+      continue;
+    }
+    result.push({
+      key: leg.id,
+      label,
+      mode: leg.mode,
+      isExercise: leg.isExerciseSegment,
+    });
+  }
+
+  return result;
+}
+
+function LegSummaryIcon({
+  mode,
+}: {
+  mode: RouteLeg["mode"];
+}) {
+  if (mode === "BUS") {
+    return <BusFront aria-hidden="true" />;
+  }
+  if (mode === "SUBWAY") {
+    return <TrainFront aria-hidden="true" />;
+  }
+  return <Footprints aria-hidden="true" />;
+}
+
 export function RecommendationCard({
   recommendation,
   selected,
+  detailsOpen,
+  detailsId,
   onSelect,
+  onToggleDetails,
 }: RecommendationCardProps) {
   const meta = TYPE_META[recommendation.type];
   const completionPercent = Math.round(
     recommendation.dailyGoalCompletionRate * 100,
   );
+  const walkDurationSeconds = recommendation.legs.reduce(
+    (total, leg) =>
+      leg.mode === "WALK" ? total + leg.durationSeconds : total,
+    0,
+  );
+  const routeLegs = compactLegs(recommendation.legs);
+  const routeDescription = routeLegs.map((leg) => leg.label).join(", ");
+
   return (
-    <button
-      type="button"
+    <article
       className={`recommendation-card ${selected ? "is-selected" : ""}`}
-      onClick={onSelect}
-      aria-pressed={selected}
-      aria-label={`${recommendation.title}, 예상 도착 ${formatKstTime(recommendation.arrivalAt)}`}
     >
-      <div className="card-topline">
-        <span className={`route-type route-type-${meta.tone}`}>
-          {recommendation.title}
+      <button
+        type="button"
+        className="route-summary-button"
+        onClick={onSelect}
+        aria-pressed={selected}
+        aria-label={`${recommendation.title}, 예상 도착 ${formatKstTime(recommendation.arrivalAt)}`}
+      >
+        <span className="card-topline">
+          <span className={`route-type route-type-${meta.tone}`}>
+            {meta.badge}
+          </span>
+          {selected ? (
+            <span className="card-badge">
+              <Check aria-hidden="true" size={14} />
+              선택됨
+            </span>
+          ) : null}
         </span>
-        <span className="card-badge">
-          {selected ? <Check aria-hidden="true" size={14} /> : null}
-          {selected ? "선택됨" : meta.badge}
+
+        <span className="route-time-summary">
+          <strong>{formatDuration(recommendation.durationSeconds)}</strong>
+          <span>
+            {formatKstTime(recommendation.arrivalAt)} 도착
+            {recommendation.extraMinutes > 0
+              ? ` · 기본보다 ${recommendation.extraMinutes}분`
+              : " · 가장 빠른 도착"}
+          </span>
         </span>
-      </div>
-      <p className="card-reason">{recommendation.reason}</p>
-      {recommendation.isRealtime === undefined ? null : (
+
+        <span
+          className="mode-duration-strip"
+          role="img"
+          aria-label={`이동수단 구성: ${routeDescription}`}
+        >
+          {recommendation.legs.map((leg) => (
+            <i
+              key={leg.id}
+              className={`mode-segment mode-${leg.mode.toLowerCase()} ${
+                leg.isExerciseSegment ? "is-exercise" : ""
+              }`}
+              style={{ flexGrow: Math.max(leg.durationSeconds, 60) }}
+            />
+          ))}
+        </span>
+
+        <span className="compact-route" aria-hidden="true">
+          {routeLegs.map((leg, index) => (
+            <span className="compact-leg-wrap" key={leg.key}>
+              {index > 0 ? <i className="compact-route-arrow">→</i> : null}
+              <span
+                className={`compact-leg compact-leg-${leg.mode.toLowerCase()} ${
+                  leg.isExercise ? "is-exercise" : ""
+                }`}
+              >
+                <LegSummaryIcon mode={leg.mode} />
+                {leg.label}
+              </span>
+            </span>
+          ))}
+        </span>
+
+        <span className="route-key-metrics">
+          <span>
+            도보 {formatDuration(walkDurationSeconds)} ·{" "}
+            {formatDistance(recommendation.walkDistanceMeters)}
+          </span>
+          <span>
+            {recommendation.transferCount === 0
+              ? "환승 없음"
+              : `환승 ${recommendation.transferCount}회`}
+          </span>
+          <span>
+            {recommendation.estimatedSteps.toLocaleString("ko-KR")}걸음 · 목표{" "}
+            {completionPercent}%
+          </span>
+        </span>
+      </button>
+
+      <div className="card-actions">
         <span
           className={
-            recommendation.isRealtime
+            recommendation.isRealtime === true
               ? "realtime-badge"
               : "estimate-badge"
           }
         >
-          {recommendation.isRealtime
-            ? "실시간 도착 반영"
-            : "일부 예상값 사용"}
+          {recommendation.isRealtime === true
+            ? "실시간 도착"
+            : "예상 도착 포함"}
         </span>
-      )}
-
-      <div className="arrival-row">
-        <span>
-          <Clock3 aria-hidden="true" size={17} />
-          예상 도착
-        </span>
-        <strong>{formatKstTime(recommendation.arrivalAt)}</strong>
-        <small>{formatDuration(recommendation.durationSeconds)}</small>
-      </div>
-
-      <div className="metric-pair">
-        <div>
-          <span>기본 대비</span>
-          <strong>
-            {recommendation.extraMinutes === 0
-              ? "동일"
-              : `+${recommendation.extraMinutes}분`}
-          </strong>
-        </div>
-        <div>
-          <span>예상 걸음</span>
-          <strong>{recommendation.estimatedSteps.toLocaleString("ko-KR")}</strong>
-        </div>
-      </div>
-
-      <div className="completion">
-        <div className="label-row">
-          <span>이동 후 하루 목표 달성률</span>
-          <strong>{completionPercent}%</strong>
-        </div>
-        <div
-          className="completion-track"
-          role="progressbar"
-          aria-label="이동 후 하루 목표 달성률"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={completionPercent}
+        <button
+          type="button"
+          className="details-toggle"
+          onClick={onToggleDetails}
+          aria-expanded={detailsOpen}
+          aria-controls={detailsId}
+          aria-label={`${recommendation.title} ${detailsOpen ? "상세 접기" : "자세히"}`}
         >
-          <i style={{ width: `${completionPercent}%` }} />
-        </div>
+          {detailsOpen ? "접기" : "자세히"}
+          <ChevronDown aria-hidden="true" />
+        </button>
       </div>
-
-      <div className="card-foot">
-        <span>
-          <Footprints aria-hidden="true" size={16} />
-          {formatDistance(recommendation.walkDistanceMeters)}
-        </span>
-        <span>
-          <BusFront aria-hidden="true" size={16} />
-          {recommendation.transferCount === 0
-            ? "환승 없음"
-            : `환승 ${recommendation.transferCount}회`}
-        </span>
-        <span>
-          <Ticket aria-hidden="true" size={16} />
-          {recommendation.fareWon === undefined
-            ? "요금 정보 없음"
-            : `${recommendation.fareWon.toLocaleString("ko-KR")}원`}
-        </span>
-      </div>
-    </button>
+    </article>
   );
 }

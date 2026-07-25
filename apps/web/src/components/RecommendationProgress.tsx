@@ -22,12 +22,17 @@ const STEPS = [
 
 export function RecommendationProgress() {
   const [step, setStep] = useState(0);
+  const [waitingLonger, setWaitingLonger] = useState(false);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
       setStep((current) => Math.min(current + 1, STEPS.length - 1));
     }, 1200);
-    return () => window.clearInterval(interval);
+    const longerTimer = window.setTimeout(() => setWaitingLonger(true), 8000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(longerTimer);
+    };
   }, []);
 
   const current = STEPS[step]!;
@@ -44,7 +49,11 @@ export function RecommendationProgress() {
         <i />
         <i />
       </div>
-      <p>보통 몇 초 안에 끝나요. 새 검색을 시작하면 이 요청은 취소됩니다.</p>
+      <p>
+        {waitingLonger
+          ? "실제 버스 운행 응답이 늦어 조금 더 확인하고 있어요. 새 검색을 시작하면 이 요청은 취소됩니다."
+          : "보통 몇 초 안에 끝나요. 새 검색을 시작하면 이 요청은 취소됩니다."}
+      </p>
     </section>
   );
 }

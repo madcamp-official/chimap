@@ -143,6 +143,91 @@ describe.skipIf(databaseUrl === undefined)(
       }
     });
 
+    it("정류장번호가 같은 기존 TAGO row와 노선 관계를 CSV row로 병합한다", async () => {
+      const repository = new TransitRepository({
+        url: databaseUrl!,
+        poolMax: 2,
+        connectTimeoutMs: 3000,
+        statementTimeoutMs: 5000,
+        sslMode: "disable",
+      });
+      try {
+        await repository.migrate();
+        await repository.upsertCsvStops(
+          parseBusStopsCsvBuffer(source).rows,
+        );
+        const csv = await repository.pool.query<{ id: string }>(
+          `UPDATE bus_stops
+           SET city_code = NULL, node_id = NULL
+           WHERE source_stop_no = 'DJB8007526'
+           RETURNING id`,
+        );
+        const csvId = csv.rows[0]?.id;
+        expect(csvId).toBeDefined();
+        const tago = await repository.pool.query<{ id: string }>(
+          `INSERT INTO bus_stops (
+             city_code, node_id, ars_id, name, location, source,
+             source_updated_at, created_at, updated_at
+           ) VALUES (
+             '25', 'DJB8007526', '45110', '한국과학기술원본관',
+             ST_SetSRID(ST_MakePoint(127.36063, 36.369938), 4326)::geography,
+             'tago', now(), now(), now()
+           )
+           RETURNING id`,
+        );
+        const tagoId = tago.rows[0]?.id;
+        expect(tagoId).toBeDefined();
+        await repository.upsertRoute(actualRoute);
+        await repository.pool.query(
+          `INSERT INTO bus_route_stops (
+             route_internal_id, stop_internal_id, node_order, direction,
+             created_at, updated_at
+           )
+           SELECT id, $1, 99, 'migration-check', now(), now()
+           FROM bus_routes
+           WHERE city_code = $2 AND route_id = $3`,
+          [tagoId, actualRoute.cityCode, actualRoute.routeId],
+        );
+        await repository.pool.query(
+          "DELETE FROM schema_migrations WHERE version = 2",
+        );
+
+        await repository.migrate();
+
+        const merged = await repository.pool.query<{
+          id: string;
+          city_code: string;
+          node_id: string;
+        }>(
+          `SELECT id, city_code, node_id
+           FROM bus_stops
+           WHERE source_stop_no = 'DJB8007526'`,
+        );
+        expect(merged.rows).toEqual([
+          {
+            id: csvId,
+            city_code: "25",
+            node_id: "DJB8007526",
+          },
+        ]);
+        const removed = await repository.pool.query(
+          "SELECT id FROM bus_stops WHERE id = $1",
+          [tagoId],
+        );
+        expect(removed.rowCount).toBe(0);
+        const relation = await repository.pool.query<{
+          stop_internal_id: string;
+        }>(
+          `SELECT stop_internal_id
+           FROM bus_route_stops
+           WHERE node_order = 99`,
+        );
+        expect(relation.rows[0]?.stop_internal_id).toBe(csvId);
+      } finally {
+        await repository.close();
+      }
+    });
+
     it("적용된 migration checksum 변경을 거절한다", async () => {
       const repository = new TransitRepository({
         url: databaseUrl!,

@@ -1,8 +1,8 @@
 # CHIMap 데이터베이스 및 공개 계약
 
 기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-25 운영 DB에서
-정류장 228,119개, TAGO 연결 정류장 2,188개, 노선 127개,
-노선-정류장 관계 4,469개를 확인했습니다. 운영 수치는
+정류장 227,184개, TAGO 연결 정류장 2,659개, 노선 131개,
+노선-정류장 관계 5,411개를 확인했습니다. 운영 수치는
 [구현·운영 현황](./docs/current-state.md)에서 갱신합니다.
 
 ## 1. 경계와 원칙
@@ -63,6 +63,10 @@ migration 실행기는 다음 순서를 보장합니다.
 4. migration 하나마다 별도 transaction
 5. 성공 후 version/name/checksum 기록
 6. advisory lock 해제
+
+migration 2는 CSV `source_stop_no`와 기존 TAGO `node_id`가 정확히 같은
+정류장 1,173쌍의 노선 관계를 CSV row로 옮긴 뒤 별도 TAGO row를 제거하고
+식별자를 연결했습니다. 운영 적용 후 같은 정확 중복 조합은 0건입니다.
 
 ## 4. 물리 스키마
 
@@ -190,7 +194,10 @@ LIMIT 100;
 ```
 
 GiST index가 반경 후보를 줄이고 `ST_Distance`가 최종 거리 순서를 만듭니다.
-API 반경 상한은 500m입니다.
+공개 주변 정류장 API 반경 상한은 500m입니다. 추천 내부 조회는 같은
+공간 질의를 500m→800m→기본 1.2km 순으로 반복하며, 별도
+`TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS` 상한을 적용합니다. 각 단계에서
+실제 노선이 0건인 정류장은 승하차 후보에서 제외합니다.
 
 ## 6. 전국 정류장 CSV import
 
@@ -213,8 +220,9 @@ API 반경 상한은 500m입니다.
 ## 7. TAGO reconcile과 동기화
 
 TAGO 정류장의 `(city_code,node_id)`가 있으면 해당 row를 갱신합니다. 없으면
-30m 안에서 아직 TAGO ID가 연결되지 않은 CSV row를 찾고 정규화한 이름
-유사도가 0.82 이상인 후보를 비교합니다.
+먼저 TAGO `node_id`와 CSV `source_stop_no`가 정확히 같은 단일 row를
+연결합니다. 정확 일치가 없을 때만 30m 안에서 아직 TAGO ID가 연결되지
+않은 CSV row를 찾고 정규화한 이름 유사도가 0.82 이상인 후보를 비교합니다.
 
 - 한 후보가 두 번째 후보보다 0.1 이상 우세: 기존 CSV row에 TAGO ID 연결
 - 여러 후보가 비슷함: ambiguous event를 남기고 TAGO row를 별도로 저장
@@ -222,6 +230,10 @@ TAGO 정류장의 `(city_code,node_id)`가 있으면 해당 row를 갱신합니�
 
 노선 정보와 정류장 순서는 TAGO API에서 다시 받아 transaction으로 교체합니다.
 실시간 도착과 차량 위치는 DB에 저장하지 않습니다.
+
+매일 systemd timer가 KAIST 1.2km와 대전역 500m 운영 지역을 갱신합니다.
+상태 파일에는 시도·마지막 성공 시각, 지역 수, 성공·실패 노선 수, 안전한
+실패 코드와 정적 교통 통계만 기록합니다.
 
 ## 8. 공개 API 계약
 
@@ -329,17 +341,22 @@ type RecommendationResponse = {
 
 ## 9. 백업과 복구
 
-매일 다음과 같은 custom-format 백업을 생성합니다.
+systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합니다.
 
 ```bash
-docker compose exec -T postgres pg_dump \
-  -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > chimap-YYYYMMDD.dump
+./ops/backup-postgres.sh
 ```
 
+- `flock`으로 동시 백업 차단
+- 임시 파일 생성 후 `pg_restore --list` 성공 시에만 최종 이름으로 이동
+- archive마다 SHA-256 sidecar 생성
+- `latest.json`에 완료시각, 파일명, byte, checksum 기록
 - 일간 최근 7개 보관
 - 주간 최근 4개 보관
-- 월 1회 임시 DB에 `pg_restore --clean --if-exists` 검증
-- 복구 시험 후 extension, migration checksum, 네 가지 통계와 공간 질의 확인
+- 월 1회 digest가 고정된 별도 PostGIS 18 컨테이너에 restore 검증
+- PostGIS 이미지 초기화 후 `template0` 기반 빈 DB에 `pg_restore`
+- 복구 시험 후 extension, migration과 네 가지 통계 확인
+- `restore-latest.json`에 검증 완료시각과 통계 기록
 - volume 장애 시 최신 검증 백업으로 새 volume을 만든 뒤 readiness 확인
 
 최초 실제 데이터 백업의 파일명·크기·checksum과 restore 결과는

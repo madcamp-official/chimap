@@ -1,9 +1,10 @@
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
+import { AppMetrics } from "./monitoring/metrics.js";
 import { TransitService } from "./transit/transit-service.js";
 
 try {
@@ -24,8 +25,15 @@ const config = loadConfig();
 const logger = createLogger(config);
 const transitService = new TransitService({ config, logger });
 await transitService.initialize();
-const app = createApp({ config, logger, transitService });
+const metrics = new AppMetrics({
+  config,
+  repository: transitService.repository,
+});
+const app = createApp({ config, logger, transitService, metrics });
 const server = createServer(app);
+const metricsServer = config.metrics.enabled
+  ? createServer(metrics.handleRequest)
+  : undefined;
 
 server.listen(config.port, "0.0.0.0", () => {
   logger.info({
@@ -33,6 +41,28 @@ server.listen(config.port, "0.0.0.0", () => {
     port: config.port,
   });
 });
+
+metricsServer?.listen(config.metrics.port, "0.0.0.0", () => {
+  logger.info({
+    event: "metrics.started",
+    port: config.metrics.port,
+  });
+});
+
+function closeServer(target: Server | undefined): Promise<void> {
+  if (target === undefined) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    target.close((error) => {
+      if (error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
+    });
+  });
+}
 
 let shuttingDown = false;
 function shutdown(signal: string): void {
@@ -48,18 +78,18 @@ function shutdown(signal: string): void {
   }, 10_000);
   forceTimer.unref();
 
-  server.close(async (error) => {
-    clearTimeout(forceTimer);
-    if (error !== undefined) {
+  void Promise.all([closeServer(server), closeServer(metricsServer)])
+    .then(() => transitService.close())
+    .then(() => {
+      clearTimeout(forceTimer);
+      logger.info({ event: "server.stopped" });
+      process.exit(0);
+    })
+    .catch(() => {
+      clearTimeout(forceTimer);
       logger.error({ event: "server.stop_failed" });
       process.exit(1);
-    }
-    await (
-      app.locals.transitService as TransitService | undefined
-    )?.close();
-    logger.info({ event: "server.stopped" });
-    process.exit(0);
-  });
+    });
 }
 
 process.once("SIGTERM", () => shutdown("SIGTERM"));

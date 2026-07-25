@@ -1,7 +1,8 @@
-# Kakao Local과 경로 API
+# Kakao Local·도보·도로 경로 API
 
-Kakao는 CHIMap의 장소·주소·역지오코딩·도보 공급자입니다. 브라우저가
-Kakao를 직접 호출하지 않고 Node API가 서버 전용 REST API 키로 호출합니다.
+Kakao는 CHIMap의 장소·주소·역지오코딩·도보와 버스 표시용 도로 geometry
+공급자입니다. 브라우저가 Kakao를 직접 호출하지 않고 Node API가 서버 전용
+REST API 키로 호출합니다.
 
 ## 1. 런타임 사용 API
 
@@ -11,11 +12,13 @@ Kakao를 직접 호출하지 않고 Node API가 서버 전용 REST API 키로 �
 | 주소 검색 | `GET /v2/local/search/address.json` | 3초 | 도로명·지번 |
 | 좌표→주소 | `GET /v2/local/geo/coord2address.json` | 3초 | GPS 역검색 |
 | 도보 경로 | `GET /v2/routing/walk` | 5초 | 버스 전후·운동 구간 |
+| 도로 geometry | `POST /v1/waypoints/directions` | 5초 | TAGO 정류장 순서 도로 매칭 |
 
 host:
 
 ```text
-https://dapi.kakao.com
+Local·도보: https://dapi.kakao.com
+도로 geometry: https://apis-navi.kakaomobility.com
 ```
 
 인증:
@@ -30,6 +33,12 @@ Kakao `sort=distance`를 사용하지만 검색 반경 자체는 제한하지 �
 
 Kakao 대중교통 응답 normalizer도 코드에 존재하지만 운영 추천의 버스
 정류장·노선·도착·차량은 TAGO 경로로 구성합니다.
+
+도로 geometry는 한 요청에 출발·도착과 최대 30개 경유 정류장을 전달합니다.
+더 긴 버스 구간은 최대 32개 점 단위로 나누되 마지막 점을 다음 요청의
+시작점으로 겹쳐 연결합니다. 반환 `sections[].roads[].vertexes`를 WGS84
+좌표로 정규화하고 연속 중복점을 제거합니다. 성공 geometry는 승하차
+정류장 쌍 기준 24시간 캐시합니다.
 
 ## 2. 검색 전략
 
@@ -81,6 +90,7 @@ Kakao 결과가 하나라도 있으면 NAVER 결과와 섞지 않습니다. NAVE
 | 장소 검색 정상 0건 | 60초 |
 | 역지오코딩 | 24시간 |
 | 도보 경로 | 30분 |
+| 버스 도로 geometry | 24시간 |
 
 검색 key는 정규화한 query, scope, limit, 소수점 다섯 자리 중심 좌표를
 포함합니다. 같은 key의 진행 중 요청은 하나만 공급자에 전달합니다.
@@ -93,7 +103,8 @@ Kakao 결과가 하나라도 있으면 NAVER 결과와 섞지 않습니다. NAVE
 4. REST API 키에 필요한 설정을 등록합니다.
 5. 호출 허용 IP를 사용하면 운영 서버의 실제 outbound IP를 등록합니다.
 6. `KAKAO_REST_API_KEY`를 서버 runtime에만 주입합니다.
-7. keyword/address/coord2address/walk를 각각 실제 호출합니다.
+7. keyword/address/coord2address/walk/waypoints directions를 각각 실제
+   호출합니다.
 8. 앱 정보의 `카카오맵 무료 쿼터` 배지와 쿼터 사용량을 확인합니다.
 
 Kakao 공식 정책상 2026-07-21부터 개발자 계정에서 첫 번째로 Kakao Map을
@@ -112,8 +123,8 @@ Cloud provider 변경 시 outbound IP를 다시 확인합니다.
 | 401 | 즉시 설정 오류 | REST 키 종류·오탈자·재발급 확인 |
 | 403 | 즉시 설정 오류 | Map ON·REST 설정·허용 IP 확인 |
 | 429 | 한 번 제한 재시도 후 rate limit | 일·월 쿼터와 유료 설정 확인 |
-| 500/502/503/504 | 한 번 제한 재시도 | 주소는 NAVER 보완, 도보는 오류 |
-| timeout/network | 한 번 제한 재시도 | 주소는 NAVER 보완, 도보는 오류 |
+| 500/502/503/504 | 한 번 제한 재시도 | 주소는 NAVER 보완, 도로 geometry는 정류장선 복구 |
+| timeout/network | 한 번 제한 재시도 | 주소는 NAVER 보완, 도로 geometry는 정류장선 복구 |
 | 사용자 AbortSignal | 즉시 취소 | 오래된 UI 요청은 표시하지 않음 |
 
 400·401·403은 NAVER 보완으로 숨기지 않습니다. 주소 공급자까지 실패하면
@@ -143,6 +154,7 @@ Cloud provider 변경 시 outbound IP를 다시 확인합니다.
 - [Kakao Map REST API](https://developers.kakao.com/docs/ko/kakaomap/rest-api)
 - [Kakao REST API 호출 허용 IP](https://developers.kakao.com/docs/ko/rest-api/getting-started)
 - [Kakao 앱 설정](https://developers.kakao.com/docs/ko/app-setting/app)
+- [Kakao Mobility 다중 경유지 길찾기](https://developers.kakaomobility.com/guide/navi-api/waypoints.html)
 
 설정이 정확한데도 403이 계속되면 앱 OWNER 계정으로 DevTalk 지도/로컬 API
 게시판에 앱 ID, request ID, HTTP 상태만 제공하고 키 원문은 전달하지

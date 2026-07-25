@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import {
   normalizeKakaoAddressResponse,
+  normalizeKakaoDrivingGeometry,
   normalizeKakaoPlaceResponse,
   normalizeKakaoReverseGeocodeResponse,
   normalizeKakaoWalkResponse,
@@ -19,6 +21,21 @@ const source = JSON.parse(
   readFileSync(
     new URL(
       "../../test-data/kakao-responses-20260725.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as {
+  provider: string;
+  capturedAt: string;
+  documentationCheckedAt: string;
+  captures: Capture[];
+};
+
+const drivingSource = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../test-data/kakao-driving-response-20260725.json",
       import.meta.url,
     ),
     "utf8",
@@ -88,5 +105,28 @@ describe("실제 Kakao 응답 정규화", () => {
         0,
       ),
     ).toBeGreaterThan(10);
+  });
+
+  it("실제 다중 경유지 응답을 도로 vertex 경로로 변환한다", () => {
+    const recorded = drivingSource.captures[0]!;
+    expect(drivingSource.provider).toBe("KAKAO_MOBILITY_DIRECTIONS");
+    expect(
+      createHash("sha256")
+        .update(JSON.stringify(recorded.response))
+        .digest("hex"),
+    ).toBe(recorded.checksum);
+
+    const coordinates = normalizeKakaoDrivingGeometry(
+      recorded.response,
+    );
+    expect(coordinates.length).toBeGreaterThan(40);
+    expect(
+      coordinates.some(
+        (coordinate, index) =>
+          index > 0 &&
+          coordinate.lng === coordinates[index - 1]?.lng &&
+          coordinate.lat === coordinates[index - 1]?.lat,
+      ),
+    ).toBe(false);
   });
 });

@@ -22,6 +22,7 @@ import { TransitService } from "../transit/transit-service.js";
 import type {
   MobilityProvider,
   PlaceSearchOptions,
+  RoadGeometryProvider,
   TransitRouteRequest,
   WalkRouteRequest,
 } from "./types.js";
@@ -29,6 +30,12 @@ import type {
 type StopRoutes = {
   stop: BusStop;
   routes: BusRoute[];
+};
+
+type RouteStopSearchState = {
+  entries: StopRoutes[];
+  checkedStopKeys: Set<string>;
+  partial: boolean;
 };
 
 type DirectCandidate = {
@@ -54,6 +61,35 @@ type TransferCandidate = {
 
 function routeKey(route: BusRoute): string {
   return `${route.cityCode}:${route.routeId}`;
+}
+
+function stopKey(stop: BusStop): string {
+  return `${stop.cityCode}:${stop.nodeId}`;
+}
+
+function prioritizedStopRoutes(
+  entries: StopRoutes[],
+  recentlyEligible: StopRoutes[],
+): StopRoutes[] {
+  const recent = recentlyEligible.slice(0, 8);
+  const recentKeys = new Set(recent.map((entry) => stopKey(entry.stop)));
+  return [
+    ...recent,
+    ...entries.filter((entry) => !recentKeys.has(stopKey(entry.stop))),
+  ].slice(0, 16);
+}
+
+export function routeSearchRadii(
+  initialRadiusMeters: number,
+  maximumRadiusMeters: number,
+): number[] {
+  return [
+    ...new Set(
+      [initialRadiusMeters, 800, maximumRadiusMeters].map((radius) =>
+        Math.min(radius, maximumRadiusMeters),
+      ),
+    ),
+  ].sort((first, second) => first - second);
 }
 
 function stopCoordinate(stop: BusStop | BusRouteStop): Coordinate {
@@ -196,13 +232,14 @@ function toProviderError(error: unknown): ProviderError {
 export class TagoTransitMobilityProvider implements MobilityProvider {
   public readonly source = "TAGO" as const;
 
-  readonly #baseProvider: MobilityProvider;
+  readonly #baseProvider: MobilityProvider & RoadGeometryProvider;
   readonly #transitService: TransitService;
   readonly #config: AppConfig;
   readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
+  readonly #roadGeometryCache = new MemoryCache(64 * 1024 * 1024);
 
   public constructor(options: {
-    baseProvider: MobilityProvider;
+    baseProvider: MobilityProvider & RoadGeometryProvider;
     transitService: TransitService;
     config: AppConfig;
   }) {
@@ -226,91 +263,169 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     request: TransitRouteRequest,
   ): Promise<NormalizedRoute[]> {
     try {
-      const [origin, destination] = await Promise.all([
-        this.#transitService.getNearbyStops(
-          request.origin.location,
-          this.#config.transit.maxNearbyStopDistanceMeters,
-          request.signal,
-        ),
-        this.#transitService.getNearbyStops(
-          request.destination.location,
-          this.#config.transit.maxNearbyStopDistanceMeters,
-          request.signal,
-        ),
-      ]);
-      const originStops = origin.items
-        .filter(
-          (stop) => stop.cityCode !== null && stop.nodeId !== null,
-        )
-        .slice(0, 8);
-      const destinationStops = destination.items
-        .filter(
-          (stop) => stop.cityCode !== null && stop.nodeId !== null,
-        )
-        .slice(0, 8);
-      if (originStops.length === 0 || destinationStops.length === 0) {
+      const originState: RouteStopSearchState = {
+        entries: [],
+        checkedStopKeys: new Set(),
+        partial: false,
+      };
+      const destinationState: RouteStopSearchState = {
+        entries: [],
+        checkedStopKeys: new Set(),
+        partial: false,
+      };
+      const radii = routeSearchRadii(
+        this.#config.transit.maxNearbyStopDistanceMeters,
+        this.#config.transit.routeSearchMaxDistanceMeters,
+      );
+      for (const radiusMeters of radii) {
+        const [newOriginEntries, newDestinationEntries] = await Promise.all([
+          this.#expandRouteStopSearch(
+            request.origin.location,
+            radiusMeters,
+            originState,
+            request.signal,
+          ),
+          this.#expandRouteStopSearch(
+            request.destination.location,
+            radiusMeters,
+            destinationState,
+            request.signal,
+          ),
+        ]);
+        if (
+          originState.entries.length === 0 ||
+          destinationState.entries.length === 0
+        ) {
+          continue;
+        }
+        const routes = await this.#buildTransitRoutes(
+          request,
+          prioritizedStopRoutes(
+            originState.entries,
+            newOriginEntries,
+          ),
+          prioritizedStopRoutes(
+            destinationState.entries,
+            newDestinationEntries,
+          ),
+        );
+        if (routes.length === 0) {
+          continue;
+        }
+        if (!originState.partial && !destinationState.partial) {
+          return routes;
+        }
+        return routes.map((route) =>
+          normalizedRouteSchema.parse({
+            ...route,
+            isPartial: true,
+            estimationNotes: [
+              ...(route.estimationNotes ?? []),
+              "TAGO 주변 정류장 갱신에 실패해 import된 실제 정류장 데이터 일부를 사용했습니다.",
+            ],
+          }),
+        );
+      }
+      if (
+        originState.entries.length === 0 ||
+        destinationState.entries.length === 0
+      ) {
         throw new ProviderError({
-          kind: "NO_ROUTE",
+          kind: "NO_NEARBY_TRANSIT_STOP",
           message:
-            "출발지 또는 목적지 주변에서 TAGO 정류장을 찾지 못했습니다.",
+            "확장 탐색 범위 안에서 운행 노선이 있는 TAGO 정류장을 찾지 못했습니다.",
         });
       }
-
-      const [originStopRoutes, destinationStopRoutes] = await Promise.all([
-        this.#loadStopRoutes(originStops, request.signal),
-        this.#loadStopRoutes(destinationStops, request.signal),
-      ]);
-      const directCandidates = await this.#findDirectCandidates(
-        originStopRoutes,
-        destinationStopRoutes,
-        request.signal,
-      );
-      const directSettled = await Promise.allSettled(
-        directCandidates.slice(0, 3).map((candidate, index) =>
-          this.#buildDirectRoute(request, candidate, index),
-        ),
-      );
-      const directRoutes = directSettled.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
-      const transferRoutes =
-        this.#config.transit.maxTransferCount === 0 ||
-        directRoutes.length >= 2
-          ? []
-          : await this.#findAndBuildTransferRoutes(
-              request,
-              originStopRoutes,
-              destinationStopRoutes,
-            );
-      const routes = [...directRoutes, ...transferRoutes]
-        .sort(
-          (first, second) =>
-            first.durationSeconds - second.durationSeconds,
-        )
-        .slice(0, 8);
-      if (routes.length === 0) {
-        throw new ProviderError({
-          kind: "NO_ROUTE",
-          message:
-            "정류장 순서와 진행 방향이 맞는 버스 경로를 찾지 못했습니다.",
-        });
-      }
-      if (!origin.partial && !destination.partial) {
-        return routes;
-      }
-      return routes.map((route) =>
-        normalizedRouteSchema.parse({
-          ...route,
-          isPartial: true,
-          estimationNotes: [
-            ...(route.estimationNotes ?? []),
-            "TAGO 주변 정류장 갱신에 실패해 import된 실제 정류장 데이터 일부를 사용했습니다.",
-          ],
-        }),
-      );
+      throw new ProviderError({
+        kind: "NO_TRANSIT_CONNECTION",
+        message:
+          "확장 탐색한 정류장 사이에 직행 또는 1회 환승 연결이 없습니다.",
+      });
     } catch (error) {
       throw toProviderError(error);
     }
+  }
+
+  async #expandRouteStopSearch(
+    coordinate: Coordinate,
+    radiusMeters: number,
+    state: RouteStopSearchState,
+    signal?: AbortSignal,
+  ): Promise<StopRoutes[]> {
+    const nearby = await this.#transitService.getNearbyStops(
+      coordinate,
+      radiusMeters,
+      signal,
+    );
+    state.partial ||= nearby.partial;
+    const uncheckedStops = nearby.items
+      .filter(
+        (stop) =>
+          stop.cityCode !== null &&
+          stop.nodeId !== null &&
+          !state.checkedStopKeys.has(stopKey(stop)),
+      )
+      .sort(
+        (first, second) =>
+          (first.distanceMeters ?? Infinity) -
+          (second.distanceMeters ?? Infinity),
+      )
+      .slice(0, 24);
+    let eligibleCount = 0;
+    const recentlyEligible: StopRoutes[] = [];
+    for (let offset = 0; offset < uncheckedStops.length; offset += 8) {
+      const batch = uncheckedStops.slice(offset, offset + 8);
+      batch.forEach((stop) => state.checkedStopKeys.add(stopKey(stop)));
+      const loaded = await this.#loadStopRoutes(batch, signal);
+      const eligible = loaded.filter((entry) => entry.routes.length > 0);
+      state.entries.push(...eligible);
+      recentlyEligible.push(...eligible);
+      eligibleCount += eligible.length;
+      if (eligibleCount >= 8) {
+        break;
+      }
+    }
+    state.entries.sort(
+      (first, second) =>
+        (first.stop.distanceMeters ?? Infinity) -
+        (second.stop.distanceMeters ?? Infinity),
+    );
+    return recentlyEligible;
+  }
+
+  async #buildTransitRoutes(
+    request: TransitRouteRequest,
+    originStopRoutes: StopRoutes[],
+    destinationStopRoutes: StopRoutes[],
+  ): Promise<NormalizedRoute[]> {
+    const directCandidates = await this.#findDirectCandidates(
+      originStopRoutes,
+      destinationStopRoutes,
+      request.signal,
+    );
+    const directSettled = await Promise.allSettled(
+      directCandidates.slice(0, 3).map((candidate, index) =>
+        this.#buildDirectRoute(request, candidate, index),
+      ),
+    );
+    const directRoutes = directSettled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    const transferRoutes =
+      this.#config.transit.maxTransferCount === 0 ||
+      directRoutes.length >= 2
+        ? []
+        : await this.#findAndBuildTransferRoutes(
+            request,
+            originStopRoutes,
+            destinationStopRoutes,
+          );
+    return [...directRoutes, ...transferRoutes]
+      .sort(
+        (first, second) =>
+          first.durationSeconds - second.durationSeconds,
+      )
+      .slice(0, 8);
   }
 
   async #loadStopRoutes(
@@ -526,12 +641,55 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     );
   }
 
+  async #roadRoute(
+    segment: BusRouteStop[],
+    signal?: AbortSignal,
+  ): Promise<Coordinate[] | undefined> {
+    const first = segment[0];
+    const last = segment.at(-1);
+    if (first === undefined || last === undefined || segment.length < 2) {
+      return undefined;
+    }
+    const key = [
+      "tago:road",
+      first.cityCode,
+      first.routeId,
+      first.nodeId,
+      last.nodeId,
+    ].join(":");
+    try {
+      return await this.#roadGeometryCache.getOrLoad(
+        key,
+        24 * 60 * 60 * 1000,
+        () =>
+          this.#baseProvider.getRoadRouteGeometry({
+            points: segment.map(stopCoordinate),
+            ...(signal === undefined ? {} : { signal }),
+          }),
+      );
+    } catch (error) {
+      if (
+        signal?.aborted === true ||
+        (error instanceof ProviderError && error.kind === "ABORTED")
+      ) {
+        throw error;
+      }
+      return undefined;
+    }
+  }
+
   #busLeg(input: {
     id: string;
     route: BusRoute;
     segment: BusRouteStop[];
     arrival?: BusArrival;
-  }): { routeLeg: RouteLeg; busLeg: TransitBusLeg; rideDistance: number } {
+    roadCoordinates?: Coordinate[];
+  }): {
+    routeLeg: RouteLeg;
+    busLeg: TransitBusLeg;
+    rideDistance: number;
+    roadMatched: boolean;
+  } {
     const boarding = input.segment[0]!;
     const alighting = input.segment[input.segment.length - 1]!;
     const rideDistance = polylineDistance(input.segment);
@@ -547,6 +705,10 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     const waitSeconds =
       input.arrival?.arrivalSeconds ??
       estimatedWaitSeconds(input.route);
+    const roadMatched = (input.roadCoordinates?.length ?? 0) >= 2;
+    const polyline = roadMatched
+      ? input.roadCoordinates!
+      : input.segment.map(stopCoordinate);
     const busLeg: TransitBusLeg = {
       routeId: input.route.routeId,
       cityCode: input.route.cityCode,
@@ -562,12 +724,13 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       vehicleNo: null,
       vehicleType: input.arrival?.vehicleType ?? null,
       isArrivalRealtime: input.arrival !== undefined,
-      polyline: input.segment.map(stopCoordinate),
+      polyline,
       stops: input.segment,
     };
     return {
       busLeg,
       rideDistance,
+      roadMatched,
       routeLeg: {
         id: input.id,
         mode: "BUS",
@@ -576,7 +739,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         distanceMeters: rideDistance,
         durationSeconds: waitSeconds + rideSeconds,
         stops: input.segment.map((stop) => stop.stopName),
-        coordinates: busLeg.polyline,
+        coordinates: polyline,
         isExerciseSegment: false,
         bus: busLeg,
       },
@@ -588,7 +751,12 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     candidate: DirectCandidate,
     index: number,
   ): Promise<NormalizedRoute> {
-    const [arrival, startWalkingRoute, endWalkingRoute] = await Promise.all([
+    const [
+      arrival,
+      startWalkingRoute,
+      endWalkingRoute,
+      roadCoordinates,
+    ] = await Promise.all([
       this.#arrivalForLeg(
         candidate.route,
         candidate.boardingStop.nodeId!,
@@ -604,6 +772,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         request.destination.location,
         request.signal,
       ),
+      this.#roadRoute(candidate.segment, request.signal),
     ]);
     const startWalk = walkingLegs(
       startWalkingRoute,
@@ -615,6 +784,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       route: candidate.route,
       segment: candidate.segment,
       ...(arrival === undefined ? {} : { arrival }),
+      ...(roadCoordinates === undefined ? {} : { roadCoordinates }),
     });
     const endWalk = walkingLegs(
       endWalkingRoute,
@@ -645,7 +815,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
           ? []
           : ["실시간 도착정보가 없어 배차간격 기반 대기시간을 사용했습니다."]),
         "버스 승차시간은 경유 정류장 좌표, 평균 속도, 정차시간으로 추정했습니다.",
-        "노선선은 실제 도로 shape가 아니라 정류장 좌표를 순서대로 연결한 것입니다.",
+        bus.roadMatched
+          ? "버스 노선선은 TAGO 정류장 순서를 Kakao 자동차 도로 경로에 매칭한 표시용 경로입니다."
+          : "Kakao 도로 매칭에 실패해 버스 노선선을 정류장 좌표 순서로 표시했습니다.",
       ],
       legs,
     });
@@ -848,6 +1020,8 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       startWalkingRoute,
       transferWalkingRoute,
       endWalkingRoute,
+      firstRoadCoordinates,
+      secondRoadCoordinates,
     ] = await Promise.all([
       this.#arrivalForLeg(
         candidate.firstRoute,
@@ -874,6 +1048,8 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         request.destination.location,
         request.signal,
       ),
+      this.#roadRoute(candidate.firstSegment, request.signal),
+      this.#roadRoute(candidate.secondSegment, request.signal),
     ]);
     const startWalk = walkingLegs(
       startWalkingRoute,
@@ -885,6 +1061,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       route: candidate.firstRoute,
       segment: candidate.firstSegment,
       ...(firstArrival === undefined ? {} : { arrival: firstArrival }),
+      ...(firstRoadCoordinates === undefined
+        ? {}
+        : { roadCoordinates: firstRoadCoordinates }),
     });
     const transferWalk = walkingLegs(
       transferWalkingRoute,
@@ -896,6 +1075,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       route: candidate.secondRoute,
       segment: candidate.secondSegment,
       ...(secondArrival === undefined ? {} : { arrival: secondArrival }),
+      ...(secondRoadCoordinates === undefined
+        ? {}
+        : { roadCoordinates: secondRoadCoordinates }),
     });
     const endWalk = walkingLegs(
       endWalkingRoute,
@@ -946,7 +1128,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
           : ["일부 도착정보가 없어 배차간격 기반 대기시간을 사용했습니다."]),
         "버스 승차시간은 경유 정류장 좌표, 평균 속도, 정차시간으로 추정했습니다.",
         "환승은 1회까지만 탐색했습니다.",
-        "노선선은 실제 도로 shape가 아니라 정류장 좌표를 순서대로 연결한 것입니다.",
+        firstBus.roadMatched && secondBus.roadMatched
+          ? "버스 노선선은 TAGO 정류장 순서를 Kakao 자동차 도로 경로에 매칭한 표시용 경로입니다."
+          : "일부 Kakao 도로 매칭에 실패해 해당 버스 노선선을 정류장 좌표 순서로 표시했습니다.",
       ],
       legs,
     });

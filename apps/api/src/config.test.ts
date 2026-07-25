@@ -13,4 +13,21 @@ describe("환경변수 보안 경계", () => {
       }),
     ).toThrow(/브라우저 공개 NAVER Key ID/u);
   });
+
+  it("추천 경로는 공개 주변 조회보다 넓은 1.2km까지 탐색한다", () => {
+    const config = loadConfig({ NODE_ENV: "test" });
+
+    expect(config.transit.maxNearbyStopDistanceMeters).toBe(500);
+    expect(config.transit.routeSearchMaxDistanceMeters).toBe(1200);
+  });
+
+  it("추천 경로 탐색 상한이 기본 반경보다 작으면 거절한다", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        TRANSIT_MAX_NEARBY_STOP_DISTANCE_METERS: "500",
+        TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS: "499",
+      }),
+    ).toThrow(/기본 주변 정류장 반경보다 작을 수 없습니다/u);
+  });
 });

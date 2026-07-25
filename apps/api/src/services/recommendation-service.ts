@@ -36,7 +36,7 @@ export class RecommendationService {
   }): Promise<RecommendationResponse> {
     const departureAt = this.#clock();
     this.#validateRequest(input.request, departureAt, input.requestId);
-    const timeoutSignal = AbortSignal.timeout(15_000);
+    const timeoutSignal = AbortSignal.timeout(20_000);
     const signal =
       input.signal === undefined
         ? timeoutSignal

@@ -24,6 +24,8 @@ export class AppError extends Error {
 
 export type ProviderErrorKind =
   | "NO_ROUTE"
+  | "NO_NEARBY_TRANSIT_STOP"
+  | "NO_TRANSIT_CONNECTION"
   | "INVALID_LOCATION"
   | "TIMEOUT"
   | "RATE_LIMIT"
@@ -51,6 +53,22 @@ export class ProviderError extends Error {
 
 export function mapProviderError(error: ProviderError): AppError {
   switch (error.kind) {
+    case "NO_NEARBY_TRANSIT_STOP":
+      return new AppError({
+        code: "NO_TRANSIT_ROUTE",
+        message:
+          "출발지 또는 목적지 주변에서 운행 노선이 있는 버스 정류장을 찾지 못했어요. 장소의 정문이나 도로명 주소를 선택해 주세요.",
+        status: 404,
+        cause: error,
+      });
+    case "NO_TRANSIT_CONNECTION":
+      return new AppError({
+        code: "NO_TRANSIT_ROUTE",
+        message:
+          "주변 운행 정류장은 찾았지만 직행 또는 1회 환승으로 연결되는 경로가 없어요.",
+        status: 404,
+        cause: error,
+      });
     case "NO_ROUTE":
       return new AppError({
         code: "NO_TRANSIT_ROUTE",

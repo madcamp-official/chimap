@@ -89,6 +89,12 @@ const environmentSchema = z
       .min(50)
       .max(500)
       .default(500),
+    TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(2000)
+      .default(1200),
     TRANSIT_MAX_TRANSFER_COUNT: z.coerce
       .number()
       .int()
@@ -108,6 +114,16 @@ const environmentSchema = z
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
+    METRICS_ENABLED: z.enum(["0", "1"]).default("0"),
+    METRICS_PORT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(65_535)
+      .default(9091),
+    APP_COMMIT_SHA: optionalSecret,
+    BACKUP_STATUS_PATH: optionalSecret,
+    TRANSIT_SYNC_STATUS_PATH: optionalSecret,
     LIVE_API_TEST: z.enum(["0", "1"]).default("0"),
   })
   .superRefine((environment, context) => {
@@ -130,6 +146,17 @@ const environmentSchema = z
         path: ["VITE_NAVER_MAP_NCP_KEY_ID"],
         message:
           "브라우저 공개 NAVER Key ID에 서버 Client Secret을 사용할 수 없습니다.",
+      });
+    }
+    if (
+      environment.TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS <
+      environment.TRANSIT_MAX_NEARBY_STOP_DISTANCE_METERS
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS"],
+        message:
+          "추천 경로 정류장 탐색 상한은 기본 주변 정류장 반경보다 작을 수 없습니다.",
       });
     }
   });
@@ -159,6 +186,13 @@ export type AppConfig = {
     | "debug"
     | "trace"
     | "silent";
+  metrics: {
+    enabled: boolean;
+    port: number;
+    commitSha?: string;
+    backupStatusPath?: string;
+    transitSyncStatusPath?: string;
+  };
   liveApiTest: boolean;
   dataGoKrServiceKey?: string;
   tagoServiceKeys: Partial<Record<TagoServiceKind, string>>;
@@ -177,6 +211,7 @@ export type AppConfig = {
   };
   transit: {
     maxNearbyStopDistanceMeters: number;
+    routeSearchMaxDistanceMeters: number;
     maxTransferCount: 0 | 1;
     walkSpeedKmh: number;
     busAverageSpeedKmh: number;
@@ -225,6 +260,19 @@ export function loadConfig(
       ? {}
       : { webDistPath: parsed.WEB_DIST_PATH }),
     logLevel: parsed.LOG_LEVEL,
+    metrics: {
+      enabled: parsed.METRICS_ENABLED === "1",
+      port: parsed.METRICS_PORT,
+      ...(parsed.APP_COMMIT_SHA === undefined
+        ? {}
+        : { commitSha: parsed.APP_COMMIT_SHA }),
+      ...(parsed.BACKUP_STATUS_PATH === undefined
+        ? {}
+        : { backupStatusPath: parsed.BACKUP_STATUS_PATH }),
+      ...(parsed.TRANSIT_SYNC_STATUS_PATH === undefined
+        ? {}
+        : { transitSyncStatusPath: parsed.TRANSIT_SYNC_STATUS_PATH }),
+    },
     liveApiTest: parsed.LIVE_API_TEST === "1",
     ...(parsed.DATA_GO_KR_SERVICE_KEY === undefined
       ? {}
@@ -248,6 +296,8 @@ export function loadConfig(
     transit: {
       maxNearbyStopDistanceMeters:
         parsed.TRANSIT_MAX_NEARBY_STOP_DISTANCE_METERS,
+      routeSearchMaxDistanceMeters:
+        parsed.TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS,
       maxTransferCount: parsed.TRANSIT_MAX_TRANSFER_COUNT as 0 | 1,
       walkSpeedKmh: parsed.TRANSIT_WALK_SPEED_KMH,
       busAverageSpeedKmh: parsed.TRANSIT_BUS_AVERAGE_SPEED_KMH,

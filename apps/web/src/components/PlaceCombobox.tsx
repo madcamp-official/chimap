@@ -12,6 +12,7 @@ import {
 
 import { useDebouncedValue } from "../hooks/use-debounced-value.js";
 import { searchPlaces } from "../lib/api.js";
+import { placeKindLabel } from "../lib/place-presentation.js";
 
 type PlaceComboboxProps = {
   label: string;
@@ -19,6 +20,7 @@ type PlaceComboboxProps = {
   value: Place | undefined;
   center?: Coordinate;
   onChange: (place: Place | undefined) => void;
+  search?: typeof searchPlaces;
 };
 
 export function PlaceCombobox({
@@ -27,6 +29,7 @@ export function PlaceCombobox({
   value,
   center,
   onChange,
+  search = searchPlaces,
 }: PlaceComboboxProps) {
   const inputId = useId();
   const listboxId = `${inputId}-listbox`;
@@ -56,7 +59,7 @@ export function PlaceCombobox({
     ],
     enabled: open && requestQuery.length >= 2,
     queryFn: ({ signal }) =>
-      searchPlaces({
+      search({
         query: requestQuery,
         scope,
         ...(center === undefined ? {} : { center }),
@@ -210,9 +213,14 @@ export function PlaceCombobox({
                     <small>
                       {place.roadAddress || place.address || place.category}
                     </small>
-                    {place.id.startsWith("naver:") ? (
-                      <em className="place-provider">NAVER 주소</em>
-                    ) : null}
+                    <span className="place-result-tags">
+                      <em className="place-kind">
+                        {placeKindLabel(place)}
+                      </em>
+                      {place.id.startsWith("naver:") ? (
+                        <em className="place-provider">NAVER 주소</em>
+                      ) : null}
+                    </span>
                   </span>
                 </li>
               ))}

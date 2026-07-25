@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@10.15.1",
   "scripts": {
-    "build": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/api build && pnpm --filter @chimap/web build",
+    "build": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/api build && pnpm --filter @chimap/alert-relay build && pnpm --filter @chimap/web build",
     "dev": "pnpm --filter @chimap/contracts build && pnpm --parallel --filter @chimap/api --filter @chimap/web dev",
     "format:check": "pnpm -r format:check",
     "tago:health": "pnpm --filter @chimap/api tago:health",
@@ -20,6 +20,7 @@
     "bus:import-stops": "pnpm --filter @chimap/api bus:import-stops",
     "bus:sync-route": "pnpm --filter @chimap/api bus:sync-route",
     "bus:sync-area": "pnpm --filter @chimap/api bus:sync-area",
+    "bus:sync-areas": "pnpm --filter @chimap/api bus:sync-areas",
     "bus:stats": "pnpm --filter @chimap/api bus:stats",
     "test": "pnpm --filter @chimap/contracts build && pnpm -r --if-present test",
     "test:coverage": "pnpm --filter @chimap/contracts build && pnpm -r --if-present test:coverage",

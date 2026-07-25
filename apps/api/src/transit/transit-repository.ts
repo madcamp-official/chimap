@@ -426,6 +426,41 @@ export class TransitRepository {
       };
     }
 
+    const exactSourceNumber = await queryable.query(
+      `SELECT ${stopSelect()}
+       FROM bus_stops
+       WHERE node_id IS NULL AND source_stop_no = $1`,
+      [tagoStop.nodeId],
+    );
+    if (exactSourceNumber.rowCount === 1) {
+      const sourceStop = exactSourceNumber.rows[0] as SqlRow;
+      const result = await queryable.query(
+        `UPDATE bus_stops
+         SET city_code = $1,
+             node_id = $2,
+             ars_id = COALESCE($3, ars_id),
+             name = $4,
+             location = ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography,
+             source_updated_at = now(),
+             updated_at = now()
+         WHERE id = $7
+         RETURNING ${stopSelect()}`,
+        [
+          tagoStop.cityCode,
+          tagoStop.nodeId,
+          tagoStop.arsId,
+          tagoStop.name,
+          tagoStop.latitude,
+          tagoStop.longitude,
+          sourceStop.id,
+        ],
+      );
+      return {
+        status: "matched",
+        stop: rowToStop(result.rows[0] as SqlRow),
+      };
+    }
+
     const candidates = (
       await this.findNearbyStops(
         tagoStop.latitude,

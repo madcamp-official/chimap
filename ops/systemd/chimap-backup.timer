@@ -1,0 +1,11 @@
+[Unit]
+Description=Run CHIMap PostgreSQL backup every day
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 Asia/Seoul
+RandomizedDelaySec=15m
+Persistent=true
+Unit=chimap-backup.service
+
+[Install]
+WantedBy=timers.target

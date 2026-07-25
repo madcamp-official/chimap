@@ -180,6 +180,38 @@ const kakaoWalkResponseSchema = z
   })
   .passthrough();
 
+const kakaoDrivingResponseSchema = z
+  .object({
+    routes: z
+      .array(
+        z
+          .object({
+            result_code: z.number().int(),
+            result_msg: z.string(),
+            sections: z
+              .array(
+                z
+                  .object({
+                    roads: z
+                      .array(
+                        z
+                          .object({
+                            vertexes: z.array(z.number().finite()),
+                          })
+                          .passthrough(),
+                      )
+                      .default([]),
+                  })
+                  .passthrough(),
+              )
+              .default([]),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
 function parseCoordinates(
   points: ReadonlyArray<ReadonlyArray<number>>,
 ): Coordinate[] {
@@ -193,6 +225,20 @@ function parseCoordinates(
     }
   }
   return coordinates;
+}
+
+function pushUniqueCoordinate(
+  coordinates: Coordinate[],
+  coordinate: Coordinate,
+): void {
+  const previous = coordinates.at(-1);
+  if (
+    previous === undefined ||
+    previous.lng !== coordinate.lng ||
+    previous.lat !== coordinate.lat
+  ) {
+    coordinates.push(coordinate);
+  }
 }
 
 function stablePlaceId(prefix: string, values: string[]): string {
@@ -503,4 +549,40 @@ export function normalizeKakaoWalkResponse(
     transferCount: 0,
     legs,
   });
+}
+
+export function normalizeKakaoDrivingGeometry(
+  input: unknown,
+): Coordinate[] {
+  const response = kakaoDrivingResponseSchema.parse(input);
+  const route = response.routes[0];
+  if (route === undefined || route.result_code !== 0) {
+    throw new ProviderError({
+      kind: "NO_ROUTE",
+      message:
+        route?.result_msg ?? "Kakao 도로 매칭 경로를 찾지 못했습니다.",
+    });
+  }
+
+  const coordinates: Coordinate[] = [];
+  for (const section of route.sections) {
+    for (const road of section.roads) {
+      for (let index = 0; index < road.vertexes.length - 1; index += 2) {
+        const parsed = coordinateSchema.safeParse({
+          lng: road.vertexes[index],
+          lat: road.vertexes[index + 1],
+        });
+        if (parsed.success) {
+          pushUniqueCoordinate(coordinates, parsed.data);
+        }
+      }
+    }
+  }
+  if (coordinates.length < 2) {
+    throw new ProviderError({
+      kind: "NO_ROUTE",
+      message: "Kakao 도로 매칭 응답에 표시할 좌표가 없습니다.",
+    });
+  }
+  return coordinates;
 }
