@@ -1,0 +1,231 @@
+{
+  "provider": "KAKAO",
+  "capturedAt": "2026-07-25T05:34:01Z",
+  "documentationCheckedAt": "2026-07-25",
+  "captures": [
+    {
+      "api": "GET /v2/local/search/keyword.json",
+      "request": "query=카이스트&size=2",
+      "checksum": "14d30f0a9973a8aa77af416c85485842821dc87e817f7aa511a0ee1eb390af05",
+      "response": {
+        "documents": [
+          {
+            "address_name": "대전 유성구 구성동 23",
+            "category_group_code": "SC4",
+            "category_group_name": "학교",
+            "category_name": "교육,학문 > 학교 > 대학교",
+            "distance": "",
+            "id": "26964230",
+            "phone": "042-350-2114",
+            "place_name": "KAIST 본원",
+            "place_url": "http://place.map.kakao.com/26964230",
+            "road_address_name": "대전 유성구 대학로 291",
+            "x": "127.36129293525407",
+            "y": "36.37053284796117"
+          },
+          {
+            "address_name": "대전 유성구 문지동 103-6",
+            "category_group_code": "SC4",
+            "category_group_name": "학교",
+            "category_name": "교육,학문 > 학교 > 대학교",
+            "distance": "",
+            "id": "11361469",
+            "phone": "042-350-2114",
+            "place_name": "KAIST 문지캠퍼스",
+            "place_url": "http://place.map.kakao.com/11361469",
+            "road_address_name": "대전 유성구 문지로 193",
+            "x": "127.39908156406113",
+            "y": "36.39294363831493"
+          }
+        ],
+        "meta": {
+          "is_end": false,
+          "pageable_count": 45,
+          "same_name": {
+            "keyword": "카이스트",
+            "region": [],
+            "selected_region": ""
+          },
+          "total_count": 649
+        }
+      }
+    },
+    {
+      "api": "GET /v2/local/search/address.json",
+      "request": "query=대전 유성구 대학로 291&size=2",
+      "checksum": "6887601630f151353c9c83733a0debea53b6d1cfbc334981b5b767791ba7b8d1",
+      "response": {
+        "documents": [
+          {
+            "address": {
+              "address_name": "대전 유성구 구성동 23",
+              "b_code": "3020012400",
+              "h_code": "3020054000",
+              "main_address_no": "23",
+              "mountain_yn": "N",
+              "region_1depth_name": "대전",
+              "region_2depth_name": "유성구",
+              "region_3depth_h_name": "온천2동",
+              "region_3depth_name": "구성동",
+              "sub_address_no": "",
+              "x": "127.356771410201",
+              "y": "36.3683750600837"
+            },
+            "address_name": "대전 유성구 대학로 291",
+            "address_type": "ROAD_ADDR",
+            "road_address": {
+              "address_name": "대전 유성구 대학로 291",
+              "building_name": "한국과학기술원",
+              "main_building_no": "291",
+              "region_1depth_name": "대전",
+              "region_2depth_name": "유성구",
+              "region_3depth_name": "구성동",
+              "road_name": "대학로",
+              "sub_building_no": "",
+              "underground_yn": "N",
+              "x": "127.356771410201",
+              "y": "36.3683750600837",
+              "zone_no": "34141"
+            },
+            "x": "127.356771410201",
+            "y": "36.3683750600837"
+          }
+        ],
+        "meta": {
+          "is_end": true,
+          "pageable_count": 1,
+          "total_count": 1
+        }
+      }
+    },
+    {
+      "api": "GET /v2/local/geo/coord2address.json",
+      "request": "x=127.3604&y=36.3723&input_coord=WGS84",
+      "checksum": "f4e8c1d9414b5c593b9fb8cd14543bb62e2a8791d5143ad74a9695377fefc69f",
+      "response": {
+        "meta": {
+          "total_count": 1
+        },
+        "documents": [
+          {
+            "road_address": {
+              "address_name": "대전광역시 유성구 대학로 291",
+              "region_1depth_name": "대전",
+              "region_2depth_name": "유성구",
+              "region_3depth_name": "",
+              "road_name": "대학로",
+              "underground_yn": "N",
+              "main_building_no": "291",
+              "sub_building_no": "",
+              "building_name": "한국과학기술원",
+              "zone_no": "34141"
+            },
+            "address": {
+              "address_name": "대전 유성구 구성동 23",
+              "region_1depth_name": "대전",
+              "region_2depth_name": "유성구",
+              "region_3depth_name": "구성동",
+              "mountain_yn": "N",
+              "main_address_no": "23",
+              "sub_address_no": "",
+              "zip_code": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "api": "GET /v2/routing/walk",
+      "request": "KAIST 내부 WGS84 410m 구간",
+      "checksum": "0e985b57b76c50723981946f60fe1369faac8bad5197526eb286777a0624cd13",
+      "response": {
+        "route": {
+          "legs": [
+            {
+              "properties": {
+                "distance": 410,
+                "time": 350
+              },
+              "steps": [
+                {
+                  "path": {
+                    "points": [
+                      [127.36039157, 36.37187252],
+                      [127.36073711, 36.37186807],
+                      [127.3609142, 36.37161],
+                      [127.36101975, 36.3716822],
+                      [127.36113409, 36.37155523],
+                      [127.36125584, 36.37162134],
+                      [127.36160334, 36.37138499]
+                    ]
+                  },
+                  "properties": {
+                    "distance": 194,
+                    "guidance": "전기차충전소까지 194m 이동",
+                    "time": 168,
+                    "x": 127.36039157,
+                    "y": 36.37187252
+                  }
+                },
+                {
+                  "path": {
+                    "points": [
+                      [127.36160334, 36.37138499],
+                      [127.36134594, 36.37125905]
+                    ]
+                  },
+                  "properties": {
+                    "distance": 26,
+                    "guidance": "전기차충전소 앞에서 오른쪽길로 26m 이동",
+                    "time": 22,
+                    "x": 127.36160334,
+                    "y": 36.37138499
+                  }
+                },
+                {
+                  "path": {
+                    "points": [
+                      [127.36134594, 36.37125905],
+                      [127.36139569, 36.37119676],
+                      [127.36151434, 36.37103331],
+                      [127.36196589, 36.37049315],
+                      [127.36231691, 36.36991453]
+                    ]
+                  },
+                  "properties": {
+                    "distance": 173,
+                    "guidance": "왼쪽길로 173m 이동",
+                    "time": 144,
+                    "x": 127.36134594,
+                    "y": 36.37125905
+                  }
+                },
+                {
+                  "path": {
+                    "points": [
+                      [127.36231691, 36.36991453],
+                      [127.36230718, 36.36990912]
+                    ]
+                  },
+                  "properties": {
+                    "distance": 15,
+                    "guidance": "오른쪽길로 15m 이동",
+                    "time": 14,
+                    "x": 127.36231691,
+                    "y": 36.36991453
+                  }
+                }
+              ]
+            }
+          ],
+          "properties": {
+            "landingUrl": "https://map.kakao.com/link/by/walk/%EC%B6%9C%EB%B0%9C,36.3723,127.3604/%EB%8F%84%EC%B0%A9,36.3698,127.3624",
+            "totalDistance": 410,
+            "totalTime": 350
+          }
+        },
+        "status": "OK"
+      }
+    }
+  ]
+}

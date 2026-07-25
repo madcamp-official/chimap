@@ -11,12 +11,13 @@ export function createLogger(config: AppConfig): Logger {
         "headers.authorization",
         "authorization",
         "KAKAO_REST_API_KEY",
+        "NAVER_MAP_NCP_KEY",
+        "DATABASE_URL",
       ],
       censor: "[REDACTED]",
     },
     base: {
       service: "chimap-api",
-      mode: config.kakaoMode,
     },
     ...(config.nodeEnv === "test" ? { enabled: false } : {}),
   });

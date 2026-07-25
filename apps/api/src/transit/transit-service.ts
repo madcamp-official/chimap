@@ -69,8 +69,16 @@ export class TransitService {
     this.client = options.client ?? new TagoClient(options.config);
     this.repository =
       options.repository ??
-      new TransitRepository(options.config.transitDatabasePath);
+      new TransitRepository(options.config.database);
     this.#cache = options.cache ?? new MemoryCache(64 * 1024 * 1024);
+  }
+
+  public initialize(): Promise<void> {
+    return this.repository.migrate();
+  }
+
+  public close(): Promise<void> {
+    return this.repository.close();
   }
 
   public hasServiceKey(service: TagoServiceKind): boolean {
@@ -97,7 +105,7 @@ export class TransitService {
       Math.max(1, radiusMeters),
       this.#config.transit.maxNearbyStopDistanceMeters,
     );
-    const databaseStops = this.repository.findNearbyStops(
+    const databaseStops = await this.repository.findNearbyStops(
       coordinate.lat,
       coordinate.lng,
       radius,
@@ -105,7 +113,7 @@ export class TransitService {
     const linkedDatabaseStops = databaseStops.filter(
       (stop) => stop.cityCode !== null && stop.nodeId !== null,
     );
-    if (linkedDatabaseStops.length >= 4) {
+    if (linkedDatabaseStops.length > 0) {
       return { items: uniqueStops(databaseStops), partial: false };
     }
 
@@ -115,8 +123,8 @@ export class TransitService {
         this.#config.tagoCacheTtlSeconds.nearbyStops * 1000,
         () => this.client.getNearbyStops(coordinate, signal),
       );
-      const reconciled = tagoStops.map((stop) => {
-        const result = this.repository.reconcileTagoStop(stop);
+      const reconciled = await Promise.all(tagoStops.map(async (stop) => {
+        const result = await this.repository.reconcileTagoStop(stop);
         if (result.status === "ambiguous") {
           this.#logger.warn({
             event: "transit.stop_match_ambiguous",
@@ -130,7 +138,7 @@ export class TransitService {
           ...result.stop,
           distanceMeters: stop.distanceMeters,
         };
-      });
+      }));
       return {
         items: uniqueStops([...databaseStops, ...reconciled]).filter(
           (stop) => (stop.distanceMeters ?? Infinity) <= radius,
@@ -159,17 +167,36 @@ export class TransitService {
     nodeId: string,
     signal?: AbortSignal,
   ): Promise<{ items: BusRoute[]; source: "database" | "tago" }> {
-    const stored = this.repository.getRoutesByStop(cityCode, nodeId);
+    const stored = await this.repository.getRoutesByStop(cityCode, nodeId);
     if (stored.length > 0) {
       return { items: stored, source: "database" };
     }
-    const routes = await this.#cache.getOrLoad(
-      `tago:stop-routes:${cityCode}:${nodeId}`,
-      this.#config.tagoCacheTtlSeconds.route * 1000,
-      () => this.client.getRoutesByStop(cityCode, nodeId, signal),
-    );
-    routes.forEach((route) => this.repository.upsertRoute(route));
-    return { items: routes, source: "tago" };
+    try {
+      const routes = await this.#cache.getOrLoad(
+        `tago:stop-routes:${cityCode}:${nodeId}`,
+        this.#config.tagoCacheTtlSeconds.route * 1000,
+        () => this.client.getRoutesByStop(cityCode, nodeId, signal),
+      );
+      await Promise.all(
+        routes.map((route) => this.repository.upsertRoute(route)),
+      );
+      return { items: routes, source: "tago" };
+    } catch (error) {
+      if (
+        error instanceof TagoApiError &&
+        error.resultCode !== "CONFIGURATION_ERROR" &&
+        stored.length > 0
+      ) {
+        this.#logger.warn({
+          event: "transit.stop_routes_partial",
+          cityCode,
+          resultCode: error.resultCode,
+          storedRouteCount: stored.length,
+        });
+        return { items: stored, source: "database" };
+      }
+      throw error;
+    }
   }
 
   public async getRoute(
@@ -177,14 +204,8 @@ export class TransitService {
     routeId: string,
     signal?: AbortSignal,
   ): Promise<BusRoute> {
-    const stored = this.repository.getRoute(cityCode, routeId);
-    if (
-      stored !== undefined &&
-      (stored.weekdayIntervalMinutes !== null ||
-        stored.weekendIntervalMinutes !== null ||
-        stored.firstBusTime !== null ||
-        stored.lastBusTime !== null)
-    ) {
+    const stored = await this.repository.getRoute(cityCode, routeId);
+    if (stored !== undefined) {
       return stored;
     }
     const route = await this.#cache.getOrLoad(
@@ -200,7 +221,7 @@ export class TransitService {
     routeId: string,
     signal?: AbortSignal,
   ): Promise<BusRouteStop[]> {
-    const stored = this.repository.getRouteStops(cityCode, routeId);
+    const stored = await this.repository.getRouteStops(cityCode, routeId);
     if (stored.length > 0) {
       return stored;
     }
@@ -210,7 +231,7 @@ export class TransitService {
       () => this.client.getRouteStops(cityCode, routeId, signal),
     );
     const route = await this.getRoute(cityCode, routeId, signal);
-    this.repository.replaceRouteStops(route, stops);
+    await this.repository.replaceRouteStops(route, stops);
     return this.repository.getRouteStops(cityCode, routeId);
   }
 
@@ -262,14 +283,17 @@ export class TransitService {
     routeId: string,
     signal?: AbortSignal,
   ): Promise<{ route: BusRoute; stops: BusRouteStop[] }> {
+    const storedRoute = await this.repository.getRoute(cityCode, routeId);
     const [route, stops] = await Promise.all([
-      this.client.getRouteInfo(cityCode, routeId, signal),
+      storedRoute === undefined
+        ? this.client.getRouteInfo(cityCode, routeId, signal)
+        : Promise.resolve(storedRoute),
       this.client.getRouteStops(cityCode, routeId, signal),
     ]);
-    this.repository.replaceRouteStops(route, stops);
+    await this.repository.replaceRouteStops(route, stops);
     return {
-      route: this.repository.getRoute(cityCode, routeId) ?? route,
-      stops: this.repository.getRouteStops(cityCode, routeId),
+      route: (await this.repository.getRoute(cityCode, routeId)) ?? route,
+      stops: await this.repository.getRouteStops(cityCode, routeId),
     };
   }
 }

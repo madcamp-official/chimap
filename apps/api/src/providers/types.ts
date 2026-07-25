@@ -28,8 +28,7 @@ export type WalkRouteRequest = {
 };
 
 export interface MobilityProvider {
-  readonly source: "KAKAO" | "TAGO" | "MOCK";
-  readonly mode: "live" | "mock";
+  readonly source: "KAKAO" | "TAGO";
 
   searchPlaces(
     query: string,

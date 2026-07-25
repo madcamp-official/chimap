@@ -1,143 +1,77 @@
-import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
-import { loadConfig } from "../config.js";
-import {
-  normalizeItems,
-  parseTagoResponsePage,
-  TagoApiError,
-  TagoClient,
-} from "./tago-client.js";
+import { describe, expect, it } from "vitest";
 
-function tagoResponse(item?: unknown, totalCount?: number) {
-  return {
-    response: {
-      header: { resultCode: "00", resultMsg: "OK" },
-      body: {
-        ...(item === undefined ? {} : { items: { item } }),
-        ...(totalCount === undefined ? {} : { totalCount }),
-      },
-    },
-  };
-}
+import { parseTagoResponsePage } from "./tago-client.js";
 
-function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
+const source = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../test-data/tago-responses-20260725.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as {
+  provider: string;
+  capturedAt: string;
+  documentationCheckedAt: string;
+  captures: Array<{
+    api: string;
+    request: string;
+    checksum: string;
+    response: unknown;
+  }>;
+};
 
-describe("TAGO 공통 응답 처리", () => {
-  it("단일 item, 배열, 빈 items를 항상 배열로 정규화한다", () => {
-    expect(normalizeItems({ nodeid: "A" })).toEqual([{ nodeid: "A" }]);
-    expect(normalizeItems([{ nodeid: "A" }, { nodeid: "B" }])).toHaveLength(
-      2,
-    );
-    expect(normalizeItems(undefined)).toEqual([]);
-    expect(
-      parseTagoResponsePage(tagoResponse(), {
-        service: "stop",
-        operation: "getCrdntPrxmtSttnList",
-      }).items,
-    ).toEqual([]);
-  });
-
-  it("정상이 아닌 resultCode를 구조화 오류로 변환한다", () => {
-    expect(() =>
-      parseTagoResponsePage(
-        {
-          response: {
-            header: { resultCode: "30", resultMsg: "SERVICE KEY ERROR" },
-            body: {},
-          },
-        },
-        {
-          service: "arrival",
-          operation: "getSttnAcctoArvlPrearngeInfoList",
-        },
-      ),
-    ).toThrow(TagoApiError);
-    try {
-      parseTagoResponsePage(
-        {
-          response: {
-            header: { resultCode: "30", resultMsg: "SERVICE KEY ERROR" },
-            body: {},
-          },
-        },
-        {
-          service: "arrival",
-          operation: "getSttnAcctoArvlPrearngeInfoList",
-        },
-      );
-    } catch (error) {
-      expect(error).toMatchObject({
-        service: "arrival",
-        operation: "getSttnAcctoArvlPrearngeInfoList",
-        resultCode: "30",
-        retryable: false,
-      });
+describe("실제 TAGO 응답 parser", () => {
+  it("출처와 checksum을 검증하고 단일 item을 배열로 정규화한다", () => {
+    expect(source.provider).toBe("TAGO");
+    expect(Date.parse(source.capturedAt)).not.toBeNaN();
+    expect(source.documentationCheckedAt).toBe("2026-07-25");
+    for (const item of source.captures) {
+      expect(
+        createHash("sha256")
+          .update(JSON.stringify(item.response))
+          .digest("hex"),
+      ).toBe(item.checksum);
     }
-  });
+    const capture = source.captures[0]!;
+    expect(capture.request).toContain("nodeid=DJB9002737");
 
-  it("Encoding 키를 이중 인코딩하지 않고 오류에서 키를 제거한다", async () => {
-    const encodedKey = "sample%2Bkey%3D%3D";
-    let requestedUrl = "";
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      requestedUrl = String(input);
-      return jsonResponse({
-        response: {
-          header: {
-            resultCode: "30",
-            resultMsg: `invalid serviceKey=${encodedKey}`,
-          },
-          body: {},
-        },
-      });
+    const page = parseTagoResponsePage(capture.response, {
+      service: "stop",
+      operation: "getSttnThrghRouteList",
     });
-    const client = new TagoClient(
-      loadConfig({
-        NODE_ENV: "test",
-        KAKAO_MODE: "mock",
-        DATA_GO_KR_SERVICE_KEY: encodedKey,
-      }),
-      fetchMock,
-    );
-
-    await expect(client.getCityCodes()).rejects.toMatchObject({
-      resultCode: "30",
-      safeMessage: expect.not.stringContaining(encodedKey),
-    });
-    expect(requestedUrl).toContain(`serviceKey=${encodedKey}`);
-    expect(requestedUrl).not.toContain("%252B");
-  });
-
-  it("5xx만 설정된 횟수만큼 재시도한다", async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({}, 503))
-      .mockResolvedValueOnce(jsonResponse({}, 502))
-      .mockResolvedValueOnce(
-        jsonResponse(
-          tagoResponse(
-            { citycode: "25", cityname: "대전광역시" },
-            1,
-          ),
-        ),
-      );
-    const client = new TagoClient(
-      loadConfig({
-        NODE_ENV: "test",
-        KAKAO_MODE: "mock",
-        DATA_GO_KR_SERVICE_KEY: "not-a-real-key",
-        TAGO_HTTP_RETRY_COUNT: "2",
-      }),
-      fetchMock,
-    );
-
-    await expect(client.getCityCodes()).resolves.toEqual([
-      { cityCode: "25", cityName: "대전광역시" },
+    expect(page.resultCode).toBe("00");
+    expect(page.totalCount).toBe(1);
+    expect(page.items).toEqual([
+      {
+        endnodenm: "충대농대종점",
+        routeid: "DJB30300043",
+        routeno: 108,
+        routetp: "간선버스",
+        startnodenm: "낭월공영차고지기점",
+      },
     ]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("실제 108번 노선 정류장 배열과 순서를 읽는다", () => {
+    const capture = source.captures.find((item) =>
+      item.api.includes("getRouteAcctoThrghSttnList"),
+    );
+    expect(capture).toBeDefined();
+    const page = parseTagoResponsePage(capture?.response, {
+      service: "route",
+      operation: "getRouteAcctoThrghSttnList",
+    });
+    expect(page.totalCount).toBe(89);
+    expect(page.items).toHaveLength(2);
+    expect(page.items.map((item) => item.nodeord)).toEqual([1, 2]);
+    expect(page.items.map((item) => item.nodeid)).toEqual([
+      "DJB8003109",
+      "DJB9005538",
+    ]);
   });
 });

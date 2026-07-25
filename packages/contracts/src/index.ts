@@ -166,7 +166,7 @@ export const routeLegSchema = z
 
 export type RouteLeg = z.infer<typeof routeLegSchema>;
 
-export const routeSourceSchema = z.enum(["KAKAO", "TAGO", "MOCK"]);
+export const routeSourceSchema = z.enum(["KAKAO", "TAGO"]);
 export type RouteSource = z.infer<typeof routeSourceSchema>;
 
 export const normalizedRouteSchema = z
@@ -195,7 +195,8 @@ export const placeSearchQuerySchema = z
     query: z.string().trim().min(2).max(100),
     x: z.coerce.number().finite().min(-180).max(180).optional(),
     y: z.coerce.number().finite().min(-90).max(90).optional(),
-    limit: z.coerce.number().int().min(1).max(10).default(5),
+    limit: z.coerce.number().int().min(1).max(10).default(8),
+    scope: z.enum(["suggest", "resolve"]).default("resolve"),
   })
   .strict()
   .superRefine((value, context) => {
@@ -210,13 +211,67 @@ export const placeSearchQuerySchema = z
 
 export type PlaceSearchQuery = z.infer<typeof placeSearchQuerySchema>;
 
+export const placeSearchProviderSchema = z.enum(["KAKAO", "NAVER", "NONE"]);
+export type PlaceSearchProvider = z.infer<
+  typeof placeSearchProviderSchema
+>;
+
+export const placeSearchStrategySchema = z.enum([
+  "KAKAO_KEYWORD",
+  "KAKAO_KEYWORD_ADDRESS",
+  "KAKAO_ADDRESS",
+  "NAVER_GEOCODE",
+  "NONE",
+]);
+export type PlaceSearchStrategy = z.infer<
+  typeof placeSearchStrategySchema
+>;
+
+export const placeSearchMetaSchema = z
+  .object({
+    provider: placeSearchProviderSchema,
+    strategy: placeSearchStrategySchema,
+    fallbackUsed: z.boolean(),
+    degraded: z.boolean(),
+  })
+  .strict();
+
 export const placeSearchResponseSchema = z
   .object({
     items: z.array(placeSchema).max(10),
+    meta: placeSearchMetaSchema,
   })
   .strict();
 
 export type PlaceSearchResponse = z.infer<typeof placeSearchResponseSchema>;
+
+export const reverseGeocodeQuerySchema = z
+  .object({
+    x: z.coerce.number().finite().min(-180).max(180),
+    y: z.coerce.number().finite().min(-90).max(90),
+  })
+  .strict();
+
+export type ReverseGeocodeQuery = z.infer<
+  typeof reverseGeocodeQuerySchema
+>;
+
+export const reverseGeocodeResponseSchema = z
+  .object({
+    place: placeSchema.nullable(),
+    meta: z
+      .object({
+        provider: placeSearchProviderSchema,
+        fallbackUsed: z.boolean(),
+        degraded: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ReverseGeocodeResponse = z.infer<
+  typeof reverseGeocodeResponseSchema
+>;
 
 export const recommendationRequestSchema = z
   .object({
@@ -305,7 +360,6 @@ export type TransitRecommendation = z.infer<
 
 export const warningCodeSchema = z.enum([
   "ESTIMATED_STEPS",
-  "DEMO_DATA",
   "PARTIAL_CANDIDATE_FAILURE",
   "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
   "LIMITED_ROUTE_VARIETY",
@@ -328,7 +382,6 @@ export type ApiWarning = z.infer<typeof apiWarningSchema>;
 export const recommendationResponseSchema = z
   .object({
     requestId: z.uuid(),
-    mode: z.enum(["mock", "live"]),
     generatedAt: z.iso.datetime({ offset: true }),
     departureAt: z.iso.datetime({ offset: true }),
     baseline: baselineSummarySchema,
@@ -366,12 +419,42 @@ export type RecommendationResponse = z.infer<
 export const healthResponseSchema = z
   .object({
     status: z.literal("ok"),
-    mode: z.enum(["mock", "live"]),
     timestamp: z.iso.datetime({ offset: true }),
   })
   .strict();
 
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
+
+export const readinessResponseSchema = z
+  .object({
+    status: z.enum(["ready", "not_ready"]),
+    timestamp: z.iso.datetime({ offset: true }),
+    database: z
+      .object({
+        connected: z.boolean(),
+        postgis: z.boolean(),
+        migrationsCurrent: z.boolean(),
+      })
+      .strict(),
+    providers: z
+      .object({
+        kakao: z.boolean(),
+        naver: z.boolean(),
+        tago: z.boolean(),
+      })
+      .strict(),
+    transit: z
+      .object({
+        stops: z.number().int().nonnegative(),
+        linkedStops: z.number().int().nonnegative(),
+        routes: z.number().int().nonnegative(),
+        routeStops: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ReadinessResponse = z.infer<typeof readinessResponseSchema>;
 
 export const errorCodeSchema = z.enum([
   "NOT_FOUND",
@@ -386,6 +469,7 @@ export const errorCodeSchema = z.enum([
   "UPSTREAM_ERROR",
   "TRANSIT_NOT_CONFIGURED",
   "UNSUPPORTED_CITY",
+  "SERVICE_NOT_READY",
   "RATE_LIMITED",
   "INTERNAL_ERROR",
 ]);

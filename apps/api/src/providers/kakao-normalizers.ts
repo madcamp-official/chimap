@@ -5,6 +5,7 @@ import {
   normalizedRouteSchema,
   type Place,
 } from "@chimap/contracts";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { ProviderError } from "../errors.js";
@@ -25,6 +26,49 @@ const kakaoPlaceDocumentSchema = z
 const kakaoPlaceResponseSchema = z
   .object({
     documents: z.array(kakaoPlaceDocumentSchema).default([]),
+  })
+  .passthrough();
+
+const kakaoAddressDetailsSchema = z
+  .object({
+    address_name: z.string(),
+  })
+  .passthrough();
+
+const kakaoRoadAddressDetailsSchema = z
+  .object({
+    address_name: z.string(),
+    building_name: z.string().optional(),
+  })
+  .passthrough();
+
+const kakaoAddressDocumentSchema = z
+  .object({
+    address_name: z.string(),
+    address_type: z.string(),
+    x: z.string(),
+    y: z.string(),
+    address: kakaoAddressDetailsSchema.nullable().optional(),
+    road_address: kakaoRoadAddressDetailsSchema.nullable().optional(),
+  })
+  .passthrough();
+
+const kakaoAddressResponseSchema = z
+  .object({
+    documents: z.array(kakaoAddressDocumentSchema).default([]),
+  })
+  .passthrough();
+
+const kakaoReverseDocumentSchema = z
+  .object({
+    address: kakaoAddressDetailsSchema.nullable().optional(),
+    road_address: kakaoRoadAddressDetailsSchema.nullable().optional(),
+  })
+  .passthrough();
+
+const kakaoReverseResponseSchema = z
+  .object({
+    documents: z.array(kakaoReverseDocumentSchema).default([]),
   })
   .passthrough();
 
@@ -151,6 +195,14 @@ function parseCoordinates(
   return coordinates;
 }
 
+function stablePlaceId(prefix: string, values: string[]): string {
+  const digest = createHash("sha256")
+    .update(values.join("\u001f"))
+    .digest("hex")
+    .slice(0, 24);
+  return `${prefix}:${digest}`;
+}
+
 function transitStatusError(status: string): ProviderError {
   if (status === "NO_RESULTS") {
     return new ProviderError({
@@ -211,7 +263,7 @@ export function normalizeKakaoPlaceResponse(input: unknown): Place[] {
     }
 
     places.push({
-      id: document.id,
+      id: `kakao:place:${document.id}`,
       name: document.place_name,
       address: document.address_name ?? "",
       roadAddress: document.road_address_name ?? "",
@@ -222,6 +274,73 @@ export function normalizeKakaoPlaceResponse(input: unknown): Place[] {
   }
 
   return places;
+}
+
+export function normalizeKakaoAddressResponse(input: unknown): Place[] {
+  const response = kakaoAddressResponseSchema.parse(input);
+  const places: Place[] = [];
+  for (const document of response.documents) {
+    const coordinate = coordinateSchema.safeParse({
+      lng: Number(document.x),
+      lat: Number(document.y),
+    });
+    if (!coordinate.success) {
+      continue;
+    }
+    const address = document.address?.address_name ?? "";
+    const roadAddress = document.road_address?.address_name ?? "";
+    const name =
+      document.road_address?.building_name?.trim() ||
+      roadAddress ||
+      address ||
+      document.address_name;
+    places.push({
+      id: stablePlaceId("kakao:address", [
+        document.address_name,
+        document.x,
+        document.y,
+      ]),
+      name,
+      address,
+      roadAddress,
+      category: "주소",
+      location: coordinate.data,
+    });
+  }
+  return places;
+}
+
+export function normalizeKakaoReverseGeocodeResponse(
+  input: unknown,
+  coordinate: Coordinate,
+): Place | null {
+  const response = kakaoReverseResponseSchema.parse(input);
+  const document = response.documents[0];
+  if (document === undefined) {
+    return null;
+  }
+  const address = document.address?.address_name ?? "";
+  const roadAddress = document.road_address?.address_name ?? "";
+  const name =
+    document.road_address?.building_name?.trim() ||
+    roadAddress ||
+    address;
+  if (name.length === 0) {
+    return null;
+  }
+  return {
+    id: stablePlaceId("kakao:address", [
+      address,
+      roadAddress,
+      coordinate.lng.toFixed(6),
+      coordinate.lat.toFixed(6),
+    ]),
+    name,
+    address,
+    roadAddress,
+    category: "주소",
+    location: coordinate,
+  };
 }
 
 export function normalizeKakaoTransitResponse(
@@ -379,10 +498,7 @@ export function normalizeKakaoWalkResponse(
     source: "KAKAO",
     durationSeconds: response.route.properties.totalTime,
     distanceMeters: response.route.properties.totalDistance,
-    walkDistanceMeters: legs.reduce(
-      (total, leg) => total + leg.distanceMeters,
-      0,
-    ),
+    walkDistanceMeters: response.route.properties.totalDistance,
     transitDistanceMeters: 0,
     transferCount: 0,
     legs,

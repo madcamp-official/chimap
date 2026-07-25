@@ -22,7 +22,6 @@ export default defineConfig(({ mode }) => ({
     environment: "jsdom",
     env: {
       VITE_API_BASE_URL: "http://localhost:8080",
-      VITE_APP_MODE: "demo",
       VITE_NAVER_MAP_NCP_KEY_ID: "",
     },
     setupFiles: ["./src/test/setup.ts"],

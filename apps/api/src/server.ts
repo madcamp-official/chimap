@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
-import type { TransitService } from "./transit/transit-service.js";
+import { TransitService } from "./transit/transit-service.js";
 
 try {
   process.loadEnvFile(
@@ -22,13 +22,14 @@ try {
 
 const config = loadConfig();
 const logger = createLogger(config);
-const app = createApp({ config, logger });
+const transitService = new TransitService({ config, logger });
+await transitService.initialize();
+const app = createApp({ config, logger, transitService });
 const server = createServer(app);
 
 server.listen(config.port, "0.0.0.0", () => {
   logger.info({
     event: "server.started",
-    mode: config.kakaoMode,
     port: config.port,
   });
 });
@@ -47,13 +48,15 @@ function shutdown(signal: string): void {
   }, 10_000);
   forceTimer.unref();
 
-  server.close((error) => {
+  server.close(async (error) => {
     clearTimeout(forceTimer);
     if (error !== undefined) {
       logger.error({ event: "server.stop_failed" });
       process.exit(1);
     }
-    (app.locals.transitService as TransitService | undefined)?.repository.close();
+    await (
+      app.locals.transitService as TransitService | undefined
+    )?.close();
     logger.info({ event: "server.stopped" });
     process.exit(0);
   });

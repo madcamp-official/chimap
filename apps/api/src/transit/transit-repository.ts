@@ -1,17 +1,24 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
-
 import {
-  haversineDistanceMeters,
   type BusRoute,
   type BusRouteStop,
   type BusStop,
 } from "@chimap/contracts";
+import { createHash } from "node:crypto";
+import { finished } from "node:stream/promises";
+import { Readable } from "node:stream";
+import pg, {
+  type PoolClient,
+  type QueryResultRow,
+} from "pg";
+import { from as copyFrom } from "pg-copy-streams";
 
+import type { AppConfig } from "../config.js";
 import { TRANSIT_MIGRATIONS } from "./migrations.js";
 
-type SqlRow = Record<string, SQLOutputValue>;
+const { Pool } = pg;
+
+type Queryable = Pick<pg.Pool, "query"> | Pick<PoolClient, "query">;
+type SqlRow = QueryResultRow & Record<string, unknown>;
 
 export type CsvBusStop = {
   sourceStopNo: string;
@@ -25,9 +32,12 @@ export type StopReconciliationResult =
   | { status: "existing" | "matched" | "inserted"; stop: BusStop }
   | { status: "ambiguous"; stop: BusStop; candidateIds: string[] };
 
-function now(): string {
-  return new Date().toISOString();
-}
+export type TransitStats = {
+  stops: number;
+  linkedStops: number;
+  routes: number;
+  routeStops: number;
+};
 
 function normalizeName(value: string): string {
   return value
@@ -64,17 +74,13 @@ function nameSimilarity(first: string, second: string): number {
   return (2 * intersection) / (firstPairs.size + secondPairs.size);
 }
 
-function nullableString(value: SQLOutputValue | undefined): string | null {
+function nullableString(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value);
 }
 
-function rowId(row: SqlRow): string {
-  return String(row.id);
-}
-
-function rowToStop(row: SqlRow, distanceMeters?: number): BusStop {
+function rowToStop(row: SqlRow): BusStop {
   return {
-    id: rowId(row),
+    id: String(row.id),
     cityCode: nullableString(row.city_code),
     nodeId: nullableString(row.node_id),
     sourceStopNo: nullableString(row.source_stop_no),
@@ -82,20 +88,18 @@ function rowToStop(row: SqlRow, distanceMeters?: number): BusStop {
     name: String(row.name),
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
-    ...(distanceMeters === undefined
+    ...(row.distance_meters === undefined
       ? {}
-      : { distanceMeters: Math.round(distanceMeters) }),
+      : { distanceMeters: Math.round(Number(row.distance_meters)) }),
     source: String(row.source) === "csv" ? "csv" : "tago",
   };
 }
 
 function rowToRoute(row: SqlRow): BusRoute {
-  const cityCode = String(row.city_code);
-  const routeId = String(row.route_id);
   return {
-    id: `${cityCode}:${routeId}`,
-    cityCode,
-    routeId,
+    id: `${String(row.city_code)}:${String(row.route_id)}`,
+    cityCode: String(row.city_code),
+    routeId: String(row.route_id),
     routeNo: String(row.route_no),
     routeName: String(row.route_name),
     routeType: nullableString(row.route_type),
@@ -117,148 +121,318 @@ function rowToRoute(row: SqlRow): BusRoute {
   };
 }
 
+function migrationChecksum(sql: string): string {
+  return createHash("sha256").update(sql).digest("hex");
+}
+
+function sourceIdentity(stop: CsvBusStop): string {
+  return createHash("sha256")
+    .update(
+      [
+        stop.sourceStopNo,
+        stop.name,
+        stop.latitude.toFixed(7),
+        stop.longitude.toFixed(7),
+      ].join("\u001f"),
+    )
+    .digest("hex");
+}
+
+function csvField(value: string | null): string {
+  if (value === null) {
+    return "";
+  }
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function postgresErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+function retryDelay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function stopSelect(prefix = ""): string {
+  return `
+    ${prefix}id,
+    ${prefix}city_code,
+    ${prefix}node_id,
+    ${prefix}source_stop_no,
+    ${prefix}ars_id,
+    ${prefix}name,
+    ${prefix}source,
+    ST_Y(${prefix}location::geometry) AS latitude,
+    ST_X(${prefix}location::geometry) AS longitude
+  `;
+}
+
 export class TransitRepository {
-  readonly #database: DatabaseSync;
+  public readonly pool: pg.Pool;
 
-  public constructor(databasePath: string) {
-    if (databasePath !== ":memory:") {
-      const absolutePath = resolve(databasePath);
-      mkdirSync(dirname(absolutePath), { recursive: true });
-      this.#database = new DatabaseSync(absolutePath);
-    } else {
-      this.#database = new DatabaseSync(":memory:");
-    }
-    this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    this.migrate();
+  public constructor(
+    database: AppConfig["database"],
+    pool?: pg.Pool,
+  ) {
+    this.pool =
+      pool ??
+      new Pool({
+        connectionString: database.url,
+        max: database.poolMax,
+        connectionTimeoutMillis: database.connectTimeoutMs,
+        statement_timeout: database.statementTimeoutMs,
+        application_name: "chimap-api",
+        ...(database.sslMode === "disable"
+          ? {}
+          : {
+              ssl: {
+                rejectUnauthorized: database.sslMode === "verify-full",
+              },
+            }),
+      });
   }
 
-  public migrate(): void {
-    this.#database.exec(
-      "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
-    );
-    const hasVersion = this.#database.prepare(
-      "SELECT 1 FROM schema_migrations WHERE version = ?",
-    );
-    const recordVersion = this.#database.prepare(
-      "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-    );
-    for (const migration of TRANSIT_MIGRATIONS) {
-      if (hasVersion.get(migration.version) !== undefined) {
-        continue;
+  public async migrate(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        "SELECT pg_advisory_lock(hashtext('chimap:transit:migrations'))",
+      );
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version bigint PRIMARY KEY,
+          name text NOT NULL,
+          checksum text NOT NULL,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+      for (const migration of TRANSIT_MIGRATIONS) {
+        const checksum = migrationChecksum(migration.sql);
+        const existing = await client.query<{
+          checksum: string;
+        }>(
+          "SELECT checksum FROM schema_migrations WHERE version = $1",
+          [migration.version],
+        );
+        if (existing.rowCount === 1) {
+          if (existing.rows[0]?.checksum !== checksum) {
+            throw new Error(
+              `migration ${migration.version} checksum이 일치하지 않습니다.`,
+            );
+          }
+          continue;
+        }
+        await client.query("BEGIN");
+        try {
+          await client.query(migration.sql);
+          await client.query(
+            `INSERT INTO schema_migrations(version, name, checksum)
+             VALUES ($1, $2, $3)`,
+            [migration.version, migration.name, checksum],
+          );
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        }
       }
-      this.#database.exec("BEGIN IMMEDIATE");
-      try {
-        this.#database.exec(migration.sql);
-        recordVersion.run(migration.version, now());
-        this.#database.exec("COMMIT");
-      } catch (error) {
-        this.#database.exec("ROLLBACK");
-        throw error;
-      }
+    } finally {
+      await client
+        .query(
+          "SELECT pg_advisory_unlock(hashtext('chimap:transit:migrations'))",
+        )
+        .catch(() => undefined);
+      client.release();
     }
   }
 
-  public close(): void {
-    this.#database.close();
+  public async status(): Promise<{
+    connected: boolean;
+    postgis: boolean;
+    migrationsCurrent: boolean;
+  }> {
+    try {
+      const [postgis, migrations] = await Promise.all([
+        this.pool.query<{ installed: boolean }>(
+          `SELECT EXISTS(
+             SELECT 1 FROM pg_extension WHERE extname = 'postgis'
+           ) AS installed`,
+        ),
+        this.pool.query<{ count: string }>(
+          "SELECT COUNT(*)::text AS count FROM schema_migrations",
+        ),
+      ]);
+      return {
+        connected: true,
+        postgis: postgis.rows[0]?.installed === true,
+        migrationsCurrent:
+          Number(migrations.rows[0]?.count ?? 0) ===
+          TRANSIT_MIGRATIONS.length,
+      };
+    } catch {
+      return {
+        connected: false,
+        postgis: false,
+        migrationsCurrent: false,
+      };
+    }
   }
 
-  public findNearbyStops(
+  public async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  public async findNearbyStops(
     latitude: number,
     longitude: number,
     radiusMeters: number,
-  ): BusStop[] {
-    const latitudeDelta = radiusMeters / 111_320;
-    const longitudeScale = Math.max(
-      0.01,
-      Math.cos((latitude * Math.PI) / 180),
+    queryable: Queryable = this.pool,
+  ): Promise<BusStop[]> {
+    const result = await queryable.query(
+      `SELECT
+         ${stopSelect()}
+         , ST_Distance(
+             location,
+             ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+           ) AS distance_meters
+       FROM bus_stops
+       WHERE ST_DWithin(
+         location,
+         ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+         $3
+       )
+       ORDER BY distance_meters
+       LIMIT 100`,
+      [latitude, longitude, radiusMeters],
     );
-    const longitudeDelta = radiusMeters / (111_320 * longitudeScale);
-    const rows = this.#database
-      .prepare(
-        `SELECT *
-         FROM bus_stops
-         WHERE latitude BETWEEN ? AND ?
-           AND longitude BETWEEN ? AND ?`,
-      )
-      .all(
-        latitude - latitudeDelta,
-        latitude + latitudeDelta,
-        longitude - longitudeDelta,
-        longitude + longitudeDelta,
-      ) as SqlRow[];
-    return rows
-      .map((row) => {
-        const distance = haversineDistanceMeters(
-          { lat: latitude, lng: longitude },
-          { lat: Number(row.latitude), lng: Number(row.longitude) },
-        );
-        return { row, distance };
-      })
-      .filter(({ distance }) => distance <= radiusMeters)
-      .sort((first, second) => first.distance - second.distance)
-      .map(({ row, distance }) => rowToStop(row, distance));
+    return result.rows.map((row) => rowToStop(row as SqlRow));
   }
 
-  public upsertCsvStops(stops: CsvBusStop[]): number {
+  public async upsertCsvStops(stops: CsvBusStop[]): Promise<number> {
     if (stops.length === 0) {
       return 0;
     }
-    const timestamp = now();
-    const statement = this.#database.prepare(
-      `INSERT INTO bus_stops (
-         city_code, node_id, source_stop_no, ars_id, region_name, name,
-         latitude, longitude, source, source_updated_at, created_at, updated_at
-       ) VALUES (NULL, NULL, ?, NULL, ?, ?, ?, ?, 'csv', ?, ?, ?)
-       ON CONFLICT(source, source_stop_no, name, latitude, longitude)
-       WHERE source = 'csv' AND source_stop_no IS NOT NULL
-       DO UPDATE SET
-         region_name = excluded.region_name,
-         source_updated_at = excluded.source_updated_at,
-         updated_at = excluded.updated_at`,
-    );
-    this.#database.exec("BEGIN IMMEDIATE");
+    const client = await this.pool.connect();
     try {
-      for (const stop of stops) {
-        statement.run(
-          stop.sourceStopNo,
-          stop.regionName,
-          stop.name,
-          stop.latitude,
-          stop.longitude,
-          timestamp,
-          timestamp,
-          timestamp,
-        );
-      }
-      this.#database.exec("COMMIT");
+      await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = '5min'");
+      await client.query(`
+        CREATE TEMP TABLE bus_stops_import (
+          source_identity text NOT NULL,
+          source_stop_no varchar(100) NOT NULL,
+          region_name varchar(200),
+          name varchar(200) NOT NULL,
+          latitude double precision NOT NULL,
+          longitude double precision NOT NULL
+        ) ON COMMIT DROP
+      `);
+      const stream = client.query(
+        copyFrom(
+          `COPY bus_stops_import(
+             source_identity, source_stop_no, region_name, name,
+             latitude, longitude
+           ) FROM STDIN WITH (FORMAT csv)`,
+        ),
+      );
+      const input = Readable.from(
+        stops.map((stop) =>
+          [
+            csvField(sourceIdentity(stop)),
+            csvField(stop.sourceStopNo),
+            csvField(stop.regionName),
+            csvField(stop.name),
+            stop.latitude,
+            stop.longitude,
+          ].join(",") + "\n",
+        ),
+      );
+      input.pipe(stream);
+      await finished(stream);
+      await client.query(`
+        INSERT INTO bus_stops (
+          source_stop_no, region_name, name, location, source,
+          source_identity, source_updated_at, created_at, updated_at
+        )
+        SELECT
+          source_stop_no,
+          region_name,
+          name,
+          ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+          'csv',
+          source_identity,
+          now(),
+          now(),
+          now()
+        FROM bus_stops_import
+        ON CONFLICT (source_identity)
+          WHERE source_identity IS NOT NULL
+        DO UPDATE SET
+          region_name = EXCLUDED.region_name,
+          name = EXCLUDED.name,
+          location = EXCLUDED.location,
+          source_updated_at = now(),
+          updated_at = now()
+      `);
+      await client.query("COMMIT");
       return stops.length;
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      await client.query("ROLLBACK");
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  public reconcileTagoStop(tagoStop: BusStop): StopReconciliationResult {
+  public async reconcileTagoStop(
+    tagoStop: BusStop,
+    queryable: Queryable = this.pool,
+  ): Promise<StopReconciliationResult> {
     if (tagoStop.cityCode === null || tagoStop.nodeId === null) {
       throw new Error("TAGO 정류장에는 cityCode와 nodeId가 필요합니다.");
     }
-    const exact = this.#database
-      .prepare(
-        "SELECT * FROM bus_stops WHERE city_code = ? AND node_id = ?",
-      )
-      .get(tagoStop.cityCode, tagoStop.nodeId) as SqlRow | undefined;
-    if (exact !== undefined) {
-      this.#updateTagoStop(exact, tagoStop);
-      const refreshed = this.#database
-        .prepare("SELECT * FROM bus_stops WHERE id = ?")
-        .get(Number(exact.id)) as SqlRow;
-      return { status: "existing", stop: rowToStop(refreshed) };
+    const exact = await queryable.query(
+      `SELECT ${stopSelect()}
+       FROM bus_stops
+       WHERE city_code = $1 AND node_id = $2`,
+      [tagoStop.cityCode, tagoStop.nodeId],
+    );
+    if (exact.rowCount === 1) {
+      const result = await queryable.query(
+        `UPDATE bus_stops
+         SET ars_id = COALESCE($3, ars_id),
+             name = $4,
+             location = ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography,
+             source_updated_at = now(),
+             updated_at = now()
+         WHERE city_code = $1 AND node_id = $2
+         RETURNING ${stopSelect()}`,
+        [
+          tagoStop.cityCode,
+          tagoStop.nodeId,
+          tagoStop.arsId,
+          tagoStop.name,
+          tagoStop.latitude,
+          tagoStop.longitude,
+        ],
+      );
+      return {
+        status: "existing",
+        stop: rowToStop(result.rows[0] as SqlRow),
+      };
     }
 
-    const candidates = this.findNearbyStops(
-      tagoStop.latitude,
-      tagoStop.longitude,
-      30,
+    const candidates = (
+      await this.findNearbyStops(
+        tagoStop.latitude,
+        tagoStop.longitude,
+        30,
+        queryable,
+      )
     )
       .filter((candidate) => candidate.nodeId === null)
       .map((candidate) => ({
@@ -278,29 +452,31 @@ export class TransitRepository {
       best !== undefined &&
       (second === undefined || best.similarity - second.similarity >= 0.1)
     ) {
-      this.#database
-        .prepare(
-          `UPDATE bus_stops
-           SET city_code = ?, node_id = ?, ars_id = COALESCE(?, ars_id),
-               name = ?, latitude = ?, longitude = ?,
-               source_updated_at = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(
+      const result = await queryable.query(
+        `UPDATE bus_stops
+         SET city_code = $1,
+             node_id = $2,
+             ars_id = COALESCE($3, ars_id),
+             name = $4,
+             location = ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography,
+             source_updated_at = now(),
+             updated_at = now()
+         WHERE id = $7
+         RETURNING ${stopSelect()}`,
+        [
           tagoStop.cityCode,
           tagoStop.nodeId,
           tagoStop.arsId,
           tagoStop.name,
           tagoStop.latitude,
           tagoStop.longitude,
-          now(),
-          now(),
-          Number(best.candidate.id),
-        );
-      const matched = this.#database
-        .prepare("SELECT * FROM bus_stops WHERE id = ?")
-        .get(Number(best.candidate.id)) as SqlRow;
-      return { status: "matched", stop: rowToStop(matched) };
+          best.candidate.id,
+        ],
+      );
+      return {
+        status: "matched",
+        stop: rowToStop(result.rows[0] as SqlRow),
+      };
     }
     if (candidates.length > 1) {
       return {
@@ -309,86 +485,73 @@ export class TransitRepository {
         candidateIds: candidates.map(({ candidate }) => candidate.id),
       };
     }
-    const inserted = this.#insertTagoStop(tagoStop);
-    return { status: "inserted", stop: inserted };
+    return {
+      status: "inserted",
+      stop: await this.#insertTagoStop(tagoStop, queryable),
+    };
   }
 
-  #updateTagoStop(existing: SqlRow, stop: BusStop): void {
-    this.#database
-      .prepare(
-        `UPDATE bus_stops
-         SET ars_id = COALESCE(?, ars_id), name = ?, latitude = ?,
-             longitude = ?, source_updated_at = ?, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(
-        stop.arsId,
-        stop.name,
-        stop.latitude,
-        stop.longitude,
-        now(),
-        now(),
-        Number(existing.id),
-      );
-  }
-
-  #insertTagoStop(stop: BusStop): BusStop {
-    const timestamp = now();
-    const result = this.#database
-      .prepare(
-        `INSERT INTO bus_stops (
-           city_code, node_id, source_stop_no, ars_id, region_name, name,
-           latitude, longitude, source, source_updated_at, created_at, updated_at
-         ) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, 'tago', ?, ?, ?)
-         ON CONFLICT(city_code, node_id)
+  async #insertTagoStop(
+    stop: BusStop,
+    queryable: Queryable,
+  ): Promise<BusStop> {
+    const result = await queryable.query(
+      `INSERT INTO bus_stops (
+         city_code, node_id, ars_id, name, location, source,
+         source_updated_at, created_at, updated_at
+       ) VALUES (
+         $1, $2, $3, $4,
+         ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography,
+         'tago', now(), now(), now()
+       )
+       ON CONFLICT (city_code, node_id)
          WHERE city_code IS NOT NULL AND node_id IS NOT NULL
-         DO UPDATE SET
-           ars_id = COALESCE(excluded.ars_id, bus_stops.ars_id),
-           name = excluded.name,
-           latitude = excluded.latitude,
-           longitude = excluded.longitude,
-           source_updated_at = excluded.source_updated_at,
-           updated_at = excluded.updated_at
-         RETURNING *`,
-      )
-      .get(
+       DO UPDATE SET
+         ars_id = COALESCE(EXCLUDED.ars_id, bus_stops.ars_id),
+         name = EXCLUDED.name,
+         location = EXCLUDED.location,
+         source_updated_at = now(),
+         updated_at = now()
+       RETURNING ${stopSelect()}`,
+      [
         stop.cityCode,
         stop.nodeId,
         stop.arsId,
         stop.name,
         stop.latitude,
         stop.longitude,
-        timestamp,
-        timestamp,
-        timestamp,
-      ) as SqlRow;
-    return rowToStop(result);
+      ],
+    );
+    return rowToStop(result.rows[0] as SqlRow);
   }
 
-  public upsertRoute(route: BusRoute): BusRoute {
-    const timestamp = now();
-    this.#database
-      .prepare(
-        `INSERT INTO bus_routes (
-           city_code, route_id, route_no, route_name, route_type,
-           start_stop_name, end_stop_name, first_bus_time, last_bus_time,
-           weekday_interval_minutes, weekend_interval_minutes,
-           source_updated_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(city_code, route_id) DO UPDATE SET
-           route_no = excluded.route_no,
-           route_name = excluded.route_name,
-           route_type = excluded.route_type,
-           start_stop_name = excluded.start_stop_name,
-           end_stop_name = excluded.end_stop_name,
-           first_bus_time = excluded.first_bus_time,
-           last_bus_time = excluded.last_bus_time,
-           weekday_interval_minutes = excluded.weekday_interval_minutes,
-           weekend_interval_minutes = excluded.weekend_interval_minutes,
-           source_updated_at = excluded.source_updated_at,
-           updated_at = excluded.updated_at`,
-      )
-      .run(
+  public async upsertRoute(
+    route: BusRoute,
+    queryable: Queryable = this.pool,
+  ): Promise<BusRoute> {
+    const result = await queryable.query(
+      `INSERT INTO bus_routes (
+         city_code, route_id, route_no, route_name, route_type,
+         start_stop_name, end_stop_name, first_bus_time, last_bus_time,
+         weekday_interval_minutes, weekend_interval_minutes,
+         source_updated_at, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),now(),now()
+       )
+       ON CONFLICT (city_code, route_id) DO UPDATE SET
+         route_no = EXCLUDED.route_no,
+         route_name = EXCLUDED.route_name,
+         route_type = EXCLUDED.route_type,
+         start_stop_name = EXCLUDED.start_stop_name,
+         end_stop_name = EXCLUDED.end_stop_name,
+         first_bus_time = EXCLUDED.first_bus_time,
+         last_bus_time = EXCLUDED.last_bus_time,
+         weekday_interval_minutes = EXCLUDED.weekday_interval_minutes,
+         weekend_interval_minutes = EXCLUDED.weekend_interval_minutes,
+         source_updated_at = now(),
+         updated_at = now()
+       RETURNING *`,
+      [
         route.cityCode,
         route.routeId,
         route.routeNo,
@@ -400,126 +563,145 @@ export class TransitRepository {
         route.lastBusTime,
         route.weekdayIntervalMinutes,
         route.weekendIntervalMinutes,
-        timestamp,
-        timestamp,
-        timestamp,
-      );
-    return this.getRoute(route.cityCode, route.routeId) ?? route;
+      ],
+    );
+    return rowToRoute(result.rows[0] as SqlRow);
   }
 
-  public getRoute(cityCode: string, routeId: string): BusRoute | undefined {
-    const row = this.#database
-      .prepare(
-        "SELECT * FROM bus_routes WHERE city_code = ? AND route_id = ?",
-      )
-      .get(cityCode, routeId) as SqlRow | undefined;
-    return row === undefined ? undefined : rowToRoute(row);
+  public async getRoute(
+    cityCode: string,
+    routeId: string,
+  ): Promise<BusRoute | undefined> {
+    const result = await this.pool.query(
+      "SELECT * FROM bus_routes WHERE city_code = $1 AND route_id = $2",
+      [cityCode, routeId],
+    );
+    return result.rowCount === 0
+      ? undefined
+      : rowToRoute(result.rows[0] as SqlRow);
   }
 
-  public getRoutesByStop(cityCode: string, nodeId: string): BusRoute[] {
-    return (
-      this.#database
-        .prepare(
-          `SELECT DISTINCT route.*
-           FROM bus_routes AS route
-           JOIN bus_route_stops AS relation
-             ON relation.route_internal_id = route.id
-           JOIN bus_stops AS stop
-             ON stop.id = relation.stop_internal_id
-           WHERE stop.city_code = ? AND stop.node_id = ?
-           ORDER BY route.route_no`,
-        )
-        .all(cityCode, nodeId) as SqlRow[]
-    ).map(rowToRoute);
+  public async getRoutesByStop(
+    cityCode: string,
+    nodeId: string,
+  ): Promise<BusRoute[]> {
+    const result = await this.pool.query(
+      `SELECT DISTINCT route.*
+       FROM bus_routes AS route
+       JOIN bus_route_stops AS relation
+         ON relation.route_internal_id = route.id
+       JOIN bus_stops AS stop
+         ON stop.id = relation.stop_internal_id
+       WHERE stop.city_code = $1 AND stop.node_id = $2
+       ORDER BY route.route_no`,
+      [cityCode, nodeId],
+    );
+    return result.rows.map((row) => rowToRoute(row as SqlRow));
   }
 
-  public replaceRouteStops(
+  public async replaceRouteStops(
     route: BusRoute,
     stops: BusRouteStop[],
-  ): void {
-    this.upsertRoute(route);
-    const routeRow = this.#database
-      .prepare(
-        "SELECT id FROM bus_routes WHERE city_code = ? AND route_id = ?",
-      )
-      .get(route.cityCode, route.routeId) as SqlRow;
-    const routeInternalId = Number(routeRow.id);
-    const relation = this.#database.prepare(
-      `INSERT INTO bus_route_stops (
-         route_internal_id, stop_internal_id, node_order, direction,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(route_internal_id, node_order) DO UPDATE SET
-         stop_internal_id = excluded.stop_internal_id,
-         direction = excluded.direction,
-         updated_at = excluded.updated_at`,
-    );
-    this.#database.exec("BEGIN IMMEDIATE");
-    try {
-      this.#database
-        .prepare(
-          "DELETE FROM bus_route_stops WHERE route_internal_id = ?",
-        )
-        .run(routeInternalId);
-      for (const stop of stops) {
-        const storedStop = this.reconcileTagoStop({
-          id: stop.stopId,
-          cityCode: stop.cityCode,
-          nodeId: stop.nodeId,
-          sourceStopNo: null,
-          arsId: null,
-          name: stop.stopName,
-          latitude: stop.latitude,
-          longitude: stop.longitude,
-          source: "tago",
-        });
-        const resolvedStop =
-          storedStop.status === "ambiguous"
-            ? this.#insertTagoStop(storedStop.stop)
-            : storedStop.stop;
-        const timestamp = now();
-        relation.run(
-          routeInternalId,
-          Number(resolvedStop.id),
-          stop.nodeOrder,
-          stop.direction,
-          timestamp,
-          timestamp,
-        );
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.#replaceRouteStopsOnce(route, stops);
+        return;
+      } catch (error) {
+        if (postgresErrorCode(error) !== "40P01" || attempt === 2) {
+          throw error;
+        }
+        await retryDelay(75 * (attempt + 1));
       }
-      this.#database.exec("COMMIT");
-    } catch (error) {
-      this.#database.exec("ROLLBACK");
-      throw error;
     }
   }
 
-  public getRouteStops(
+  async #replaceRouteStopsOnce(
+    route: BusRoute,
+    stops: BusRouteStop[],
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const storedRoute = await this.upsertRoute(route, client);
+      const routeRow = await client.query<{ id: string }>(
+        "SELECT id FROM bus_routes WHERE city_code = $1 AND route_id = $2",
+        [storedRoute.cityCode, storedRoute.routeId],
+      );
+      const routeInternalId = routeRow.rows[0]?.id;
+      if (routeInternalId === undefined) {
+        throw new Error("저장된 TAGO 노선을 찾지 못했습니다.");
+      }
+      await client.query(
+        "DELETE FROM bus_route_stops WHERE route_internal_id = $1",
+        [routeInternalId],
+      );
+      for (const stop of stops) {
+        const storedStop = await this.reconcileTagoStop(
+          {
+            id: stop.stopId,
+            cityCode: stop.cityCode,
+            nodeId: stop.nodeId,
+            sourceStopNo: null,
+            arsId: null,
+            name: stop.stopName,
+            latitude: stop.latitude,
+            longitude: stop.longitude,
+            source: "tago",
+          },
+          client,
+        );
+        const resolvedStop =
+          storedStop.status === "ambiguous"
+            ? await this.#insertTagoStop(storedStop.stop, client)
+            : storedStop.stop;
+        await client.query(
+          `INSERT INTO bus_route_stops (
+             route_internal_id, stop_internal_id, node_order, direction,
+             created_at, updated_at
+           ) VALUES ($1,$2,$3,$4,now(),now())`,
+          [
+            routeInternalId,
+            resolvedStop.id,
+            stop.nodeOrder,
+            stop.direction,
+          ],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getRouteStops(
     cityCode: string,
     routeId: string,
-  ): BusRouteStop[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT
-           route.route_id,
-           stop.id AS stop_id,
-           stop.node_id,
-           stop.name,
-           stop.latitude,
-           stop.longitude,
-           relation.node_order,
-           relation.direction
-         FROM bus_routes AS route
-         JOIN bus_route_stops AS relation
-           ON relation.route_internal_id = route.id
-         JOIN bus_stops AS stop
-           ON stop.id = relation.stop_internal_id
-         WHERE route.city_code = ? AND route.route_id = ?
-           AND stop.node_id IS NOT NULL
-         ORDER BY relation.node_order`,
-      )
-      .all(cityCode, routeId) as SqlRow[];
-    return rows.map((row) => ({
+  ): Promise<BusRouteStop[]> {
+    const result = await this.pool.query(
+      `SELECT
+         route.route_id,
+         stop.id AS stop_id,
+         stop.node_id,
+         stop.name,
+         ST_Y(stop.location::geometry) AS latitude,
+         ST_X(stop.location::geometry) AS longitude,
+         relation.node_order,
+         relation.direction
+       FROM bus_routes AS route
+       JOIN bus_route_stops AS relation
+         ON relation.route_internal_id = route.id
+       JOIN bus_stops AS stop
+         ON stop.id = relation.stop_internal_id
+       WHERE route.city_code = $1 AND route.route_id = $2
+         AND stop.node_id IS NOT NULL
+       ORDER BY relation.node_order`,
+      [cityCode, routeId],
+    );
+    return result.rows.map((row) => ({
       routeId: String(row.route_id),
       stopId: String(row.stop_id),
       nodeId: String(row.node_id),
@@ -532,26 +714,28 @@ export class TransitRepository {
     }));
   }
 
-  public stats(): {
-    stops: number;
-    linkedStops: number;
-    routes: number;
-    routeStops: number;
-  } {
-    const count = (table: string, where = ""): number => {
-      const row = this.#database
-        .prepare(`SELECT COUNT(*) AS count FROM ${table} ${where}`)
-        .get() as SqlRow;
-      return Number(row.count);
-    };
+  public async stats(): Promise<TransitStats> {
+    const result = await this.pool.query<{
+      stops: string;
+      linked_stops: string;
+      routes: string;
+      route_stops: string;
+    }>(`
+      SELECT
+        (SELECT COUNT(*) FROM bus_stops)::text AS stops,
+        (
+          SELECT COUNT(*) FROM bus_stops
+          WHERE city_code IS NOT NULL AND node_id IS NOT NULL
+        )::text AS linked_stops,
+        (SELECT COUNT(*) FROM bus_routes)::text AS routes,
+        (SELECT COUNT(*) FROM bus_route_stops)::text AS route_stops
+    `);
+    const row = result.rows[0];
     return {
-      stops: count("bus_stops"),
-      linkedStops: count(
-        "bus_stops",
-        "WHERE city_code IS NOT NULL AND node_id IS NOT NULL",
-      ),
-      routes: count("bus_routes"),
-      routeStops: count("bus_route_stops"),
+      stops: Number(row?.stops ?? 0),
+      linkedStops: Number(row?.linked_stops ?? 0),
+      routes: Number(row?.routes ?? 0),
+      routeStops: Number(row?.route_stops ?? 0),
     };
   }
 }

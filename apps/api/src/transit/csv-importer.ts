@@ -17,13 +17,21 @@ const HEADER_ALIASES: Record<CsvColumn, readonly string[]> = {
   name: ["정류장명", "정류소명", "stop_name"],
   latitude: ["위도", "latitude", "gpslati"],
   longitude: ["경도", "longitude", "gpslong"],
-  region: ["지자체", "관리지자체", "시도", "시군구"],
+  region: [
+    "지자체",
+    "관리지자체",
+    "관리도시명",
+    "도시명",
+    "시도",
+    "시군구",
+  ],
 };
 
 export type BusStopsCsvParseResult = {
   encoding: "utf-8" | "cp949";
   rows: CsvBusStop[];
   headers: string[];
+  rejectedRows: number;
 };
 
 function normalizeHeader(value: string): string {
@@ -240,15 +248,19 @@ export function parseBusStopsCsvBuffer(
     });
   });
 
-  if (errors.length > 0) {
+  const dataRowCount = Math.max(records.length - 1, 0);
+  const rejectionRate =
+    dataRowCount === 0 ? 1 : errors.length / dataRowCount;
+  if (rows.length === 0 || rejectionRate > 0.01) {
     throw new Error(
-      `전국 정류장 파일 검증에 실패했습니다 (${errors.length}건): ${errors.slice(0, 10).join("; ")}`,
+      `전국 정류장 파일 검증에 실패했습니다 (제외 ${errors.length}/${dataRowCount}건): ${errors.slice(0, 10).join("; ")}`,
     );
   }
   return {
     encoding: decoded.encoding,
     rows,
     headers,
+    rejectedRows: errors.length,
   };
 }
 
@@ -258,6 +270,6 @@ export async function importBusStopsFile(
 ): Promise<BusStopsCsvParseResult & { imported: number }> {
   const buffer = await readFile(path);
   const parsed = parseBusStopsCsvBuffer(buffer);
-  const imported = repository.upsertCsvStops(parsed.rows);
+  const imported = await repository.upsertCsvStops(parsed.rows);
   return { ...parsed, imported };
 }

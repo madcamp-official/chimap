@@ -18,8 +18,7 @@ const TRANSIT_TTL_MS = 90 * 1000;
 const WALK_TTL_MS = 30 * 60 * 1000;
 
 export class CachedMobilityProvider implements MobilityProvider {
-  public readonly source: "KAKAO" | "TAGO" | "MOCK";
-  public readonly mode: "live" | "mock";
+  public readonly source: "KAKAO" | "TAGO";
 
   readonly #provider: MobilityProvider;
   readonly #cache: MemoryCache;
@@ -28,7 +27,6 @@ export class CachedMobilityProvider implements MobilityProvider {
     this.#provider = provider;
     this.#cache = cache;
     this.source = provider.source;
-    this.mode = provider.mode;
   }
 
   public async searchPlaces(
@@ -42,7 +40,6 @@ export class CachedMobilityProvider implements MobilityProvider {
     const limit = options.limit ?? 5;
     const radius = options.radiusMeters ?? "none";
     const key = [
-      this.mode,
       "places",
       normalizeSearchTerm(query),
       center,
@@ -59,7 +56,6 @@ export class CachedMobilityProvider implements MobilityProvider {
     request: TransitRouteRequest,
   ): Promise<NormalizedRoute[]> {
     const key = [
-      this.mode,
       "transit",
       coordinateCacheKey(request.origin.location),
       coordinateCacheKey(request.destination.location),
@@ -76,7 +72,6 @@ export class CachedMobilityProvider implements MobilityProvider {
   ): Promise<NormalizedRoute> {
     const viaKey = (request.vias ?? []).map(coordinateCacheKey).join(";");
     const key = [
-      this.mode,
       "walk",
       coordinateCacheKey(request.origin),
       viaKey,

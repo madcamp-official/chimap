@@ -40,6 +40,14 @@ const SERVICE_PATHS: Record<TagoServiceKind, string> = {
 const SUCCESS_RESULT_CODES = new Set(["00", "0", "0000"]);
 const RETRYABLE_HTTP_STATUSES = new Set([500, 502, 503, 504]);
 
+function retryableProviderResult(code: string, message: string): boolean {
+  return (
+    code === "99" &&
+    (message.includes("가용한 세션") ||
+      message.includes("LIMITED_NUMBER_OF_SERVICE_REQUESTS"))
+  );
+}
+
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -198,6 +206,7 @@ export function parseTagoResponsePage(
   const resultMessage = String(header.resultMsg ?? "TAGO API 오류").trim();
 
   if (!SUCCESS_RESULT_CODES.has(resultCode)) {
+    const retryable = retryableProviderResult(resultCode, resultMessage);
     throw new TagoApiError({
       service: context.service,
       operation: context.operation,
@@ -206,7 +215,7 @@ export function parseTagoResponsePage(
         resultMessage || "TAGO API가 오류를 반환했습니다.",
         context.secrets ?? [],
       ),
-      retryable: false,
+      retryable,
     });
   }
 
@@ -350,6 +359,10 @@ export class TagoClient {
         });
       } catch (error) {
         if (error instanceof TagoApiError) {
+          if (error.retryable && attempt + 1 < maxAttempts) {
+            await delay(500 * 2 ** attempt, signal);
+            continue;
+          }
           throw error;
         }
         if (signal?.aborted === true) {
@@ -506,7 +519,7 @@ export class TagoClient {
     const items = await this.#requestAllPages(
       "stop",
       "getSttnThrghRouteList",
-      { cityCode, nodeId },
+      { cityCode, nodeid: nodeId },
       signal,
     );
     return items.map((item) =>

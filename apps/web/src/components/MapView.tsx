@@ -420,7 +420,6 @@ type MapViewProps = {
   recommendations: Recommendation[];
   selectedRouteId: string | undefined;
   ncpKeyId?: string;
-  routeProvider?: "TAGO" | "DEMO";
   vehiclePositions?: BusVehiclePosition[];
 };
 
@@ -430,7 +429,6 @@ export function MapView({
   recommendations,
   selectedRouteId,
   ncpKeyId,
-  routeProvider = "TAGO",
   vehiclePositions = [],
 }: MapViewProps) {
   const normalizedNcpKeyId = ncpKeyId?.trim();
@@ -747,7 +745,7 @@ export function MapView({
       />
       <p className="sr-only" role="status">
         {status === "ready"
-          ? `네이버 지도가 준비됐어요. 경로 계산 데이터는 ${routeProvider === "TAGO" ? "TAGO" : "데모"}를 사용합니다.`
+          ? "네이버 지도가 준비됐어요. 경로 계산에는 KAKAO 도보와 TAGO 버스를 사용합니다."
           : status === "missing"
             ? "네이버 지도 키가 없어 경로선 미리보기를 표시합니다."
             : status === "loading"
@@ -791,7 +789,9 @@ export function MapView({
       <div className="map-provider-chip" aria-label="지도와 경로 데이터 제공자">
         <span><strong>NAVER</strong> 지도</span>
         <i aria-hidden="true">+</i>
-        <span><strong>{routeProvider}</strong> 경로</span>
+        <span><strong>KAKAO</strong> 검색/도보</span>
+        <i aria-hidden="true">+</i>
+        <span><strong>TAGO</strong> 버스</span>
       </div>
       <div className="map-legend" aria-label="지도 경로 범례">
         <span><i className="legend-bus" />버스</span>

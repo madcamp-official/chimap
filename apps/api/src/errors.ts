@@ -88,7 +88,7 @@ export function mapProviderError(error: ProviderError): AppError {
       });
     case "CONFIGURATION":
       return new AppError({
-        code: "TRANSIT_NOT_CONFIGURED",
+        code: "SERVICE_NOT_READY",
         message: error.message,
         status: 503,
         cause: error,

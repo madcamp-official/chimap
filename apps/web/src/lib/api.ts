@@ -6,6 +6,7 @@ import {
   placeSearchResponseSchema,
   recommendationRequestSchema,
   recommendationResponseSchema,
+  reverseGeocodeResponseSchema,
   type Coordinate,
   type BusRouteStopsResponse,
   type BusVehiclesResponse,
@@ -14,6 +15,7 @@ import {
   type PlaceSearchResponse,
   type RecommendationRequest,
   type RecommendationResponse,
+  type ReverseGeocodeResponse,
 } from "@chimap/contracts";
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -92,10 +94,15 @@ export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
 
 export async function searchPlaces(input: {
   query: string;
+  scope: "suggest" | "resolve";
   center?: Coordinate;
   signal?: AbortSignal;
 }): Promise<PlaceSearchResponse> {
-  const parameters = new URLSearchParams({ query: input.query });
+  const parameters = new URLSearchParams({
+    query: input.query,
+    scope: input.scope,
+    limit: "8",
+  });
   if (input.center !== undefined) {
     parameters.set("x", String(input.center.lng));
     parameters.set("y", String(input.center.lat));
@@ -103,6 +110,21 @@ export async function searchPlaces(input: {
   return placeSearchResponseSchema.parse(
     await fetchJson(`/api/v1/places?${parameters.toString()}`, {
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+    }),
+  );
+}
+
+export async function reverseGeocode(
+  coordinate: Coordinate,
+  signal?: AbortSignal,
+): Promise<ReverseGeocodeResponse> {
+  const parameters = new URLSearchParams({
+    x: String(coordinate.lng),
+    y: String(coordinate.lat),
+  });
+  return reverseGeocodeResponseSchema.parse(
+    await fetchJson(`/api/v1/places/reverse?${parameters.toString()}`, {
+      ...(signal === undefined ? {} : { signal }),
     }),
   );
 }

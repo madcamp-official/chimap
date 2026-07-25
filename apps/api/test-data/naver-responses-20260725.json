@@ -1,0 +1,195 @@
+{
+  "provider": "NAVER",
+  "capturedAt": "2026-07-25T06:31:00Z",
+  "documentationCheckedAt": "2026-07-25",
+  "captures": [
+    {
+      "api": "GET https://maps.apigw.ntruss.com/map-geocode/v2/geocode",
+      "request": "query=대전 유성구 대학로 291",
+      "checksum": "8aed75aa2d304bb979c3b5842d6fbfb9e5a2e950d3790d7c12ffef0e8563d693",
+      "response": {
+        "status": "OK",
+        "meta": {
+          "totalCount": 1,
+          "page": 1,
+          "count": 1
+        },
+        "addresses": [
+          {
+            "roadAddress": "대전광역시 유성구 대학로 291 한국과학기술원",
+            "jibunAddress": "대전광역시 유성구 구성동 23 한국과학기술원",
+            "englishAddress": "291, Daehak-ro, Yuseong-gu, Daejeon, Republic of Korea",
+            "addressElements": [
+              {
+                "types": ["SIDO"],
+                "longName": "대전광역시",
+                "shortName": "대전광역시",
+                "code": ""
+              },
+              {
+                "types": ["SIGUGUN"],
+                "longName": "유성구",
+                "shortName": "유성구",
+                "code": ""
+              },
+              {
+                "types": ["DONGMYUN"],
+                "longName": "구성동",
+                "shortName": "구성동",
+                "code": ""
+              },
+              {
+                "types": ["RI"],
+                "longName": "",
+                "shortName": "",
+                "code": ""
+              },
+              {
+                "types": ["ROAD_NAME"],
+                "longName": "대학로",
+                "shortName": "대학로",
+                "code": ""
+              },
+              {
+                "types": ["BUILDING_NUMBER"],
+                "longName": "291",
+                "shortName": "291",
+                "code": ""
+              },
+              {
+                "types": ["BUILDING_NAME"],
+                "longName": "한국과학기술원",
+                "shortName": "한국과학기술원",
+                "code": ""
+              },
+              {
+                "types": ["LAND_NUMBER"],
+                "longName": "23",
+                "shortName": "23",
+                "code": ""
+              },
+              {
+                "types": ["POSTAL_CODE"],
+                "longName": "34141",
+                "shortName": "34141",
+                "code": ""
+              }
+            ],
+            "x": "127.3608437",
+            "y": "36.3717787",
+            "distance": 0
+          }
+        ],
+        "errorMessage": ""
+      }
+    },
+    {
+      "api": "GET https://maps.apigw.ntruss.com/map-reversegeocode/v2/gc",
+      "request": "coords=127.3604,36.3723&sourcecrs=EPSG:4326&targetcrs=EPSG:4326&orders=roadaddr&output=json",
+      "checksum": "cd2c795c6edac84e488e6bc3fadd4e90e8fcdbdb820475b1209ce62cf845dae2",
+      "response": {
+        "status": {
+          "code": 0,
+          "name": "ok",
+          "message": "done"
+        },
+        "results": [
+          {
+            "name": "roadaddr",
+            "code": {
+              "id": "3020012400",
+              "type": "L",
+              "mappingId": "07200124"
+            },
+            "region": {
+              "area0": {
+                "name": "kr",
+                "coords": {
+                  "center": {
+                    "crs": "",
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "area1": {
+                "name": "대전광역시",
+                "coords": {
+                  "center": {
+                    "crs": "EPSG:4326",
+                    "x": 127.3849508,
+                    "y": 36.3504396
+                  }
+                },
+                "alias": "대전"
+              },
+              "area2": {
+                "name": "유성구",
+                "coords": {
+                  "center": {
+                    "crs": "EPSG:4326",
+                    "x": 127.356268,
+                    "y": 36.362322
+                  }
+                }
+              },
+              "area3": {
+                "name": "구성동",
+                "coords": {
+                  "center": {
+                    "crs": "EPSG:4326",
+                    "x": 127.3661,
+                    "y": 36.370724
+                  }
+                }
+              },
+              "area4": {
+                "name": "",
+                "coords": {
+                  "center": {
+                    "crs": "",
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            },
+            "land": {
+              "type": "",
+              "number1": "291",
+              "number2": "",
+              "addition0": {
+                "type": "building",
+                "value": "한국과학기술원"
+              },
+              "addition1": {
+                "type": "zipcode",
+                "value": "34141"
+              },
+              "addition2": {
+                "type": "roadGroupCode",
+                "value": "302003167083"
+              },
+              "addition3": {
+                "type": "",
+                "value": ""
+              },
+              "addition4": {
+                "type": "",
+                "value": ""
+              },
+              "name": "대학로",
+              "coords": {
+                "center": {
+                  "crs": "",
+                  "x": 0,
+                  "y": 0
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

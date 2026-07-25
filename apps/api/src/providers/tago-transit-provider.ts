@@ -13,6 +13,10 @@ import {
 
 import type { AppConfig } from "../config.js";
 import { ProviderError } from "../errors.js";
+import {
+  coordinateCacheKey,
+  MemoryCache,
+} from "../services/cache.js";
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
 import type {
@@ -105,29 +109,23 @@ function bestSegment(
   return best;
 }
 
-function walkingLeg(input: {
-  id: string;
-  from: Coordinate;
-  to: Coordinate;
-  guidance: string;
-  walkSpeedKmh: number;
-  isExerciseSegment?: boolean;
-}): RouteLeg {
-  const distanceMeters = Math.round(
-    haversineDistanceMeters(input.from, input.to) * 1.15,
+function walkingLegs(
+  route: NormalizedRoute | undefined,
+  idPrefix: string,
+  fallbackGuidance: string,
+): RouteLeg[] {
+  return (
+    route?.legs.map((leg, index) => ({
+      ...leg,
+      id: `${idPrefix}-${index}`,
+      guidance: leg.guidance ?? fallbackGuidance,
+      isExerciseSegment: false,
+    })) ?? []
   );
-  const durationSeconds = Math.round(
-    distanceMeters / ((input.walkSpeedKmh * 1000) / 3600),
-  );
-  return {
-    id: input.id,
-    mode: "WALK",
-    guidance: input.guidance,
-    distanceMeters,
-    durationSeconds,
-    coordinates: [input.from, input.to],
-    isExerciseSegment: input.isExerciseSegment ?? false,
-  };
+}
+
+function sumLegDistance(legs: RouteLeg[]): number {
+  return legs.reduce((total, leg) => total + leg.distanceMeters, 0);
 }
 
 function estimatedWaitSeconds(route: BusRoute): number {
@@ -197,11 +195,11 @@ function toProviderError(error: unknown): ProviderError {
 
 export class TagoTransitMobilityProvider implements MobilityProvider {
   public readonly source = "TAGO" as const;
-  public readonly mode = "live" as const;
 
   readonly #baseProvider: MobilityProvider;
   readonly #transitService: TransitService;
   readonly #config: AppConfig;
+  readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
 
   public constructor(options: {
     baseProvider: MobilityProvider;
@@ -267,13 +265,17 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         destinationStopRoutes,
         request.signal,
       );
-      const directRoutes = await Promise.all(
-        directCandidates.slice(0, 6).map((candidate, index) =>
+      const directSettled = await Promise.allSettled(
+        directCandidates.slice(0, 3).map((candidate, index) =>
           this.#buildDirectRoute(request, candidate, index),
         ),
       );
+      const directRoutes = directSettled.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
       const transferRoutes =
-        this.#config.transit.maxTransferCount === 0
+        this.#config.transit.maxTransferCount === 0 ||
+        directRoutes.length >= 2
           ? []
           : await this.#findAndBuildTransferRoutes(
               request,
@@ -441,11 +443,16 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     boardingNodeId: string,
     signal?: AbortSignal,
   ): Promise<BusArrival | undefined> {
+    const realtimeTimeout = AbortSignal.timeout(2_500);
+    const requestSignal =
+      signal === undefined
+        ? realtimeTimeout
+        : AbortSignal.any([signal, realtimeTimeout]);
     try {
       const arrivals = await this.#transitService.getArrivals(
         route.cityCode,
         boardingNodeId,
-        signal,
+        requestSignal,
       );
       return arrivals
         .filter((arrival) => arrival.routeId === route.routeId)
@@ -462,6 +469,61 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       }
       throw error;
     }
+  }
+
+  async #arrivalForRoute(
+    route: BusRoute,
+    boardingNodeId: string,
+    signal?: AbortSignal,
+  ): Promise<BusArrival | undefined> {
+    const realtimeTimeout = AbortSignal.timeout(2_500);
+    const requestSignal =
+      signal === undefined
+        ? realtimeTimeout
+        : AbortSignal.any([signal, realtimeTimeout]);
+    try {
+      return (
+        await this.#transitService.getArrivalsForRoute(
+          route.cityCode,
+          boardingNodeId,
+          route.routeId,
+          requestSignal,
+        )
+      ).sort(
+        (first, second) =>
+          first.arrivalSeconds - second.arrivalSeconds,
+      )[0];
+    } catch (error) {
+      if (
+        error instanceof TagoApiError &&
+        error.resultCode !== "CONFIGURATION_ERROR"
+      ) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async #walkingRoute(
+    from: Coordinate,
+    to: Coordinate,
+    signal?: AbortSignal,
+  ): Promise<NormalizedRoute | undefined> {
+    if (haversineDistanceMeters(from, to) <= 3) {
+      return undefined;
+    }
+    const key = `tago:walk:${coordinateCacheKey(from)}:${coordinateCacheKey(to)}`;
+    return this.#walkingCache.getOrLoad(
+      key,
+      30 * 60 * 1000,
+      () =>
+        this.#baseProvider.getWalkingRoute({
+          origin: from,
+          destination: to,
+          routeMode: "BROAD_FIRST",
+          ...(signal === undefined ? {} : { signal }),
+        }),
+    );
   }
 
   #busLeg(input: {
@@ -526,34 +588,42 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     candidate: DirectCandidate,
     index: number,
   ): Promise<NormalizedRoute> {
-    const arrival = await this.#arrivalForLeg(
-      candidate.route,
-      candidate.boardingStop.nodeId!,
-      request.signal,
+    const [arrival, startWalkingRoute, endWalkingRoute] = await Promise.all([
+      this.#arrivalForLeg(
+        candidate.route,
+        candidate.boardingStop.nodeId!,
+        request.signal,
+      ),
+      this.#walkingRoute(
+        request.origin.location,
+        stopCoordinate(candidate.boardingStop),
+        request.signal,
+      ),
+      this.#walkingRoute(
+        stopCoordinate(candidate.alightingStop),
+        request.destination.location,
+        request.signal,
+      ),
+    ]);
+    const startWalk = walkingLegs(
+      startWalkingRoute,
+      `tago-direct-${index}-walk-start`,
+      `${candidate.boardingStop.name} 정류장까지 도보 이동`,
     );
-    const startWalk = walkingLeg({
-      id: `tago-direct-${index}-walk-start`,
-      from: request.origin.location,
-      to: stopCoordinate(candidate.boardingStop),
-      guidance: `${candidate.boardingStop.name} 정류장까지 도보 이동`,
-      walkSpeedKmh: this.#config.transit.walkSpeedKmh,
-    });
     const bus = this.#busLeg({
       id: `tago-direct-${index}-bus`,
       route: candidate.route,
       segment: candidate.segment,
       ...(arrival === undefined ? {} : { arrival }),
     });
-    const endWalk = walkingLeg({
-      id: `tago-direct-${index}-walk-end`,
-      from: stopCoordinate(candidate.alightingStop),
-      to: request.destination.location,
-      guidance: `${candidate.alightingStop.name} 정류장에서 목적지까지 도보 이동`,
-      walkSpeedKmh: this.#config.transit.walkSpeedKmh,
-    });
-    const legs = [startWalk, bus.routeLeg, endWalk];
+    const endWalk = walkingLegs(
+      endWalkingRoute,
+      `tago-direct-${index}-walk-end`,
+      `${candidate.alightingStop.name} 정류장에서 목적지까지 도보 이동`,
+    );
+    const legs = [...startWalk, bus.routeLeg, ...endWalk];
     const walkingDistanceMeters =
-      startWalk.distanceMeters + endWalk.distanceMeters;
+      sumLegDistance(startWalk) + sumLegDistance(endWalk);
     const waitingDurationSeconds = bus.busLeg.expectedArrivalSeconds;
     const ridingDurationSeconds = bus.busLeg.expectedRideSeconds;
     return normalizedRouteSchema.parse({
@@ -757,10 +827,13 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
           ) === index,
       )
       .slice(0, 3);
-    return Promise.all(
+    const settled = await Promise.allSettled(
       ranked.map((candidate, index) =>
         this.#buildTransferRoute(request, candidate, index),
       ),
+    );
+    return settled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
     );
   }
 
@@ -769,76 +842,77 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     candidate: TransferCandidate,
     index: number,
   ): Promise<NormalizedRoute> {
-    const firstArrival = await this.#arrivalForLeg(
-      candidate.firstRoute,
-      candidate.boardingStop.nodeId!,
-      request.signal,
+    const [
+      firstArrival,
+      secondArrival,
+      startWalkingRoute,
+      transferWalkingRoute,
+      endWalkingRoute,
+    ] = await Promise.all([
+      this.#arrivalForLeg(
+        candidate.firstRoute,
+        candidate.boardingStop.nodeId!,
+        request.signal,
+      ),
+      this.#arrivalForRoute(
+        candidate.secondRoute,
+        candidate.transferInStop.nodeId,
+        request.signal,
+      ),
+      this.#walkingRoute(
+        request.origin.location,
+        stopCoordinate(candidate.boardingStop),
+        request.signal,
+      ),
+      this.#walkingRoute(
+        stopCoordinate(candidate.transferOutStop),
+        stopCoordinate(candidate.transferInStop),
+        request.signal,
+      ),
+      this.#walkingRoute(
+        stopCoordinate(candidate.alightingStop),
+        request.destination.location,
+        request.signal,
+      ),
+    ]);
+    const startWalk = walkingLegs(
+      startWalkingRoute,
+      `tago-transfer-${index}-walk-start`,
+      `${candidate.boardingStop.name} 정류장까지 도보 이동`,
     );
-    let secondArrival: BusArrival | undefined;
-    try {
-      secondArrival = (
-        await this.#transitService.getArrivalsForRoute(
-          candidate.secondRoute.cityCode,
-          candidate.transferInStop.nodeId,
-          candidate.secondRoute.routeId,
-          request.signal,
-        )
-      ).sort(
-        (first, second) =>
-          first.arrivalSeconds - second.arrivalSeconds,
-      )[0];
-    } catch (error) {
-      if (
-        !(error instanceof TagoApiError) ||
-        error.resultCode === "CONFIGURATION_ERROR"
-      ) {
-        throw error;
-      }
-    }
-    const startWalk = walkingLeg({
-      id: `tago-transfer-${index}-walk-start`,
-      from: request.origin.location,
-      to: stopCoordinate(candidate.boardingStop),
-      guidance: `${candidate.boardingStop.name} 정류장까지 도보 이동`,
-      walkSpeedKmh: this.#config.transit.walkSpeedKmh,
-    });
     const firstBus = this.#busLeg({
       id: `tago-transfer-${index}-bus-1`,
       route: candidate.firstRoute,
       segment: candidate.firstSegment,
       ...(firstArrival === undefined ? {} : { arrival: firstArrival }),
     });
-    const transferWalk = walkingLeg({
-      id: `tago-transfer-${index}-walk-transfer`,
-      from: stopCoordinate(candidate.transferOutStop),
-      to: stopCoordinate(candidate.transferInStop),
-      guidance: `${candidate.transferInStop.stopName} 정류장으로 환승`,
-      walkSpeedKmh: this.#config.transit.walkSpeedKmh,
-    });
+    const transferWalk = walkingLegs(
+      transferWalkingRoute,
+      `tago-transfer-${index}-walk-transfer`,
+      `${candidate.transferInStop.stopName} 정류장으로 환승`,
+    );
     const secondBus = this.#busLeg({
       id: `tago-transfer-${index}-bus-2`,
       route: candidate.secondRoute,
       segment: candidate.secondSegment,
       ...(secondArrival === undefined ? {} : { arrival: secondArrival }),
     });
-    const endWalk = walkingLeg({
-      id: `tago-transfer-${index}-walk-end`,
-      from: stopCoordinate(candidate.alightingStop),
-      to: request.destination.location,
-      guidance: `${candidate.alightingStop.name} 정류장에서 목적지까지 도보 이동`,
-      walkSpeedKmh: this.#config.transit.walkSpeedKmh,
-    });
+    const endWalk = walkingLegs(
+      endWalkingRoute,
+      `tago-transfer-${index}-walk-end`,
+      `${candidate.alightingStop.name} 정류장에서 목적지까지 도보 이동`,
+    );
     const legs = [
-      startWalk,
+      ...startWalk,
       firstBus.routeLeg,
-      transferWalk,
+      ...transferWalk,
       secondBus.routeLeg,
-      endWalk,
+      ...endWalk,
     ];
     const walkingDistanceMeters =
-      startWalk.distanceMeters +
-      transferWalk.distanceMeters +
-      endWalk.distanceMeters;
+      sumLegDistance(startWalk) +
+      sumLegDistance(transferWalk) +
+      sumLegDistance(endWalk);
     const waitingDurationSeconds =
       firstBus.busLeg.expectedArrivalSeconds +
       secondBus.busLeg.expectedArrivalSeconds;

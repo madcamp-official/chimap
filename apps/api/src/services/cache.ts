@@ -62,6 +62,30 @@ export class MemoryCache {
     return pending;
   }
 
+  public async getOrLoadWithTtl<T>(
+    key: string,
+    loader: () => Promise<{ value: T; ttlMilliseconds: number }>,
+  ): Promise<T> {
+    const cached = this.get<T>(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const existing = this.#inFlight.get(key) as Promise<T> | undefined;
+    if (existing !== undefined) {
+      return existing;
+    }
+    const pending = loader()
+      .then(({ value, ttlMilliseconds }) => {
+        this.set(key, value, ttlMilliseconds);
+        return value;
+      })
+      .finally(() => {
+        this.#inFlight.delete(key);
+      });
+    this.#inFlight.set(key, pending);
+    return pending;
+  }
+
   public clear(): void {
     this.#cache.clear();
     this.#inFlight.clear();

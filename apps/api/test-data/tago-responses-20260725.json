@@ -1,0 +1,75 @@
+{
+  "provider": "TAGO",
+  "capturedAt": "2026-07-25T06:37:00Z",
+  "documentationCheckedAt": "2026-07-25",
+  "captures": [
+    {
+      "api": "GET /1613000/BusSttnInfoInqireService/getSttnThrghRouteList",
+      "request": "cityCode=25&nodeid=DJB9002737&pageNo=1&numOfRows=10&_type=json",
+      "checksum": "a2bb7ca598a2af01faffae884b21f68cad5328fedffff518c27a8a4d24a841fa",
+      "response": {
+        "response": {
+          "header": {
+            "resultCode": "00",
+            "resultMsg": "NORMAL SERVICE."
+          },
+          "body": {
+            "items": {
+              "item": {
+                "endnodenm": "충대농대종점",
+                "routeid": "DJB30300043",
+                "routeno": 108,
+                "routetp": "간선버스",
+                "startnodenm": "낭월공영차고지기점"
+              }
+            },
+            "numOfRows": 10,
+            "pageNo": 1,
+            "totalCount": 1
+          }
+        }
+      }
+    },
+    {
+      "api": "GET /1613000/BusRouteInfoInqireService/getRouteAcctoThrghSttnList",
+      "request": "cityCode=25&routeId=DJB30300043&pageNo=1&numOfRows=2&_type=json",
+      "checksum": "0be03a2166ef908e5aed4b9e85360b72cd1c7f1f1e1061411333fc4248279731",
+      "response": {
+        "response": {
+          "header": {
+            "resultCode": "00",
+            "resultMsg": "NORMAL SERVICE."
+          },
+          "body": {
+            "items": {
+              "item": [
+                {
+                  "gpslati": 36.26705,
+                  "gpslong": 127.47933,
+                  "nodeid": "DJB8003109",
+                  "nodenm": "낭월공영차고지기점",
+                  "nodeno": 13820,
+                  "nodeord": 1,
+                  "routeid": "DJB30300043",
+                  "updowncd": 0
+                },
+                {
+                  "gpslati": 36.268803,
+                  "gpslong": 127.47771,
+                  "nodeid": "DJB9005538",
+                  "nodenm": "낭월공영차고지",
+                  "nodeord": 2,
+                  "routeid": "DJB30300043",
+                  "updowncd": 0
+                }
+              ]
+            },
+            "numOfRows": 2,
+            "pageNo": 1,
+            "totalCount": 89
+          }
+        }
+      }
+    }
+  ]
+}

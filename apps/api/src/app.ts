@@ -12,7 +12,10 @@ import {
   nearbyBusStopsResponseSchema,
   placeSearchQuerySchema,
   placeSearchResponseSchema,
+  readinessResponseSchema,
   recommendationRequestSchema,
+  reverseGeocodeQuerySchema,
+  reverseGeocodeResponseSchema,
   type ErrorResponse,
 } from "@chimap/contracts";
 import compression from "compression";
@@ -29,13 +32,18 @@ import type { Logger } from "pino";
 import { z, ZodError } from "zod";
 
 import type { AppConfig } from "./config.js";
-import { AppError } from "./errors.js";
+import {
+  AppError,
+  mapProviderError,
+  ProviderError,
+} from "./errors.js";
 import { createLogger } from "./logger.js";
 import { CachedMobilityProvider } from "./providers/cached-provider.js";
 import { KakaoMobilityProvider } from "./providers/kakao-provider.js";
+import { NaverGeocodingClient } from "./providers/naver-geocoding-client.js";
 import { TagoTransitMobilityProvider } from "./providers/tago-transit-provider.js";
-import type { MobilityProvider } from "./providers/types.js";
 import { CandidateGenerator } from "./services/candidate-generator.js";
+import { PlaceLookupService } from "./services/place-lookup-service.js";
 import type { Clock } from "./services/recommendation-service.js";
 import { RecommendationService } from "./services/recommendation-service.js";
 import { TagoApiError } from "./transit/tago-client.js";
@@ -49,7 +57,6 @@ type RateLimitOptions = {
 
 export type CreateAppOptions = {
   config: AppConfig;
-  provider?: MobilityProvider;
   logger?: Logger;
   clock?: Clock;
   transitService?: TransitService;
@@ -119,13 +126,16 @@ function rateLimiter(max: number, windowMs: number) {
   });
 }
 
-function createProvider(
+function createProviders(
   config: AppConfig,
   transitService: TransitService,
-): MobilityProvider {
-  if (config.kakaoMode !== "live" || config.kakaoRestApiKey === undefined) {
+): {
+  mobility: CachedMobilityProvider;
+  places: PlaceLookupService;
+} {
+  if (config.kakaoRestApiKey === undefined) {
     throw new Error(
-      "실제 실행에는 KAKAO_MODE=live와 KAKAO_REST_API_KEY가 필요합니다. mock provider는 테스트 또는 명시적인 개발 fixture로만 주입할 수 있습니다.",
+      "실제 장소와 경로 조회에는 KAKAO_REST_API_KEY가 필요합니다.",
     );
   }
   const baseProvider = new KakaoMobilityProvider(config.kakaoRestApiKey);
@@ -134,7 +144,21 @@ function createProvider(
     transitService,
     config,
   });
-  return new CachedMobilityProvider(provider);
+  const naver =
+    config.naverMapNcpKeyId === undefined ||
+    config.naverMapNcpKey === undefined
+      ? undefined
+      : new NaverGeocodingClient(
+          config.naverMapNcpKeyId,
+          config.naverMapNcpKey,
+        );
+  return {
+    mobility: new CachedMobilityProvider(provider),
+    places: new PlaceLookupService({
+      kakao: baseProvider.local,
+      ...(naver === undefined ? {} : { naver }),
+    }),
+  };
 }
 
 function mapTagoError(error: TagoApiError): AppError {
@@ -181,6 +205,17 @@ async function transitCall<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+async function providerCall<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ProviderError) {
+      throw mapProviderError(error);
+    }
+    throw error;
+  }
+}
+
 export function createApp(options: CreateAppOptions): Express {
   const app = express();
   const logger = options.logger ?? createLogger(options.config);
@@ -188,11 +223,11 @@ export function createApp(options: CreateAppOptions): Express {
     options.transitService ??
     new TransitService({ config: options.config, logger });
   app.locals.transitService = transitService;
-  const provider =
-    options.provider ?? createProvider(options.config, transitService);
+  const providers = createProviders(options.config, transitService);
+  const provider = providers.mobility;
+  const placeLookup = providers.places;
   const recommendationService = new RecommendationService({
     candidateGenerator: new CandidateGenerator(provider),
-    mode: provider.mode,
     logger,
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
@@ -248,10 +283,54 @@ export function createApp(options: CreateAppOptions): Express {
     response.json(
       healthResponseSchema.parse({
         status: "ok",
-        mode: provider.mode,
         timestamp: (options.clock ?? (() => new Date()))().toISOString(),
       }),
     );
+  });
+
+  app.get("/api/v1/readiness", async (_request, response) => {
+    const [database, transit] = await Promise.all([
+      transitService.repository.status(),
+      transitService.repository.stats().catch(() => ({
+        stops: 0,
+        linkedStops: 0,
+        routes: 0,
+        routeStops: 0,
+      })),
+    ]);
+    const tago = (
+      ["stop", "route", "arrival", "location"] as const
+    ).every((service) => transitService.hasServiceKey(service));
+    const providersReady =
+      options.config.kakaoRestApiKey !== undefined &&
+      options.config.naverMapNcpKeyId !== undefined &&
+      options.config.naverMapNcpKey !== undefined &&
+      tago;
+    const transitReady =
+      transit.stops > 0 &&
+      transit.linkedStops > 0 &&
+      transit.routes > 0 &&
+      transit.routeStops > 0;
+    const ready =
+      database.connected &&
+      database.postgis &&
+      database.migrationsCurrent &&
+      providersReady &&
+      transitReady;
+    const payload = readinessResponseSchema.parse({
+      status: ready ? "ready" : "not_ready",
+      timestamp: (options.clock ?? (() => new Date()))().toISOString(),
+      database,
+      providers: {
+        kakao: options.config.kakaoRestApiKey !== undefined,
+        naver:
+          options.config.naverMapNcpKeyId !== undefined &&
+          options.config.naverMapNcpKey !== undefined,
+        tago,
+      },
+      transit,
+    });
+    response.status(ready ? 200 : 503).json(payload);
   });
 
   app.get(
@@ -259,13 +338,45 @@ export function createApp(options: CreateAppOptions): Express {
     rateLimiter(options.rateLimits?.placesMax ?? 60, rateLimitWindow),
     async (request, response) => {
       const query = placeSearchQuerySchema.parse(request.query);
-      const items = await provider.searchPlaces(query.query, {
-        limit: query.limit,
-        ...(query.x === undefined || query.y === undefined
-          ? {}
-          : { center: { lng: query.x, lat: query.y } }),
+      const startedAt = performance.now();
+      const result = await providerCall(() =>
+        placeLookup.search({
+          query: query.query,
+          limit: query.limit,
+          scope: query.scope,
+          ...(query.x === undefined || query.y === undefined
+            ? {}
+            : { center: { lng: query.x, lat: query.y } }),
+          signal: requestAbortSignal(request),
+        }),
+      );
+      logger.info({
+        event: "place.lookup.completed",
+        requestId: requestId(response),
+        scope: query.scope,
+        provider: result.meta.provider,
+        strategy: result.meta.strategy,
+        fallbackUsed: result.meta.fallbackUsed,
+        degraded: result.meta.degraded,
+        itemCount: result.items.length,
+        durationMs: Math.round(performance.now() - startedAt),
       });
-      response.json(placeSearchResponseSchema.parse({ items }));
+      response.json(placeSearchResponseSchema.parse(result));
+    },
+  );
+
+  app.get(
+    "/api/v1/places/reverse",
+    rateLimiter(options.rateLimits?.placesMax ?? 60, rateLimitWindow),
+    async (request, response) => {
+      const query = reverseGeocodeQuerySchema.parse(request.query);
+      const result = await providerCall(() =>
+        placeLookup.reverseGeocode(
+          { lng: query.x, lat: query.y },
+          requestAbortSignal(request),
+        ),
+      );
+      response.json(reverseGeocodeResponseSchema.parse(result));
     },
   );
 

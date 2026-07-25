@@ -16,9 +16,7 @@ COPY apps/web apps/web
 COPY packages/contracts packages/contracts
 
 ARG VITE_NAVER_MAP_NCP_KEY_ID=""
-ARG VITE_APP_MODE=demo
-ENV VITE_NAVER_MAP_NCP_KEY_ID=${VITE_NAVER_MAP_NCP_KEY_ID} \
-    VITE_APP_MODE=${VITE_APP_MODE}
+ENV VITE_NAVER_MAP_NCP_KEY_ID=${VITE_NAVER_MAP_NCP_KEY_ID}
 
 RUN pnpm --filter @chimap/contracts build \
   && pnpm --filter @chimap/api build \
@@ -28,15 +26,12 @@ RUN pnpm --filter @chimap/contracts build \
 FROM node:24.18.0-alpine AS runtime
 
 ENV NODE_ENV=production \
-    KAKAO_MODE=live \
     PORT=3000 \
     WEB_ORIGIN=https://chimap.madcamp-kaist.org \
     WEB_DIST_PATH=/app/web \
     LOG_LEVEL=info
 
 WORKDIR /app
-
-RUN mkdir -p /app/.data && chown node:node /app/.data
 
 COPY --from=builder --chown=node:node /prod/api ./
 COPY --from=builder --chown=node:node /workspace/apps/web/dist /app/web

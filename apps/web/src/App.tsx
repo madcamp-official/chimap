@@ -11,7 +11,6 @@ import {
   ChevronDown,
   Crosshair,
   Info,
-  Leaf,
   MapPin,
   Navigation,
   TriangleAlert,
@@ -38,7 +37,7 @@ import {
   ApiClientError,
   createRecommendations,
   getBusVehicles,
-  getHealth,
+  reverseGeocode,
 } from "./lib/api.js";
 import {
   loadLastTrip,
@@ -54,7 +53,6 @@ import { useTripStore } from "./store/trip-store.js";
 
 const naverMapNcpKeyId =
   import.meta.env.VITE_NAVER_MAP_NCP_KEY_ID?.trim() || undefined;
-const configuredDemoMode = import.meta.env.VITE_APP_MODE !== "live";
 
 function readableError(error: unknown): string {
   if (error instanceof ApiClientError) {
@@ -119,15 +117,6 @@ export function App() {
   const revealApp = useCallback(() => setAppEntered(true), []);
   const completeIntro = useCallback(() => setIntroActive(false), []);
 
-  const healthQuery = useQuery({
-    queryKey: ["health"],
-    queryFn: ({ signal }) => getHealth(signal),
-    staleTime: 60_000,
-  });
-  const demoMode =
-    healthQuery.data?.mode === "mock" ||
-    (healthQuery.data === undefined && configuredDemoMode);
-
   const recommendationMutation = useMutation({
     mutationFn: (request: RecommendationRequest) => {
       requestAbortController.current?.abort();
@@ -176,14 +165,6 @@ export function App() {
   ]);
 
   const result = recommendationMutation.data;
-  const routeProvider =
-    result?.mode === "live"
-      ? "TAGO"
-      : result?.mode === "mock"
-        ? "DEMO"
-        : demoMode
-          ? "DEMO"
-          : "TAGO";
   const selectedRecommendation =
     result?.recommendations.find((route) => route.id === selectedRouteId) ??
     result?.recommendations[0];
@@ -259,15 +240,38 @@ export function App() {
           lat: position.coords.latitude,
         };
         setCurrentLocation(location);
-        chooseOrigin({
-          id: "current-location",
-          name: "현재 위치",
-          address: "",
-          roadAddress: "",
-          category: "현재 위치",
-          location,
-        });
-        setLocationMessage("현재 위치를 출발지로 설정했어요.");
+        setLocationMessage("현재 위치의 주소를 확인하고 있어요.");
+        void reverseGeocode(location)
+          .then((result) => {
+            chooseOrigin(
+              result.place ?? {
+                id: `device:coordinate:${location.lng.toFixed(5)}:${location.lat.toFixed(5)}`,
+                name: "현재 위치",
+                address: "",
+                roadAddress: "",
+                category: "현재 위치",
+                location,
+              },
+            );
+            setLocationMessage(
+              result.place === null
+                ? "주소는 찾지 못했지만 현재 좌표를 출발지로 설정했어요."
+                : "현재 위치를 출발지로 설정했어요.",
+            );
+          })
+          .catch(() => {
+            chooseOrigin({
+              id: `device:coordinate:${location.lng.toFixed(5)}:${location.lat.toFixed(5)}`,
+              name: "현재 위치",
+              address: "",
+              roadAddress: "",
+              category: "현재 위치",
+              location,
+            });
+            setLocationMessage(
+              "주소 확인이 지연되어 현재 좌표를 출발지로 설정했어요.",
+            );
+          });
       },
       (error) => {
         setLocationMessage(
@@ -352,12 +356,6 @@ export function App() {
             <span className="live-dot" />
             지금 출발 기준
           </span>
-          {demoMode ? (
-            <span className="demo-badge">
-              <Leaf aria-hidden="true" size={14} />
-              데모 데이터
-            </span>
-          ) : null}
         </div>
       </header>
 
@@ -419,7 +417,6 @@ export function App() {
             destination={destination}
             recommendations={result?.recommendations ?? []}
             selectedRouteId={selectedRouteId}
-            routeProvider={routeProvider}
             vehiclePositions={vehicleQuery.data?.items ?? []}
             {...(naverMapNcpKeyId === undefined
               ? {}
@@ -429,16 +426,6 @@ export function App() {
 
         <aside id="trip-panel" className="trip-panel">
           <div className="sheet-handle" aria-hidden="true" />
-          {demoMode ? (
-            <div className="demo-callout">
-              <Leaf aria-hidden="true" />
-              <span>
-                <strong>현재는 데모 경로를 보여드려요.</strong>
-                TAGO 및 카카오 서버 키를 연결하면 실제 장소와 버스 경로를 조회합니다.
-              </span>
-            </div>
-          ) : null}
-
           {!hasPlaces ? (
             <section className="initial-state">
               <span className="initial-icon">

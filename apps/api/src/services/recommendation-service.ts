@@ -16,18 +16,15 @@ export type Clock = () => Date;
 
 export class RecommendationService {
   readonly #candidateGenerator: CandidateGenerator;
-  readonly #mode: "mock" | "live";
   readonly #clock: Clock;
   readonly #logger: Logger;
 
   public constructor(options: {
     candidateGenerator: CandidateGenerator;
-    mode: "mock" | "live";
     clock?: Clock;
     logger: Logger;
   }) {
     this.#candidateGenerator = options.candidateGenerator;
-    this.#mode = options.mode;
     this.#clock = options.clock ?? (() => new Date());
     this.#logger = options.logger;
   }
@@ -111,13 +108,6 @@ export class RecommendationService {
             "TAGO 갱신이 일부 실패해 import된 실제 정류장 데이터로 확인 가능한 범위만 표시합니다.",
         });
       }
-      if (this.#mode === "mock") {
-        warnings.push({
-          code: "DEMO_DATA",
-          message:
-            "개발용 fixture를 사용 중입니다. 운영 환경에서는 사용할 수 없습니다.",
-        });
-      }
       if (generated.candidateFailureCount > 0) {
         warnings.push({
           code: "PARTIAL_CANDIDATE_FAILURE",
@@ -141,7 +131,6 @@ export class RecommendationService {
 
       const response = recommendationResponseSchema.parse({
         requestId: input.requestId,
-        mode: this.#mode,
         generatedAt: this.#clock().toISOString(),
         departureAt: departureAt.toISOString(),
         baseline: {
@@ -160,7 +149,6 @@ export class RecommendationService {
       this.#logger.info({
         event: "recommendation.completed",
         requestId: input.requestId,
-        mode: this.#mode,
         candidateCount: generated.candidates.length,
         successfulCandidateCount:
           generated.candidates.length - generated.candidateFailureCount,
@@ -172,9 +160,6 @@ export class RecommendationService {
       if (error instanceof AppError) {
         throw error;
       }
-      if (error instanceof ProviderError) {
-        throw mapProviderError(error);
-      }
       if (timeoutSignal.aborted) {
         throw new AppError({
           code: "UPSTREAM_TIMEOUT",
@@ -182,6 +167,9 @@ export class RecommendationService {
           status: 504,
           cause: error,
         });
+      }
+      if (error instanceof ProviderError) {
+        throw mapProviderError(error);
       }
       throw error;
     }

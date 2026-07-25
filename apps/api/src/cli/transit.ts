@@ -47,7 +47,14 @@ function printJson(value: unknown): void {
 
 const config = loadConfig();
 const logger = createLogger({ ...config, logLevel: "silent" });
-const transit = new TransitService({ config, logger });
+const cliConfig = {
+  ...config,
+  database: {
+    ...config.database,
+    poolMax: Math.min(config.database.poolMax, 2),
+  },
+};
+const transit = new TransitService({ config: cliConfig, logger });
 const command = process.argv[2];
 
 async function health(): Promise<void> {
@@ -99,6 +106,7 @@ async function health(): Promise<void> {
 }
 
 async function run(): Promise<void> {
+  await transit.initialize();
   switch (command) {
     case "health":
       await health();
@@ -146,6 +154,95 @@ async function run(): Promise<void> {
       });
       break;
     }
+    case "sync-area": {
+      const coordinate = {
+        lat: coordinateArgument("lat"),
+        lng: coordinateArgument("lng"),
+      };
+      const radiusMeters = Number(
+        argument("radiusMeters") ??
+          config.transit.maxNearbyStopDistanceMeters,
+      );
+      const maxRoutes = Number(argument("maxRoutes") ?? 40);
+      const concurrency = Math.min(
+        Math.max(Number(argument("concurrency") ?? 2), 1),
+        4,
+      );
+      if (
+        !Number.isInteger(radiusMeters) ||
+        radiusMeters < 1 ||
+        radiusMeters > config.transit.maxNearbyStopDistanceMeters
+      ) {
+        throw new Error("--radiusMeters 범위를 확인해 주세요.");
+      }
+      if (!Number.isInteger(maxRoutes) || maxRoutes < 1 || maxRoutes > 200) {
+        throw new Error("--maxRoutes 범위를 확인해 주세요.");
+      }
+      const nearby = await transit.getNearbyStops(
+        coordinate,
+        radiusMeters,
+      );
+      const routes = new Map<
+        string,
+        { cityCode: string; routeId: string }
+      >();
+      for (const stop of nearby.items) {
+        if (stop.cityCode === null || stop.nodeId === null) {
+          continue;
+        }
+        const response = await transit.getRoutesByStop(
+          stop.cityCode,
+          stop.nodeId,
+        );
+        for (const route of response.items) {
+          routes.set(`${route.cityCode}:${route.routeId}`, {
+            cityCode: route.cityCode,
+            routeId: route.routeId,
+          });
+        }
+      }
+      const selected = [...routes.values()].slice(0, maxRoutes);
+      let nextIndex = 0;
+      let synced = 0;
+      let failed = 0;
+      const failureCodes = new Set<string>();
+      const workers = Array.from(
+        { length: Math.min(concurrency, selected.length) },
+        async () => {
+          while (nextIndex < selected.length) {
+            const route = selected[nextIndex];
+            nextIndex += 1;
+            if (route !== undefined) {
+              try {
+                await transit.syncRoute(route.cityCode, route.routeId);
+                synced += 1;
+              } catch (error) {
+                failed += 1;
+                failureCodes.add(
+                  error instanceof TagoApiError
+                    ? error.resultCode
+                    : "UNEXPECTED_ERROR",
+                );
+              }
+            }
+          }
+        },
+      );
+      await Promise.all(workers);
+      printJson({
+        coordinate,
+        radiusMeters,
+        nearbyStopCount: nearby.items.length,
+        discoveredRouteCount: routes.size,
+        syncedRouteCount: synced,
+        failedRouteCount: failed,
+        failureCodes: [...failureCodes],
+      });
+      if (selected.length > 0 && synced === 0) {
+        throw new Error("선택한 TAGO 노선을 하나도 동기화하지 못했습니다.");
+      }
+      break;
+    }
     case "import-stops": {
       const path = argument("path") ?? config.busStopsDataPath;
       if (path === undefined) {
@@ -161,16 +258,17 @@ async function run(): Promise<void> {
         path,
         encoding: result.encoding,
         imported: result.imported,
+        rejectedRows: result.rejectedRows,
         headers: result.headers,
       });
       break;
     }
     case "stats":
-      printJson(transit.repository.stats());
+      printJson(await transit.repository.stats());
       break;
     default:
       throw new Error(
-        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, import-stops, stats 중 하나여야 합니다.",
+        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, import-stops, stats 중 하나여야 합니다.",
       );
   }
 }
@@ -178,5 +276,5 @@ async function run(): Promise<void> {
 try {
   await run();
 } finally {
-  transit.repository.close();
+  await transit.close();
 }

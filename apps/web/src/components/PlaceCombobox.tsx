@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { MapPin, Search } from "lucide-react";
 import {
   type KeyboardEvent,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -32,7 +33,13 @@ export function PlaceCombobox({
   const [query, setQuery] = useState(value?.name ?? "");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [resolveRequest, setResolveRequest] = useState<{
+    query: string;
+    sequence: number;
+  }>();
   const debouncedQuery = useDebouncedValue(query.trim(), 300);
+  const requestQuery = resolveRequest?.query ?? debouncedQuery;
+  const scope = resolveRequest === undefined ? "suggest" : "resolve";
 
   useEffect(() => {
     setQuery(value?.name ?? "");
@@ -41,18 +48,21 @@ export function PlaceCombobox({
   const searchQuery = useQuery({
     queryKey: [
       "places",
-      debouncedQuery,
+      requestQuery,
+      scope,
+      resolveRequest?.sequence,
       center?.lng,
       center?.lat,
     ],
-    enabled: open && debouncedQuery.length >= 2,
+    enabled: open && requestQuery.length >= 2,
     queryFn: ({ signal }) =>
       searchPlaces({
-        query: debouncedQuery,
+        query: requestQuery,
+        scope,
         ...(center === undefined ? {} : { center }),
         signal,
       }),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
   });
 
   const items = searchQuery.data?.items ?? [];
@@ -71,15 +81,18 @@ export function PlaceCombobox({
     if (searchQuery.isError) {
       return "장소 검색을 불러오지 못했어요.";
     }
-    if (debouncedQuery.length >= 2 && items.length === 0) {
-      return "검색 결과가 없어요. 다른 이름이나 주소로 찾아보세요.";
+    if (requestQuery.length >= 2 && items.length === 0) {
+      return scope === "resolve"
+        ? "최종 검색 결과가 없어요. 다른 이름이나 주소로 찾아보세요."
+        : "자동완성 결과가 없어요. Enter 또는 검색 버튼으로 주소까지 찾아보세요.";
     }
     return "";
   }, [
-    debouncedQuery.length,
     items.length,
     open,
     query,
+    requestQuery.length,
+    scope,
     searchQuery.isError,
     searchQuery.isFetching,
   ]);
@@ -90,6 +103,20 @@ export function PlaceCombobox({
     setOpen(false);
     setActiveIndex(-1);
   }
+
+  const resolve = useCallback(() => {
+    const normalized = query.trim();
+    if (normalized.length < 2) {
+      setOpen(true);
+      return;
+    }
+    setOpen(true);
+    setActiveIndex(-1);
+    setResolveRequest((current) => ({
+      query: normalized,
+      sequence: (current?.sequence ?? 0) + 1,
+    }));
+  }, [query]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     if (event.key === "ArrowDown") {
@@ -107,6 +134,9 @@ export function PlaceCombobox({
       if (place !== undefined) {
         selectPlace(place);
       }
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      resolve();
     } else if (event.key === "Escape") {
       setOpen(false);
       setActiveIndex(-1);
@@ -119,7 +149,15 @@ export function PlaceCombobox({
         {label}
       </label>
       <div className="place-input-wrap">
-        <Search aria-hidden="true" size={18} />
+        <button
+          type="button"
+          className="place-search-button"
+          aria-label={`${label} 검색`}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={resolve}
+        >
+          <Search aria-hidden="true" size={18} />
+        </button>
         <input
           id={inputId}
           type="search"
@@ -137,6 +175,7 @@ export function PlaceCombobox({
             setQuery(event.target.value);
             setOpen(true);
             setActiveIndex(-1);
+            setResolveRequest(undefined);
             if (event.target.value !== value?.name) {
               onChange(undefined);
             }
@@ -171,6 +210,9 @@ export function PlaceCombobox({
                     <small>
                       {place.roadAddress || place.address || place.category}
                     </small>
+                    {place.id.startsWith("naver:") ? (
+                      <em className="place-provider">NAVER 주소</em>
+                    ) : null}
                   </span>
                 </li>
               ))}

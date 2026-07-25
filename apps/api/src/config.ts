@@ -13,8 +13,33 @@ const environmentSchema = z
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
-    KAKAO_MODE: z.enum(["mock", "live"]).default("mock"),
     KAKAO_REST_API_KEY: optionalSecret,
+    NAVER_MAP_NCP_KEY_ID: optionalSecret,
+    NAVER_MAP_NCP_KEY: optionalSecret,
+    VITE_NAVER_MAP_NCP_KEY_ID: optionalSecret,
+    DATABASE_URL: z
+      .string()
+      .trim()
+      .min(1)
+      .default(
+        "postgresql://chimap:chimap@127.0.0.1:5432/chimap",
+      ),
+    DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+    DATABASE_CONNECT_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(60_000)
+      .default(3000),
+    DATABASE_STATEMENT_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(60_000)
+      .default(5000),
+    DATABASE_SSL_MODE: z
+      .enum(["disable", "require", "verify-full"])
+      .default("disable"),
     DATA_GO_KR_SERVICE_KEY: optionalSecret,
     TAGO_BUS_STOP_SERVICE_KEY: optionalSecret,
     TAGO_BUS_ROUTE_SERVICE_KEY: optionalSecret,
@@ -26,7 +51,6 @@ const environmentSchema = z
     TAGO_RESPONSE_TYPE: z.literal("json").default("json"),
     TAGO_DEFAULT_CITY_CODE: z.string().trim().min(1).default("25"),
     BUS_STOPS_DATA_PATH: optionalSecret,
-    TRANSIT_DB_PATH: optionalSecret,
     TAGO_HTTP_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -78,7 +102,6 @@ const environmentSchema = z
       .int()
       .nonnegative()
       .default(25),
-    USE_MOCK_TRANSIT_DATA: z.enum(["true", "false"]).default("false"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(8080),
     WEB_ORIGIN: z.url().default("http://localhost:5173"),
     WEB_DIST_PATH: optionalSecret,
@@ -89,23 +112,24 @@ const environmentSchema = z
   })
   .superRefine((environment, context) => {
     if (
-      environment.KAKAO_MODE === "live" &&
+      environment.NODE_ENV === "production" &&
       environment.KAKAO_REST_API_KEY === undefined
     ) {
       context.addIssue({
         code: "custom",
         path: ["KAKAO_REST_API_KEY"],
-        message: "live 모드에는 KAKAO_REST_API_KEY가 필요합니다.",
+        message: "운영 환경에는 Kakao REST API 키가 필요합니다.",
       });
     }
     if (
-      environment.NODE_ENV === "production" &&
-      environment.USE_MOCK_TRANSIT_DATA === "true"
+      environment.NAVER_MAP_NCP_KEY !== undefined &&
+      environment.VITE_NAVER_MAP_NCP_KEY_ID === environment.NAVER_MAP_NCP_KEY
     ) {
       context.addIssue({
         code: "custom",
-        path: ["USE_MOCK_TRANSIT_DATA"],
-        message: "production에서는 mock 대중교통 데이터를 사용할 수 없습니다.",
+        path: ["VITE_NAVER_MAP_NCP_KEY_ID"],
+        message:
+          "브라우저 공개 NAVER Key ID에 서버 Client Secret을 사용할 수 없습니다.",
       });
     }
   });
@@ -114,8 +138,16 @@ export type TagoServiceKind = "stop" | "route" | "arrival" | "location";
 
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
-  kakaoMode: "mock" | "live";
   kakaoRestApiKey?: string;
+  naverMapNcpKeyId?: string;
+  naverMapNcpKey?: string;
+  database: {
+    url: string;
+    poolMax: number;
+    connectTimeoutMs: number;
+    statementTimeoutMs: number;
+    sslMode: "disable" | "require" | "verify-full";
+  };
   port: number;
   webOrigin: string;
   webDistPath?: string;
@@ -134,7 +166,6 @@ export type AppConfig = {
   tagoResponseType: "json";
   tagoDefaultCityCode: string;
   busStopsDataPath?: string;
-  transitDatabasePath: string;
   tagoHttpTimeoutMs: number;
   tagoHttpRetryCount: number;
   tagoCacheTtlSeconds: {
@@ -151,7 +182,6 @@ export type AppConfig = {
     busAverageSpeedKmh: number;
     stopDwellSeconds: number;
   };
-  useMockTransitData: boolean;
 };
 
 export function loadConfig(
@@ -173,10 +203,22 @@ export function loadConfig(
   }
   return {
     nodeEnv: parsed.NODE_ENV,
-    kakaoMode: parsed.KAKAO_MODE,
     ...(parsed.KAKAO_REST_API_KEY === undefined
       ? {}
       : { kakaoRestApiKey: parsed.KAKAO_REST_API_KEY }),
+    ...(parsed.NAVER_MAP_NCP_KEY_ID === undefined
+      ? {}
+      : { naverMapNcpKeyId: parsed.NAVER_MAP_NCP_KEY_ID }),
+    ...(parsed.NAVER_MAP_NCP_KEY === undefined
+      ? {}
+      : { naverMapNcpKey: parsed.NAVER_MAP_NCP_KEY }),
+    database: {
+      url: parsed.DATABASE_URL,
+      poolMax: parsed.DATABASE_POOL_MAX,
+      connectTimeoutMs: parsed.DATABASE_CONNECT_TIMEOUT_MS,
+      statementTimeoutMs: parsed.DATABASE_STATEMENT_TIMEOUT_MS,
+      sslMode: parsed.DATABASE_SSL_MODE,
+    },
     port: parsed.PORT,
     webOrigin: parsed.WEB_ORIGIN,
     ...(parsed.WEB_DIST_PATH === undefined
@@ -194,9 +236,6 @@ export function loadConfig(
     ...(parsed.BUS_STOPS_DATA_PATH === undefined
       ? {}
       : { busStopsDataPath: parsed.BUS_STOPS_DATA_PATH }),
-    transitDatabasePath:
-      parsed.TRANSIT_DB_PATH ??
-      (parsed.NODE_ENV === "test" ? ":memory:" : ".data/transit.sqlite"),
     tagoHttpTimeoutMs: parsed.TAGO_HTTP_TIMEOUT_MS,
     tagoHttpRetryCount: parsed.TAGO_HTTP_RETRY_COUNT,
     tagoCacheTtlSeconds: {
@@ -214,6 +253,5 @@ export function loadConfig(
       busAverageSpeedKmh: parsed.TRANSIT_BUS_AVERAGE_SPEED_KMH,
       stopDwellSeconds: parsed.TRANSIT_STOP_DWELL_SECONDS,
     },
-    useMockTransitData: parsed.USE_MOCK_TRANSIT_DATA === "true",
   };
 }
