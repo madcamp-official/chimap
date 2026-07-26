@@ -10,6 +10,15 @@ import {
   busVehiclesResponseSchema,
   errorResponseSchema,
   healthResponseSchema,
+  mobileAuthMeResponseSchema,
+  mobileAccountDeletionRequestSchema,
+  mobileAppleLoginRequestSchema,
+  mobileClientHeadersSchema,
+  mobileConfigResponseSchema,
+  mobileKakaoLoginRequestSchema,
+  mobileLogoutRequestSchema,
+  mobileTokenPairSchema,
+  mobileTokenRefreshRequestSchema,
   nearbyBusStopsResponseSchema,
   placeSearchQuerySchema,
   placeSearchResponseSchema,
@@ -40,6 +49,12 @@ import {
   AuthService,
   type AuthServiceLike,
 } from "./auth/auth-service.js";
+import { MobileAuthRepository } from "./auth/mobile-auth-repository.js";
+import {
+  MobileAuthError,
+  MobileAuthService,
+  type MobileAuthServiceLike,
+} from "./auth/mobile-auth-service.js";
 import {
   AppError,
   mapProviderError,
@@ -73,6 +88,7 @@ export type CreateAppOptions = {
   transitService?: TransitService;
   metrics?: AppMetrics;
   authService?: AuthServiceLike;
+  mobileAuthService?: MobileAuthServiceLike;
   rateLimits?: RateLimitOptions;
 };
 
@@ -112,6 +128,21 @@ function mapAuthError(error: AuthFlowError): AppError {
   });
 }
 
+function mapMobileAuthError(error: MobileAuthError): AppError {
+  return new AppError({
+    code: error.code,
+    message: error.message,
+    status: error.code === "AUTH_NOT_CONFIGURED" ? 503 : 401,
+    cause: error,
+  });
+}
+
+function bearerToken(request: Request): string | undefined {
+  const authorization = request.get("authorization");
+  const match = authorization?.match(/^Bearer ([A-Za-z0-9_-]{32,512})$/u);
+  return match?.[1];
+}
+
 function requestId(response: Response): string {
   return response.locals.requestId as string;
 }
@@ -120,6 +151,23 @@ function requestAbortSignal(request: Request): AbortSignal {
   const controller = new AbortController();
   request.once("aborted", () => controller.abort());
   return controller.signal;
+}
+
+function compareSemanticVersions(left: string, right: string): number {
+  const numeric = (value: string) =>
+    value
+      .split("-", 1)[0]
+      ?.split(".")
+      .map((part) => Number(part)) ?? [0, 0, 0];
+  const leftParts = numeric(left);
+  const rightParts = numeric(right);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
 }
 
 function upstreamProvider(
@@ -309,13 +357,18 @@ export function createApp(options: CreateAppOptions): Express {
       repository: transitService.repository,
     });
   app.locals.metrics = metrics;
+  const authRepository = new AuthRepository(transitService.repository.pool);
   const authService =
-    options.authService ??
-    new AuthService(
-      options.config,
-      new AuthRepository(transitService.repository.pool),
-    );
+    options.authService ?? new AuthService(options.config, authRepository);
   app.locals.authService = authService;
+  const mobileAuthService =
+    options.mobileAuthService ??
+    new MobileAuthService(
+      options.config,
+      authRepository,
+      new MobileAuthRepository(transitService.repository.pool),
+    );
+  app.locals.mobileAuthService = mobileAuthService;
   const providers = createProviders(options.config, transitService);
   const provider = providers.mobility;
   const placeLookup = providers.places;
@@ -373,18 +426,80 @@ export function createApp(options: CreateAppOptions): Express {
         );
       },
       methods: ["GET", "POST", "OPTIONS"],
-      allowedHeaders: ["Content-Type"],
+      allowedHeaders: [
+        "Authorization",
+        "Content-Type",
+        "X-App-Version",
+        "X-Client-Platform",
+        "X-Contract-Version",
+      ],
       credentials: true,
     }),
   );
   app.use(compression());
   app.use(express.json({ limit: "32kb", strict: true }));
 
+  app.use("/api/v1", (request, _response, next) => {
+    const raw = {
+      platform: request.get("x-client-platform"),
+      appVersion: request.get("x-app-version"),
+      contractVersion: request.get("x-contract-version"),
+    };
+    if (Object.values(raw).every((value) => value === undefined)) {
+      next();
+      return;
+    }
+    const client = mobileClientHeadersSchema.parse(raw);
+    if (request.path !== "/mobile-config") {
+      if (options.config.mobileClient.maintenance.enabled) {
+        throw new AppError({
+          code: "SERVICE_MAINTENANCE",
+          message:
+            options.config.mobileClient.maintenance.message ??
+            "서비스를 점검하고 있습니다.",
+          status: 503,
+        });
+      }
+      const minimum =
+        options.config.mobileClient.minimumSupportedVersion[client.platform];
+      if (compareSemanticVersions(client.appVersion, minimum) < 0) {
+        throw new AppError({
+          code: "CLIENT_UPDATE_REQUIRED",
+          message: "계속 사용하려면 CHIMap 앱을 업데이트해 주세요.",
+          status: 426,
+        });
+      }
+    }
+    next();
+  });
+
   app.get("/api/v1/health", (_request, response) => {
     response.json(
       healthResponseSchema.parse({
         status: "ok",
         timestamp: (options.clock ?? (() => new Date()))().toISOString(),
+      }),
+    );
+  });
+
+  app.get("/api/v1/mobile-config", (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(
+      mobileConfigResponseSchema.parse({
+        contractVersion: "v1",
+        minimumSupportedVersion:
+          options.config.mobileClient.minimumSupportedVersion,
+        maintenance: options.config.mobileClient.maintenance,
+        supportedRegions: options.config.mobileClient.supportedRegions,
+        privacyPolicyVersion:
+          options.config.mobileClient.privacyPolicyVersion,
+        vehiclePollingIntervalSeconds:
+          options.config.mobileClient.vehiclePollingIntervalSeconds,
+        authentication: {
+          guestEnabled: options.config.mobileClient.guestEnabled,
+          kakaoEnabled: mobileAuthService.enabled,
+          appleEnabled: mobileAuthService.appleEnabled,
+        },
       }),
     );
   });
@@ -401,6 +516,113 @@ export function createApp(options: CreateAppOptions): Express {
         user,
       }),
     );
+  });
+
+  app.post(
+    "/api/v1/auth/kakao/mobile",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      try {
+        const input = mobileKakaoLoginRequestSchema.parse(request.body);
+        const pair = await mobileAuthService.loginWithKakao(input);
+        response.setHeader("Cache-Control", "no-store");
+        response.json(mobileTokenPairSchema.parse(pair));
+      } catch (error) {
+        if (error instanceof MobileAuthError) {
+          throw mapMobileAuthError(error);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/auth/apple/mobile",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      try {
+        const input = mobileAppleLoginRequestSchema.parse(request.body);
+        const pair = await mobileAuthService.loginWithApple(input);
+        response.setHeader("Cache-Control", "no-store");
+        response.json(mobileTokenPairSchema.parse(pair));
+      } catch (error) {
+        if (error instanceof MobileAuthError) {
+          throw mapMobileAuthError(error);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/auth/token/refresh",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      try {
+        const input = mobileTokenRefreshRequestSchema.parse(request.body);
+        const pair = await mobileAuthService.refresh(input.refreshToken);
+        response.setHeader("Cache-Control", "no-store");
+        response.json(mobileTokenPairSchema.parse(pair));
+      } catch (error) {
+        if (error instanceof MobileAuthError) {
+          throw mapMobileAuthError(error);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/auth/mobile/logout",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      try {
+        const input = mobileLogoutRequestSchema.parse(request.body);
+        await mobileAuthService.logout(input.refreshToken);
+        response.setHeader("Cache-Control", "no-store");
+        response.status(204).end();
+      } catch (error) {
+        if (error instanceof MobileAuthError) {
+          throw mapMobileAuthError(error);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/auth/mobile/account/delete",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      try {
+        const input = mobileAccountDeletionRequestSchema.parse(request.body);
+        await mobileAuthService.deleteAccount(
+          bearerToken(request),
+          input.refreshToken,
+        );
+        response.setHeader("Cache-Control", "no-store");
+        response.status(204).end();
+      } catch (error) {
+        if (error instanceof MobileAuthError) {
+          throw mapMobileAuthError(error);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.get("/api/v1/auth/me", async (request, response) => {
+    const user = await mobileAuthService.getAccessUser(bearerToken(request));
+    if (user === null) {
+      throw mapMobileAuthError(
+        new MobileAuthError(
+          "AUTH_SESSION_INVALID",
+          "모바일 세션이 유효하지 않습니다. 다시 로그인해 주세요.",
+        ),
+      );
+    }
+    response.setHeader("Cache-Control", "no-store");
+    response.json(mobileAuthMeResponseSchema.parse({ user }));
   });
 
   app.get(

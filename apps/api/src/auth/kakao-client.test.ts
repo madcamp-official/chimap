@@ -73,4 +73,21 @@ describe("Kakao REST 인증 client", () => {
       profileImageUrl: "https://k.kakaocdn.net/profile.jpg",
     });
   });
+
+  it("모바일 access token의 Kakao app_id와 만료를 검증한다", async () => {
+    const request = vi.fn(async () =>
+      new Response(JSON.stringify({ app_id: 123456, expires_in: 3600 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const client = new KakaoAuthClient(config(), request as typeof fetch);
+
+    await expect(
+      client.verifyAccessToken("mobile-access-token", "123456"),
+    ).resolves.toBeUndefined();
+    await expect(
+      client.verifyAccessToken("mobile-access-token", "999999"),
+    ).rejects.toThrow(/다른 앱/u);
+  });
 });

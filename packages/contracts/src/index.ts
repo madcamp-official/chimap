@@ -579,7 +579,7 @@ export const uiEventPayloadSchema = z
 
 export type UiEventPayload = z.infer<typeof uiEventPayloadSchema>;
 
-export const authProviderSchema = z.literal("KAKAO");
+export const authProviderSchema = z.enum(["KAKAO", "APPLE"]);
 export type AuthProvider = z.infer<typeof authProviderSchema>;
 
 export const authUserSchema = z
@@ -592,6 +592,128 @@ export const authUserSchema = z
   .strict();
 
 export type AuthUser = z.infer<typeof authUserSchema>;
+
+export const mobilePlatformSchema = z.enum(["ios", "android"]);
+export type MobilePlatform = z.infer<typeof mobilePlatformSchema>;
+
+export const mobileKakaoLoginRequestSchema = z
+  .object({
+    kakaoAccessToken: z.string().min(20).max(4096),
+    platform: mobilePlatformSchema,
+  })
+  .strict();
+
+export type MobileKakaoLoginRequest = z.infer<
+  typeof mobileKakaoLoginRequestSchema
+>;
+
+export const mobileAppleLoginRequestSchema = z
+  .object({
+    identityToken: z.string().min(20).max(8192),
+    authorizationCode: z.string().min(1).max(4096),
+    nonce: z.string().min(16).max(256),
+    displayName: z.string().trim().min(1).max(100).nullable(),
+    platform: z.literal("ios"),
+  })
+  .strict();
+
+export type MobileAppleLoginRequest = z.infer<
+  typeof mobileAppleLoginRequestSchema
+>;
+
+export const mobileTokenRefreshRequestSchema = z
+  .object({ refreshToken: z.string().min(32).max(512) })
+  .strict();
+
+export type MobileTokenRefreshRequest = z.infer<
+  typeof mobileTokenRefreshRequestSchema
+>;
+
+export const mobileLogoutRequestSchema = mobileTokenRefreshRequestSchema;
+export type MobileLogoutRequest = MobileTokenRefreshRequest;
+
+export const mobileAccountDeletionRequestSchema = z
+  .object({
+    refreshToken: z.string().min(32).max(512),
+    confirmation: z.literal("DELETE"),
+  })
+  .strict();
+
+export type MobileAccountDeletionRequest = z.infer<
+  typeof mobileAccountDeletionRequestSchema
+>;
+
+export const mobileTokenPairSchema = z
+  .object({
+    tokenType: z.literal("Bearer"),
+    accessToken: z.string().min(32).max(512),
+    accessExpiresAt: z.iso.datetime({ offset: true }),
+    refreshToken: z.string().min(32).max(512),
+    refreshExpiresAt: z.iso.datetime({ offset: true }),
+    user: authUserSchema,
+  })
+  .strict();
+
+export type MobileTokenPair = z.infer<typeof mobileTokenPairSchema>;
+
+export const mobileAuthMeResponseSchema = z
+  .object({ user: authUserSchema })
+  .strict();
+
+export type MobileAuthMeResponse = z.infer<
+  typeof mobileAuthMeResponseSchema
+>;
+
+export const semanticVersionSchema = z
+  .string()
+  .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u);
+
+export const mobileContractVersionSchema = z.literal("v1");
+export type MobileContractVersion = z.infer<
+  typeof mobileContractVersionSchema
+>;
+
+export const mobileClientHeadersSchema = z
+  .object({
+    platform: mobilePlatformSchema,
+    appVersion: semanticVersionSchema,
+    contractVersion: mobileContractVersionSchema,
+  })
+  .strict();
+
+export type MobileClientHeaders = z.infer<typeof mobileClientHeadersSchema>;
+
+export const mobileConfigResponseSchema = z
+  .object({
+    contractVersion: mobileContractVersionSchema,
+    minimumSupportedVersion: z
+      .object({
+        ios: semanticVersionSchema,
+        android: semanticVersionSchema,
+      })
+      .strict(),
+    maintenance: z
+      .object({
+        enabled: z.boolean(),
+        message: z.string().trim().min(1).max(300).nullable(),
+      })
+      .strict(),
+    supportedRegions: z.array(z.string().trim().min(1).max(100)).max(50),
+    privacyPolicyVersion: z.string().trim().min(1).max(50),
+    vehiclePollingIntervalSeconds: z.number().int().min(10).max(60),
+    authentication: z
+      .object({
+        guestEnabled: z.boolean(),
+        kakaoEnabled: z.boolean(),
+        appleEnabled: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type MobileConfigResponse = z.infer<
+  typeof mobileConfigResponseSchema
+>;
 
 export const authSessionResponseSchema = z
   .object({
@@ -671,6 +793,9 @@ export const errorCodeSchema = z.enum([
   "AUTH_NOT_CONFIGURED",
   "AUTH_STATE_INVALID",
   "AUTH_PROVIDER_ERROR",
+  "AUTH_SESSION_INVALID",
+  "CLIENT_UPDATE_REQUIRED",
+  "SERVICE_MAINTENANCE",
   "RATE_LIMITED",
   "INTERNAL_ERROR",
 ]);

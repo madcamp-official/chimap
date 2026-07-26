@@ -34,6 +34,63 @@ const environmentSchema = z
     KAKAO_OAUTH_REDIRECT_URI: optionalUrl,
     AUTH_SESSION_SECRET: optionalSessionSecret,
     AUTH_SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+    AUTH_MOBILE_ENABLED: z.enum(["0", "1"]).default("0"),
+    AUTH_MOBILE_ACCESS_TTL_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(5)
+      .max(60)
+      .default(15),
+    AUTH_MOBILE_REFRESH_TTL_DAYS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(90)
+      .default(30),
+    AUTH_REFRESH_GRACE_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(30)
+      .max(300)
+      .default(120),
+    AUTH_REFRESH_RETRY_ENCRYPTION_KEY: optionalSecret,
+    APPLE_CLIENT_ID_IOS: optionalSecret,
+    APPLE_TEAM_ID: optionalSecret,
+    APPLE_KEY_ID: optionalSecret,
+    APPLE_PRIVATE_KEY_BASE64: optionalSecret,
+    KAKAO_APP_ID: z.preprocess(
+      (value) =>
+        typeof value === "string" && value.trim().length === 0
+          ? undefined
+          : value,
+      z.string().trim().regex(/^\d+$/u).optional(),
+    ),
+    MOBILE_MIN_IOS_VERSION: z
+      .string()
+      .trim()
+      .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u)
+      .default("0.1.0"),
+    MOBILE_MIN_ANDROID_VERSION: z
+      .string()
+      .trim()
+      .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u)
+      .default("0.1.0"),
+    MOBILE_MAINTENANCE_ENABLED: z.enum(["0", "1"]).default("0"),
+    MOBILE_MAINTENANCE_MESSAGE: optionalSecret,
+    MOBILE_SUPPORTED_REGIONS: z.string().trim().min(1).default("대전"),
+    MOBILE_PRIVACY_POLICY_VERSION: z
+      .string()
+      .trim()
+      .min(1)
+      .max(50)
+      .default("2026-07-26"),
+    MOBILE_VEHICLE_POLLING_INTERVAL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(60)
+      .default(15),
+    MOBILE_GUEST_ENABLED: z.enum(["0", "1"]).default("1"),
     NAVER_MAP_NCP_KEY_ID: optionalSecret,
     NAVER_MAP_NCP_KEY: optionalSecret,
     VITE_NAVER_MAP_NCP_KEY_ID: optionalSecret,
@@ -174,6 +231,75 @@ const environmentSchema = z
         message: "운영 환경에는 Kakao REST API 키가 필요합니다.",
       });
     }
+    if (environment.AUTH_MOBILE_ENABLED === "1") {
+      if (
+        environment.KAKAO_REST_API_KEY === undefined ||
+        environment.KAKAO_APP_ID === undefined ||
+        environment.AUTH_REFRESH_RETRY_ENCRYPTION_KEY === undefined
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["AUTH_MOBILE_ENABLED"],
+          message:
+            "모바일 인증에는 Kakao REST 키, KAKAO_APP_ID, refresh 재시도 암호화 키가 필요합니다.",
+        });
+      } else {
+        const key = Buffer.from(
+          environment.AUTH_REFRESH_RETRY_ENCRYPTION_KEY,
+          "base64",
+        );
+        if (key.byteLength !== 32) {
+          context.addIssue({
+            code: "custom",
+            path: ["AUTH_REFRESH_RETRY_ENCRYPTION_KEY"],
+            message: "refresh 재시도 암호화 키는 base64 인코딩한 32바이트여야 합니다.",
+          });
+        }
+      }
+    }
+    const appleValues = [
+      environment.APPLE_CLIENT_ID_IOS,
+      environment.APPLE_TEAM_ID,
+      environment.APPLE_KEY_ID,
+      environment.APPLE_PRIVATE_KEY_BASE64,
+    ];
+    if (
+      appleValues.some((value) => value !== undefined) &&
+      appleValues.some((value) => value === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["APPLE_CLIENT_ID_IOS"],
+        message:
+          "Apple 로그인에는 iOS Client ID, Team ID, Key ID, private key를 모두 설정해야 합니다.",
+      });
+    }
+    if (environment.APPLE_PRIVATE_KEY_BASE64 !== undefined) {
+      const privateKey = Buffer.from(
+        environment.APPLE_PRIVATE_KEY_BASE64,
+        "base64",
+      ).toString("utf8");
+      if (
+        !privateKey.includes("-----BEGIN PRIVATE KEY-----") ||
+        !privateKey.includes("-----END PRIVATE KEY-----")
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["APPLE_PRIVATE_KEY_BASE64"],
+          message: "Apple private key는 .p8 내용을 base64로 인코딩해야 합니다.",
+        });
+      }
+    }
+    if (
+      environment.MOBILE_MAINTENANCE_ENABLED === "1" &&
+      environment.MOBILE_MAINTENANCE_MESSAGE === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["MOBILE_MAINTENANCE_MESSAGE"],
+        message: "모바일 maintenance 상태에는 사용자 안내 문구가 필요합니다.",
+      });
+    }
     if (
       environment.NAVER_MAP_NCP_KEY !== undefined &&
       environment.VITE_NAVER_MAP_NCP_KEY_ID === environment.NAVER_MAP_NCP_KEY
@@ -209,6 +335,27 @@ export type AppConfig = {
     redirectUri: string;
     sessionSecret: string;
     sessionTtlDays: number;
+  };
+  mobileAuth?: {
+    kakaoAppId: string;
+    apple?: {
+      clientId: string;
+      teamId: string;
+      keyId: string;
+      privateKey: string;
+    };
+    accessTtlMinutes: number;
+    refreshTtlDays: number;
+    graceSeconds: number;
+    retryEncryptionKey: Buffer;
+  };
+  mobileClient: {
+    minimumSupportedVersion: { ios: string; android: string };
+    maintenance: { enabled: boolean; message: string | null };
+    supportedRegions: string[];
+    privacyPolicyVersion: string;
+    vehiclePollingIntervalSeconds: number;
+    guestEnabled: boolean;
   };
   naverMapNcpKeyId?: string;
   naverMapNcpKey?: string;
@@ -299,6 +446,55 @@ export function loadConfig(
             sessionTtlDays: parsed.AUTH_SESSION_TTL_DAYS,
           },
         }),
+    ...(parsed.AUTH_MOBILE_ENABLED !== "1" ||
+    parsed.KAKAO_APP_ID === undefined ||
+    parsed.AUTH_REFRESH_RETRY_ENCRYPTION_KEY === undefined
+      ? {}
+      : {
+          mobileAuth: {
+            kakaoAppId: parsed.KAKAO_APP_ID,
+            ...(parsed.APPLE_CLIENT_ID_IOS === undefined ||
+            parsed.APPLE_TEAM_ID === undefined ||
+            parsed.APPLE_KEY_ID === undefined ||
+            parsed.APPLE_PRIVATE_KEY_BASE64 === undefined
+              ? {}
+              : {
+                  apple: {
+                    clientId: parsed.APPLE_CLIENT_ID_IOS,
+                    teamId: parsed.APPLE_TEAM_ID,
+                    keyId: parsed.APPLE_KEY_ID,
+                    privateKey: Buffer.from(
+                      parsed.APPLE_PRIVATE_KEY_BASE64,
+                      "base64",
+                    ).toString("utf8"),
+                  },
+                }),
+            accessTtlMinutes: parsed.AUTH_MOBILE_ACCESS_TTL_MINUTES,
+            refreshTtlDays: parsed.AUTH_MOBILE_REFRESH_TTL_DAYS,
+            graceSeconds: parsed.AUTH_REFRESH_GRACE_SECONDS,
+            retryEncryptionKey: Buffer.from(
+              parsed.AUTH_REFRESH_RETRY_ENCRYPTION_KEY,
+              "base64",
+            ),
+          },
+        }),
+    mobileClient: {
+      minimumSupportedVersion: {
+        ios: parsed.MOBILE_MIN_IOS_VERSION,
+        android: parsed.MOBILE_MIN_ANDROID_VERSION,
+      },
+      maintenance: {
+        enabled: parsed.MOBILE_MAINTENANCE_ENABLED === "1",
+        message: parsed.MOBILE_MAINTENANCE_MESSAGE ?? null,
+      },
+      supportedRegions: parsed.MOBILE_SUPPORTED_REGIONS.split(",")
+        .map((region) => region.trim())
+        .filter((region) => region.length > 0),
+      privacyPolicyVersion: parsed.MOBILE_PRIVACY_POLICY_VERSION,
+      vehiclePollingIntervalSeconds:
+        parsed.MOBILE_VEHICLE_POLLING_INTERVAL_SECONDS,
+      guestEnabled: parsed.MOBILE_GUEST_ENABLED === "1",
+    },
     ...(parsed.NAVER_MAP_NCP_KEY_ID === undefined
       ? {}
       : { naverMapNcpKeyId: parsed.NAVER_MAP_NCP_KEY_ID }),

@@ -5,6 +5,12 @@ import {
   coordinateSchema,
   estimatePersonalizedStepLengthMeters,
   haversineDistanceMeters,
+  mobileAccountDeletionRequestSchema,
+  mobileAppleLoginRequestSchema,
+  mobileClientHeadersSchema,
+  mobileConfigResponseSchema,
+  mobileKakaoLoginRequestSchema,
+  mobileTokenPairSchema,
   recommendationRequestSchema,
   routeLegSchema,
   storedPreferencesV1Schema,
@@ -14,6 +20,83 @@ import {
 } from "./index.js";
 
 describe("공유 계약", () => {
+  it("모바일 플랫폼과 opaque token pair 계약을 엄격하게 검증한다", () => {
+    expect(
+      mobileKakaoLoginRequestSchema.safeParse({
+        kakaoAccessToken: "k".repeat(32),
+        platform: "ios",
+      }).success,
+    ).toBe(true);
+    expect(
+      mobileKakaoLoginRequestSchema.safeParse({
+        kakaoAccessToken: "k".repeat(32),
+        platform: "web",
+      }).success,
+    ).toBe(false);
+    expect(
+      mobileTokenPairSchema.safeParse({
+        tokenType: "Bearer",
+        accessToken: "a".repeat(43),
+        accessExpiresAt: "2026-07-26T12:15:00+09:00",
+        refreshToken: "r".repeat(43),
+        refreshExpiresAt: "2026-08-25T12:00:00+09:00",
+        user: {
+          id: "00000000-0000-4000-8000-000000000000",
+          provider: "KAKAO",
+          displayName: null,
+          profileImageUrl: null,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      mobileAppleLoginRequestSchema.safeParse({
+        identityToken: "i".repeat(64),
+        authorizationCode: "authorization-code",
+        nonce: "n".repeat(32),
+        displayName: "CHIMap 사용자",
+        platform: "ios",
+      }).success,
+    ).toBe(true);
+    expect(
+      mobileAccountDeletionRequestSchema.safeParse({
+        refreshToken: "r".repeat(43),
+        confirmation: "DELETE",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("모바일 client metadata와 호환성 설정을 versioned contract로 검증한다", () => {
+    expect(
+      mobileClientHeadersSchema.safeParse({
+        platform: "ios",
+        appVersion: "0.1.0",
+        contractVersion: "v1",
+      }).success,
+    ).toBe(true);
+    expect(
+      mobileConfigResponseSchema.safeParse({
+        contractVersion: "v1",
+        minimumSupportedVersion: { ios: "0.1.0", android: "0.1.0" },
+        maintenance: { enabled: false, message: null },
+        supportedRegions: ["대전"],
+        privacyPolicyVersion: "2026-07-26",
+        vehiclePollingIntervalSeconds: 15,
+        authentication: {
+          guestEnabled: true,
+          kakaoEnabled: true,
+          appleEnabled: true,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      mobileClientHeadersSchema.safeParse({
+        platform: "ios",
+        appVersion: "latest",
+        contractVersion: "v1",
+      }).success,
+    ).toBe(false);
+  });
+
   it("선택형 카카오 로그인 세션의 익명·로그인 상태를 구분한다", () => {
     expect(
       authSessionResponseSchema.safeParse({

@@ -31,6 +31,7 @@
     "express-rate-limit": "^8.1.0",
     "helmet": "^8.1.0",
     "iconv-lite": "^0.7.3",
+    "jose": "^6.2.4",
     "lru-cache": "^11.2.1",
     "p-limit": "^7.1.1",
     "pg": "^8.22.0",

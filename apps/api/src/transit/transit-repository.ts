@@ -13,7 +13,7 @@ import pg, {
 import { from as copyFrom } from "pg-copy-streams";
 
 import type { AppConfig } from "../config.js";
-import { TRANSIT_MIGRATIONS } from "./migrations.js";
+import { APP_MIGRATIONS } from "../migrations.js";
 
 const { Pool } = pg;
 
@@ -211,7 +211,7 @@ export class TransitRepository {
           applied_at timestamptz NOT NULL DEFAULT now()
         )
       `);
-      for (const migration of TRANSIT_MIGRATIONS) {
+      for (const migration of APP_MIGRATIONS) {
         const checksum = migrationChecksum(migration.sql);
         const existing = await client.query<{
           checksum: string;
@@ -272,7 +272,7 @@ export class TransitRepository {
         postgis: postgis.rows[0]?.installed === true,
         migrationsCurrent:
           Number(migrations.rows[0]?.count ?? 0) ===
-          TRANSIT_MIGRATIONS.length,
+          APP_MIGRATIONS.length,
       };
     } catch {
       return {

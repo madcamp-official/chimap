@@ -1,11 +1,17 @@
 import { z } from "zod";
 
-import type { AppConfig } from "../config.js";
 import type { KakaoIdentity } from "./auth-repository.js";
 
 const tokenResponseSchema = z
   .object({
     access_token: z.string().min(1),
+  })
+  .passthrough();
+
+const accessTokenInfoSchema = z
+  .object({
+    app_id: z.number().int().positive(),
+    expires_in: z.number().int().positive(),
   })
   .passthrough();
 
@@ -51,13 +57,29 @@ export type KakaoAuthClientLike = {
   getIdentity(accessToken: string): Promise<KakaoIdentity>;
 };
 
+export type KakaoMobileAuthClientLike = Pick<
+  KakaoAuthClientLike,
+  "getIdentity"
+> & {
+  verifyAccessToken(accessToken: string, expectedAppId: string): Promise<void>;
+};
+
+type KakaoClientConfig = {
+  clientId: string;
+  clientSecret?: string;
+  redirectUri?: string;
+};
+
 export class KakaoAuthClient implements KakaoAuthClientLike {
   public constructor(
-    private readonly config: NonNullable<AppConfig["kakaoAuth"]>,
+    private readonly config: KakaoClientConfig,
     private readonly request: typeof fetch = fetch,
   ) {}
 
   public authorizeUrl(state: string): string {
+    if (this.config.redirectUri === undefined) {
+      throw new KakaoAuthError("카카오 Redirect URI가 설정되지 않았습니다.");
+    }
     const url = new URL("https://kauth.kakao.com/oauth/authorize");
     url.search = new URLSearchParams({
       response_type: "code",
@@ -69,6 +91,12 @@ export class KakaoAuthClient implements KakaoAuthClientLike {
   }
 
   public async exchangeAuthorizationCode(code: string): Promise<string> {
+    if (
+      this.config.redirectUri === undefined ||
+      this.config.clientSecret === undefined
+    ) {
+      throw new KakaoAuthError("카카오 웹 로그인 설정이 완전하지 않습니다.");
+    }
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: this.config.clientId,
@@ -93,6 +121,33 @@ export class KakaoAuthClient implements KakaoAuthClientLike {
       throw new KakaoAuthError("카카오 토큰 응답을 확인하지 못했습니다.");
     }
     return parsed.data.access_token;
+  }
+
+  public async verifyAccessToken(
+    accessToken: string,
+    expectedAppId: string,
+  ): Promise<void> {
+    const response = await this.request(
+      "https://kapi.kakao.com/v1/user/access_token_info",
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+    if (!response.ok) {
+      throw new KakaoAuthError("카카오 access token을 확인하지 못했습니다.");
+    }
+    const parsed = accessTokenInfoSchema.safeParse(await response.json());
+    if (
+      !parsed.success ||
+      String(parsed.data.app_id) !== expectedAppId ||
+      parsed.data.expires_in <= 0
+    ) {
+      throw new KakaoAuthError("다른 앱에서 발급됐거나 만료된 카카오 token입니다.");
+    }
   }
 
   public async getIdentity(accessToken: string): Promise<KakaoIdentity> {

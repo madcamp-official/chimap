@@ -9,9 +9,12 @@
   },
   "packageManager": "pnpm@10.15.1",
   "scripts": {
-    "build": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/api build && pnpm --filter @chimap/alert-relay build && pnpm --filter @chimap/web build",
+    "build": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm --filter @chimap/api build && pnpm --filter @chimap/alert-relay build && pnpm --filter @chimap/web build",
+    "build:mobile": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm --filter @chimap/mobile build",
+    "build:all": "pnpm build && pnpm build:mobile",
     "dev": "pnpm --filter @chimap/contracts build && pnpm --parallel --filter @chimap/api --filter @chimap/web dev",
-    "format:check": "pnpm -r format:check",
+    "format:check": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r format:check",
+    "boundaries:check": "node scripts/check-workspace-boundaries.mjs",
     "tago:health": "pnpm --filter @chimap/api tago:health",
     "tago:test-nearby": "pnpm --filter @chimap/api tago:test-nearby",
     "tago:test-arrivals": "pnpm --filter @chimap/api tago:test-arrivals",
@@ -22,9 +25,9 @@
     "bus:sync-area": "pnpm --filter @chimap/api bus:sync-area",
     "bus:sync-areas": "pnpm --filter @chimap/api bus:sync-areas",
     "bus:stats": "pnpm --filter @chimap/api bus:stats",
-    "test": "pnpm --filter @chimap/contracts build && pnpm -r --if-present test",
-    "test:coverage": "pnpm --filter @chimap/contracts build && pnpm -r --if-present test:coverage",
+    "test": "pnpm boundaries:check && pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present test",
+    "test:coverage": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present test:coverage",
     "test:e2e": "pnpm --filter @chimap/web test:e2e",
-    "typecheck": "pnpm --filter @chimap/contracts build && pnpm -r --if-present typecheck"
+    "typecheck": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present typecheck"
   }
 }

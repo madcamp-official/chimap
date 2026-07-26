@@ -28,6 +28,7 @@ describe("카카오 웹 로그인 서비스", () => {
   it("state를 검증하고 카카오 토큰 대신 해시된 CHIMap 세션만 저장한다", async () => {
     let storedTokenHash: string | undefined;
     const store: AuthStore = {
+      upsertOAuthUser: vi.fn(async () => authUser),
       upsertKakaoUser: vi.fn(async (_identity: KakaoIdentity) => authUser),
       createSession: vi.fn(async (input) => {
         storedTokenHash = input.tokenHash;
