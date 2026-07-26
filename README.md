@@ -8,7 +8,8 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 - 전체 운영 검증 스냅샷: 2026-07-26 17:15 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 구현 브랜치: `feat/tago-transit`
+- 운영 Web/API 기준선: `feat/tago-transit`
+- cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
 - 선택형 카카오 로그인·태블릿 헤더 보정 운영 배포: 2026-07-26 17:13 KST
 
 현재 배포 상태와 남은 운영 조치는
@@ -24,9 +25,9 @@ Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 
 
 웹에서는 카카오 로그인 없이 모든 경로 검색 기능을 사용할 수 있습니다. 원하면
 헤더에서 카카오 로그인해 같은 CHIMap 계정 기반의 향후 모바일·웹 연동을
-준비할 수 있습니다. 앱에서는 카카오 로그인을 필수 진입 단계로 사용할
-계획이며 전체 순서는 [cross platform 계획](./cross_flatform_plan.md)에
-기록합니다.
+준비할 수 있습니다. iOS/Android 앱도 guest로 핵심 추천을 사용하고 필요할 때
+Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
+[cross platform 계획](./cross_flatform_plan.md)에 기록합니다.
 
 1. 출발지와 목적지를 300ms 자동완성 또는 Enter/검색 버튼으로 조회합니다.
 2. 캠퍼스 중심·도로명 주소·출입구 표시를 확인하고 검색 결과를 직접
@@ -117,13 +118,16 @@ systemd timers
 ```text
 apps/api                 Express API, 공급자, 추천, 교통 DB/CLI
 apps/alert-relay         Alertmanager 메시지 정규화와 외부 webhook 전달
-apps/api/src/transit/migrations.ts  실행 migration의 source of truth
+apps/api/src/migrations.ts          실행 migration 순서의 source of truth
 apps/api/migrations      version 1 PostgreSQL/PostGIS 참고 DDL
 apps/api/test-data       출처와 checksum이 있는 실제 응답 캡처
 apps/web                 React 검색·지도·추천 UI와 Playwright E2E
+apps/mobile              React Native/Expo iOS·Android 공용 feature와 OS adapter
 apps/web/test-data       출처와 checksum이 있는 실제 차량 응답 캡처
 packages/contracts       요청·응답·내부 정규화 Zod 계약
-cross_flatform_plan.md   웹 선택 로그인·앱 필수 로그인과 iOS→Android 실행 계획
+packages/app-core        Web/RN 비의존 추천 선택·복원·stale 정책
+packages/design-tokens   Web/RN에서 공유하는 의미 기반 token
+cross_flatform_plan.md   guest-first 선택 로그인과 iOS→Android 실행 계획
 docs                     아키텍처, 운영, 공급자, 테스트 문서
 docs/user-experience.md  사용자 흐름, 상태, 반응형·접근성 계약
 docs/database-schema.md  물리 스키마, API·브라우저 저장 계약
@@ -189,8 +193,8 @@ import해도 `source_identity` 기준으로 중복되지 않습니다.
 | 명령 | 목적 |
 | --- | --- |
 | `pnpm typecheck` | 모든 workspace TypeScript 검사 |
-| `pnpm test` | 계약·API·웹 결정적 테스트 |
-| `pnpm build` | 계약→API→알림 릴레이→웹 production build |
+| `pnpm test` | 계약·API·웹·모바일 결정적 테스트와 경계 검사 |
+| `pnpm build:all` | 계약→API→웹 및 iOS·Android JavaScript bundle |
 | `pnpm test:e2e` | 공개 또는 지정 URL Playwright E2E |
 | `pnpm tago:health` | TAGO 네 서비스의 키와 도시코드 호출 확인 |
 | `pnpm bus:import-stops -- --path <file>` | 전국 정류장 CSV import |
@@ -230,7 +234,7 @@ POST /api/v1/ui-events
 ```bash
 pnpm typecheck
 pnpm test
-pnpm build
+pnpm build:all
 E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 ```
 
@@ -238,14 +242,15 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-현재 일반 결정적 테스트는 contracts 9개, alert-relay 3개, API 58개, web
-43개로 총 113개입니다. 별도 PostGIS DB에서 실행하는 5개까지 포함하면
-총 118개입니다.
+현재 일반 결정적 테스트는 contracts 11개, app-core 3개, alert-relay 3개,
+API 77개, web 43개, mobile 11개로 총 148개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 7개까지 포함하면 총 155개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
   pnpm --filter @chimap/api exec vitest run \
-  src/transit/transit-repository.integration.test.ts
+  src/transit/transit-repository.integration.test.ts \
+  src/auth/mobile-auth-repository.integration.test.ts
 ```
 
 ## 운영

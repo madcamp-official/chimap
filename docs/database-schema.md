@@ -78,8 +78,20 @@ migration 3은 선택형 카카오 로그인에 필요한 `app_users`, `oauth_ac
 저장 데이터는 변경하지 않습니다. 운영 DB 적용과 별도 PostGIS 복원을
 완료했으며 실제 계정 E2E 전 계정·OAuth·session row는 각각 0건입니다.
 
-실행 시점의 migration 원본은 `apps/api/src/transit/migrations.ts`입니다.
-여기에 version 1~3의 SQL·이름이 있고 API와 CLI가 checksum을 계산합니다.
+migration 4는 기존 Web row를 backfill하는 default를 유지하면서 모바일 token
+kind, platform, family/generation, grace/revoke column과 index를 additive하게
+추가합니다. 적용된 migration 1~3의 SQL과 checksum은 수정하지 않습니다.
+
+migration 5는 `oauth_accounts.provider` 허용값에 `APPLE`을 추가합니다. migration
+6은 Apple authorization code 교환으로 받은 refresh token을 평문이 아닌
+AES-256-GCM ciphertext/IV/tag와 마지막 Apple 검증 시각을 보관할 column을
+추가합니다. Kakao account는 네 column이 모두 NULL이어야 하고 Apple credential은
+네 값이 모두 존재해야 하는 check constraint를 둡니다.
+
+전역 실행 registry는 `apps/api/src/migrations.ts`입니다. 교통 migration 1~3은
+`apps/api/src/transit/migrations.ts`, 인증 migration 4는
+`apps/api/src/auth/migrations.ts`가 소유하며 전역 registry가 순서대로 합칩니다.
+API와 CLI가 checksum을 계산합니다.
 `apps/api/migrations/001_transit.sql`은 version 1 DDL을 사람이 확인하거나
 초기 환경에서 참고하기 위한 mirror이며, 최신 migration 전체의 실행 원본이
 아닙니다. 새 변경은 TypeScript migration에 새 version으로 추가하고 기존
@@ -197,11 +209,15 @@ CREATE TABLE app_users (
 );
 
 CREATE TABLE oauth_accounts (
-  provider varchar(20) NOT NULL CHECK (provider IN ('KAKAO')),
+  provider varchar(20) NOT NULL CHECK (provider IN ('KAKAO', 'APPLE')),
   provider_user_id varchar(100) NOT NULL,
   user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL,
+  refresh_token_ciphertext bytea,
+  refresh_token_iv bytea,
+  refresh_token_tag bytea,
+  refresh_token_validated_at timestamptz,
   PRIMARY KEY(provider, provider_user_id),
   UNIQUE(provider, user_id)
 );
@@ -211,14 +227,47 @@ CREATE TABLE auth_sessions (
   user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL,
   last_seen_at timestamptz NOT NULL,
-  expires_at timestamptz NOT NULL
+  expires_at timestamptz NOT NULL,
+  token_kind varchar(20) NOT NULL,
+  client_platform varchar(10) NOT NULL,
+  family_id uuid,
+  generation integer NOT NULL,
+  rotated_at timestamptz,
+  replaced_by_token_hash char(64),
+  grace_period_expires_at timestamptz,
+  retry_response_ciphertext bytea,
+  retry_response_iv bytea,
+  retry_response_tag bytea,
+  retry_access_expires_at timestamptz,
+  revoked_at timestamptz,
+  revoke_reason varchar(40)
 );
 ```
 
 카카오 회원번호는 JavaScript 안전 정수 범위를 넘을 수 있으므로 숫자가 아닌
 문자열로 보존합니다. 외부 카카오 토큰은 DB에 저장하지 않습니다. CHIMap
 session은 256-bit 난수 원문을 HttpOnly cookie로 전달하되 DB에는 SHA-256
-hash만 저장합니다. 만료 session은 조회·생성 과정에서 정리합니다.
+hash만 저장합니다. migration 4부터 Web cookie는 `WEB_SESSION/web`, 모바일은
+`MOBILE_ACCESS|MOBILE_REFRESH`와 `ios|android`로 명시해 token 종류가 섞이지
+않습니다.
+
+모바일 refresh는 `(family_id, generation, token_kind)`가 고유합니다. rotation은
+이전 refresh row를 `FOR UPDATE`로 잠그고 새 generation을 넣은 뒤, 이전 row에
+`rotated_at`, 교체 token hash, DB `now()` 기준 120초 grace를 기록합니다. 직전
+pair 원문은 grace 동안에만 server secret으로 AES-256-GCM 암호화해 보관합니다.
+같은 이전 token의 grace 안 재요청은 이 pair를 재생하고, grace가 지난 재사용은
+family의 모든 access/refresh row에 `revoked_at`을 설정합니다. 다른 mobile
+family와 Web session에는 영향을 주지 않습니다.
+
+Apple refresh token은 계정 삭제 시 Apple `/auth/revoke`를 호출하기 위한
+최소 provider credential이며 CHIMap refresh token과 다른 값입니다. 동일한
+32-byte server key로 AES-256-GCM 암호화하고 원문을 응답·로그·브라우저에
+노출하지 않습니다. 계정 삭제가 완료되면 `app_users` cascade로 OAuth credential과
+모든 Web/mobile session도 함께 삭제됩니다.
+Apple 계정의 CHIMap refresh 과정에서는 마지막 확인이 24시간을 넘었을 때만
+Apple `/auth/token`으로 grant를 재검증합니다. `invalid_grant`이면 해당 mobile
+family를 폐기하고, Apple의 일시적 네트워크/5xx 장애면 CHIMap session을 폐기하지
+않고 다음 refresh에서 다시 확인합니다.
 
 ## 5. 공간 질의
 

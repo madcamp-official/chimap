@@ -23,12 +23,33 @@ CHIMap은 다음 네 단위로 운영한다.
 | Client | 카카오 로그인 | 비로그인 사용 |
 | --- | --- | --- |
 | Web | 선택 | 장소 검색·추천·지도 등 모든 핵심 기능 허용 |
-| iOS | 필수 | 최초 로그인 전 핵심 기능 진입 불가 |
-| Android | 필수 | 최초 로그인 전 핵심 기능 진입 불가 |
+| iOS | 선택(Kakao/Apple) | 장소·추천·지도 핵심 기능 허용 |
+| Android | 선택(Kakao) | 장소·추천·지도 핵심 기능 허용 |
 
 모바일 개발은 실제 테스트 폰과 Xcode/Android Studio를 사용한다. 네이티브
 NAVER 지도, Kakao SDK, HealthKit/Health Connect가 필요하므로 Expo Go는
 어떤 단계에서도 사용하지 않는다.
+
+### 1.1 2026-07-26 구현 기준선
+
+이 문서의 foundation 항목은 현재 작업 트리에 다음과 같이 반영했다.
+
+- `apps/mobile`: Expo Router, guest-first 선택형 Kakao/Apple 로그인, SecureStore, CNG config
+- `packages/app-core`, `packages/design-tokens`: platform-neutral 공유 경계
+- Zustand RouteStore와 추천 Query AsyncStorage persistence
+- AppState foreground 5분 stale refetch와 route type 기반 선택 복구
+- iOS/Android별 NAVER Native Map Client ID와 application identity
+- Health Connect 빈 records의 정상 `0` fallback
+- migration 4~6과 모바일 token family, Apple provider/refresh credential
+- refresh rotation 120초 grace와 동일 token pair 재생
+- Web/API와 Mobile을 분리한 CI job, workspace import boundary 검사
+- 현재 위치·장소 검색·걸음 입력·추천·NAVER 지도·상세 sheet의 iOS-first 세로 단면
+- Apple authorization code server exchange, 암호화 refresh 보관, 계정 삭제 grant revoke
+- mobile config/최소 버전/maintenance 계약과 앱 내 계정 삭제
+
+아직 완료로 간주하지 않는 항목은 실제 iPhone/Android Development Build 설치,
+NAVER 지도 실기기 렌더링, Kakao 앱 복귀, HealthKit/Health Connect 실제 자료,
+스토어 배포 E2E다. 코드 foundation 완료와 device release gate 통과를 구분한다.
 
 ## 2. 현재 상태
 
@@ -95,7 +116,7 @@ NAVER 지도, Kakao SDK, HealthKit/Health Connect가 필요하므로 Expo Go는
 Browser                         iOS / Android
 apps/web                       apps/mobile
 React + Vite                   React Native + Expo Dev Build
-optional Kakao Login           required Kakao Login
+optional Kakao Login           guest + optional Kakao/Apple
 NAVER Web Map                  NAVER Native Map SDK
 localStorage                   SecureStore + local storage
     │                               │
@@ -143,6 +164,91 @@ packages/
   design-tokens/             의미 기반 색·간격·typography token
 ```
 
+### 4.1 디렉터리 ownership과 충돌 방지
+
+| 변경 종류 | 허용 위치 | 금지 경계 |
+| --- | --- | --- |
+| Backend/DB | `apps/api` | frontend 내부 import |
+| Web UI/브라우저 저장소 | `apps/web` | mobile component/native module import |
+| iOS·Android 공용 UI/state | `apps/mobile/src/features` | Web DOM/CSS import |
+| OS SDK | `apps/mobile/src/platform` | `packages/*` 또는 Web에서 import |
+| API schema | `packages/contracts` | platform API와 UI 포함 |
+| 순수 계산/선택 정책 | `packages/app-core` | React DOM/RN/native API 포함 |
+| 의미 기반 token | `packages/design-tokens` | platform component 포함 |
+
+`ios/`, `android/`, `.expo/`, `.eas/`, native build 결과는 CNG 산출물이므로 Git에
+넣지 않는다. plist, manifest, entitlement, Maven repository 변경은
+`app.config.ts`나 config plugin에만 둔다. 루트 `pnpm boundaries:check`는 앱끼리의
+상대경로 및 workspace package import, platform suffix의 위치를 검사한다.
+
+모바일 로컬 자료는 다음 namespace를 사용한다.
+
+```text
+chimap:{development|staging|production}:{ios|android}:{sha256(userId)}:{domain}:v1
+```
+
+따라서 같은 테스트 폰의 dev/staging/prod, iOS/Android, 서로 다른 계정의
+RouteStore와 Query cache가 충돌하지 않는다. Web localStorage는 별도 구현이며
+이 namespace나 AsyncStorage를 공유하지 않는다.
+
+### 4.2 Git branch와 worktree 규칙
+
+현재 Git 기준선은 다음과 같다.
+
+- `main` (`321ef96`): 초기 커밋에 머물러 있어 현재 애플리케이션의 통합 기준선으로
+  바로 사용할 수 없음
+- `feat/tago-transit` (`b9f7063`): Web/API/교통 기능이 들어 있는 현재 실질 기준선
+- `feat/mobile/cross-platform-foundation`: `feat/tago-transit`에서 분기해 이 문서의
+  foundation 변경을 격리한 현재 작업 branch
+
+따라서 현재 foundation branch는 `feat/tago-transit`에 명시적으로 의존한다.
+병합할 때는 `feat/tago-transit → main`을 먼저 완료하고, 그 다음 foundation을
+갱신된 `main`에 rebase한 뒤 PR을 만든다. 두 branch를 동시에 `main`으로 열어
+같은 기존 커밋을 중복 포함시키지 않는다. foundation 변경은 이 branch 안에서
+구현·CI·문서 commit으로 분리해 검토와 되돌리기 단위를 명확히 유지한다.
+
+Web/iOS/Android 장기 branch를 세 개 유지하지 않는다. 장기 platform branch는
+공통 계약 수정이 세 갈래로 복제되고 merge 순서에 따라 drift가 생기기 때문이다.
+`main`은 항상 통합 가능한 trunk로 두고 아래 short-lived branch만 사용한다.
+
+- `feat/web/<scope>`: `apps/web` 중심
+- `feat/mobile/<scope>`: iOS·Android 공용 `apps/mobile/src/features` 중심
+- `feat/ios/<scope>`: iOS adapter/config만
+- `feat/android/<scope>`: Android adapter/config만
+- `feat/api/<scope>`: API와 additive migration
+- `feat/contracts/<scope>`: schema/app-core/design token 선행 변경
+
+이번 foundation처럼 iOS와 Android가 같은 React Native UI/state를 함께 바꾸는
+작업은 `feat/mobile/*` 하나에서 진행한다. `feat/ios/*`, `feat/android/*`는 공용
+feature가 합쳐진 뒤 HealthKit/Health Connect, native SDK config, OS별 동작처럼
+`apps/mobile/src/platform`의 서로 다른 파일을 수정할 때만 만든다.
+
+동시에 작업할 때는 같은 checkout에서 branch를 바꾸지 않고
+`../chimap-web`, `../chimap-mobile`, `../chimap-api` 같은 별도 Git worktree를 쓴다.
+worktree마다 의존성 디렉터리와 `.env`를 별도로 유지한다. 공통 계약 변경은
+`contracts → api → web/mobile` 순서의 작은 PR로 먼저 merge하고, iOS/Android
+adapter는 공용 mobile feature가 merge된 뒤 각각 rebase한다.
+
+iOS-first 이후 실제 branch 운용 순서는 다음과 같다.
+
+1. 현재 `feat/mobile/cross-platform-foundation`을 실질 기준선 위에서 검증한다.
+2. `feat/tago-transit`을 `main`에 먼저 병합하고 foundation을 갱신된 `main`에 rebase한다.
+3. foundation 병합 뒤 `feat/ios/native-spike`를 새 worktree에서 만들고 iOS adapter,
+   entitlement, provider console 및 archive 관련 변경만 둔다.
+4. iOS에서 발견한 공용 UI/state/API 문제는 `feat/mobile/ios-hardening`으로 옮겨 먼저
+   병합한다. iOS branch에서 Android 공용 코드를 장기간 소유하지 않는다.
+5. `feat/android/native-spike`는 위 공용 수정이 들어간 최신 `main`에서 분기한다.
+   따라서 Android가 이미 해결된 공용 문제를 다시 구현하거나 오래된 계약을 들고
+   출발하지 않는다.
+
+즉 iOS와 Android release 작업은 별도 short-lived branch와 CI gate로 격리하지만,
+동일 feature/state를 복제하는 영구 platform branch는 만들지 않는다.
+
+PR 하나가 여러 ownership 영역을 건드리면 계약/API의 additive 변경과 각 client
+사용 변경을 commit 단위로 분리한다. Git branch 이름은 deployment 환경이
+아니며 production/staging 선택은 EAS profile과 `APP_ENV`, bundle/package ID로만
+결정한다.
+
 공유하는 것:
 
 - 요청·응답 schema와 type
@@ -181,24 +287,24 @@ packages/
 장애여도 익명 검색·추천은 계속 동작해야 한다. 로그인한 사용자에게 제공할
 첫 편의 기능은 즐겨찾기와 기기 간 비민감 설정 동기화다.
 
-### 5.2 Mobile: 필수 로그인
+### 5.2 Mobile: guest-first 선택 로그인
 
-모바일에서는 Kakao SDK for iOS/Android를 native module로 연결한다. React
-Native community wrapper를 바로 신뢰하지 않고 1주 기술 spike에서 최신 Expo
-SDK/New Architecture 호환성과 실제 폰 복귀 흐름을 검증한다. 문제가 있으면
-Swift/Kotlin의 작은 local Expo Module로 감싼다.
+모바일 핵심 경로는 로그인 없이 사용할 수 있다. 이는 인증 공급자 장애가 추천
+기능을 막지 않게 하고 iOS에서 계정이 반드시 필요하지 않은 기능에 로그인을
+강제하지 않기 위한 경계다. Kakao SDK는 iOS/Android 공통 선택 수단이며 iOS에는
+Sign in with Apple도 같은 수준으로 제공한다. provider wrapper는 platform adapter
+아래에 두고 실제 폰 복귀 흐름을 release gate에서 검증한다.
 
 ```text
 앱 시작
   → SecureStore의 CHIMap refresh token 확인
-  → 없거나 만료: 카카오톡 로그인 우선
-  → 카카오톡 미설치/실패: 카카오계정 로그인 fallback
-  → Kakao access token 획득
-  → POST /api/v1/auth/kakao/mobile
-  → backend가 Kakao token 정보와 사용자 정보 검증
+  → 없거나 만료: guest-local namespace로 핵심 화면 진입
+  → 원할 때 Kakao 또는 iOS Apple 로그인
+  → POST /api/v1/auth/kakao/mobile 또는 /auth/apple/mobile
+  → backend가 provider token/code와 사용자 identity 검증
   → CHIMap access/refresh token 발급
   → refresh token은 SecureStore에 저장
-  → 앱 main route 진입
+  → 사용자별 namespace로 전환
 ```
 
 카카오 iOS SDK는 카카오톡 로그인과 계정 로그인 흐름을 제공한다.
@@ -210,9 +316,12 @@ Swift/Kotlin의 작은 local Expo Module로 감싼다.
 
 ```http
 POST /api/v1/auth/kakao/mobile
+POST /api/v1/auth/apple/mobile
 POST /api/v1/auth/token/refresh
 POST /api/v1/auth/mobile/logout
+POST /api/v1/auth/mobile/account/delete
 GET  /api/v1/auth/me
+GET  /api/v1/mobile-config
 ```
 
 `POST /auth/kakao/mobile`은 Kakao access token을 그대로 신뢰하지 않는다.
@@ -229,8 +338,10 @@ GET  /api/v1/auth/me
 
 - access token: opaque random token, 15분, DB에는 hash만 저장
 - refresh token: opaque random token, 30일, DB에는 hash만 저장
-- refresh 시 rotation하고 이전 refresh token 즉시 폐기
-- 재사용 감지 시 해당 mobile session family 전체 폐기
+- refresh 시 새 generation으로 rotation하고 이전 token hash row는 family 만료까지 보존
+- 이전 token은 `grace_period_expires_at`까지 120초간 재시도를 허용
+- grace 안 재시도는 AES-256-GCM으로 보관한 직전 access/refresh pair를 그대로 반환
+- grace가 지난 이전 token 재사용만 해당 mobile session family 전체 폐기
 - token은 log와 analytics에 절대 포함하지 않음
 - mobile access token은 `Authorization: Bearer`로 전달
 - web cookie session과 mobile bearer session은 같은 `app_users`를 참조
@@ -238,6 +349,14 @@ GET  /api/v1/auth/me
 JWT는 초기에는 사용하지 않는다. 현재 단일 backend에서는 opaque token이 즉시
 폐기와 session 관리가 단순하다. API를 수평 확장할 때 Redis 또는 공유 DB
 lookup 비용을 측정한 뒤 변경한다.
+
+Apple 로그인은 native identity token의 issuer/audience/nonce를 검증한 뒤 5분
+유효한 authorization code를 Apple `/auth/token`에서 교환한다. Apple refresh
+token만 server 암호화 키로 AES-256-GCM 보관하며 앱이나 로그에는 노출하지
+않는다. 앱 내 계정 삭제는 CHIMap 계정·세션을 transaction으로 제거한 뒤 Apple
+`/auth/revoke`를 시도하며, 공급자 장애나 이미 철회된 grant가 내부 삭제를
+되돌리지 않게 한다. CHIMap refresh 때 Apple grant의 마지막 검증이 24시간을
+넘었으면 재검증하며 `invalid_grant`만 family 폐기로 처리한다.
 
 ### 5.4 계정과 health data의 경계
 
@@ -280,6 +399,15 @@ lookup 비용을 측정한 뒤 변경한다.
 - native dependency 변경 시 Development Build를 다시 만든다.
 - 일반 TypeScript/UI 변경은 Metro Fast Refresh로 확인한다.
 
+상태 복원 원칙:
+
+- RouteStore는 선택 ID/type, 상세 sheet, 마지막 요청/hash만 version 1로 저장
+- 비동기 hydration 전에는 복원 완료 화면을 그리지 않음
+- 성공한 추천 Query만 사용자별 AsyncStorage에 최대 24시간 저장
+- auth, health, place 자동완성, 차량 위치, mutation은 persistence 대상에서 제외
+- foreground 복귀 시 5분보다 오래된 active 추천만 online 상태에서 조용히 refetch
+- route ID가 바뀌면 같은 FAST/BALANCED/GOAL type, 그다음 primary 순으로 복원
+
 Mac 개발 명령의 목표 형태:
 
 ```bash
@@ -307,16 +435,15 @@ Android 단계에서는 같은 MacBook에 Android Studio, SDK, emulator를 추�
 | 상세 이동 단계 | full-screen sheet | full-screen sheet |
 | 화면 설정 | native settings | native settings |
 | 익명 telemetry | opt-in | opt-in |
-| 카카오 로그인 | 필수 | 필수 |
+| 로그인 | 선택(Kakao/Apple) | 선택(Kakao) |
 
 ### 7.2 최초 실행 UX
 
 1. 긴 animation 대신 짧은 native splash
 2. 앱 가치 한 화면 설명
-3. 카카오 로그인
+3. 로그인 없이 home 진입(로그인은 계정 영역에서 선택)
 4. 최소 profile과 하루 목표 설정
 5. `Apple 건강에서 오늘 걸음 자동 불러오기` 선택
-6. home 진입
 
 로그인과 health 권한을 한 화면에서 연속으로 강요하지 않는다. 카카오 로그인
 완료 뒤 앱의 효용을 다시 설명하고 사용자가 자동 걸음을 선택했을 때만
@@ -336,7 +463,7 @@ Apple 건강에서 2분 전 갱신
 [건강 경로 찾기]
 ```
 
-- session을 조용히 refresh하되 실패하면 입력을 잃지 않고 로그인 화면으로 이동
+- session을 조용히 refresh하되 실패하면 입력을 잃지 않고 guest로 전환
 - 오늘 걸음은 앱 foreground 복귀와 KST 날짜 변경 때 갱신
 - 위치 권한은 현재 위치 button을 눌렀을 때만 요청
 - 권한이 없으면 직접 검색·수동 걸음 입력 제공
@@ -347,8 +474,8 @@ Apple 건강에서 2분 전 갱신
 
 - 지도 위 bottom sheet
 - 빠른·균형·목표 세 route를 한 번에 비교
-- route 선택은 지도만 바꾸고 상세를 자동으로 열지 않음
-- 상세는 별도 full-screen sheet
+- route card 선택은 지도를 바꾸고 별도 page/full-screen 상세 sheet를 엶
+- 상세를 닫아도 선택 route는 유지하며 eviction 뒤 열린 sheet까지 복원
 - 8초 초과 시 공급자 지연과 장소 변경/취소 제공
 - map 장애여도 카드와 text 단계 사용 가능
 - 선택 route의 차량만, bus leg당 최대 한 대
@@ -378,7 +505,8 @@ HealthKit은 read 권한 거부를 앱에 직접 노출하지 않으므로 “�
 
 - Google Fit 신규 연동 금지
 - Health Connect `READ_STEPS`
-- 누적 걸음은 aggregate API 사용
+- 당일 `Steps` records 합산, 빈 records는 오류가 아닌 `0`으로 처리
+- 여러 data origin 중복이 확인되면 Health Connect aggregate API로 교체
 - Android 13 이하 Health Connect 설치 여부 fallback
 - 지원되지 않는 기기/업무 profile에서 수동 입력 유지
 
@@ -436,7 +564,7 @@ iOS와 Android는 공식 NAVER Native Map SDK를 사용한다. web용 key를 재
 
 같은 물리 server에서도 다음 host를 분리한다.
 
-- development: mock/local
+- development: 로컬 API container와 개발 provider application
 - staging: 별도 API container와 별도 DB/schema
 - production: 공개 사용자
 
@@ -479,10 +607,15 @@ Gate:
 어느 하나라도 실패하면 전체 UI 전에 wrapper 교체 또는 local Expo Module을
 결정한다.
 
+현재 코드/생성물 gate는 통과했다. Expo prebuild 결과에서 iOS/Android identity,
+NAVER key 분리, Apple/HealthKit entitlement, Kakao URL scheme, Health Connect
+permission delegate, foreground-only 위치 권한을 자동 확인한다. 실제 폰 설치,
+provider console credential과 Xcode Archive는 외부 release gate로 남는다.
+
 ### Phase 2 — Mobile foundation/backend token: 1~2주
 
 - `apps/mobile`
-- Expo Router auth gate
+- Expo Router guest-first session boundary
 - `packages/app-core`
 - mobile auth/refresh/logout API
 - SecureStore
@@ -491,8 +624,18 @@ Gate:
 - mobile config endpoint
 - CI typecheck/unit/build
 
-Gate: 실제 iPhone에서 로그인→session 복구→logout→재로그인이 되고 web session과
-같은 `app_users` identity를 사용한다.
+현재 작업 트리에서는 위 코드 foundation과 migration 4~6까지 구현했다. 남은 Gate는
+실제 iPhone/Android에서 Kakao SDK 복귀, SecureStore 재실행, NAVER SDK와 health
+권한을 확인하는 것이다.
+
+로컬 자동 gate는 workspace 경계, 전체 typecheck, 148개 결정적 테스트,
+7개 PostGIS 통합 테스트, Expo prebuild native 설정 검증, Web production build 및
+iOS·Android JavaScript bundle export까지 통과했다. macOS Xcode와 Android SDK가
+필요한 native compile job은 CI에 구성했지만 이 Linux 작업 환경에서는 실행하지
+않았으므로, 첫 push/PR의 성공 결과를 별도 release gate로 기록한다.
+
+Gate: 실제 iPhone에서 guest 추천과 선택 로그인→session 복구→logout→재로그인이
+되고 web session과 같은 `app_users` identity를 사용한다.
 
 ### Phase 3 — iOS feature parity: 3주
 
@@ -504,6 +647,11 @@ Gate: 실제 iPhone에서 로그인→session 복구→logout→재로그인이 
 - route detail
 - 설정/data 삭제/telemetry consent
 - app foreground와 KST day rollover
+
+현재 코드 완료: profile/수동·HealthKit 걸음/current location/장소 검색/추천
+loading·error·result/NAVER path/detail sheet, eviction 복원, 앱 내 계정 삭제.
+남은 것은 실제 데이터로 디자인·접근성·키보드·지도 marker/차량 UX를 검증하고
+설정·telemetry·최근 장소/즐겨찾기를 제품 범위에 맞게 완성하는 일이다.
 
 ### Phase 4 — iOS usability/hardening: 2주
 
@@ -520,6 +668,7 @@ Gate: 실제 iPhone에서 로그인→session 복구→logout→재로그인이 
 - internal TestFlight
 - KAIST/대전 external beta
 - privacy policy와 App Privacy
+- aggregate Privacy Manifest와 archive의 Required Reason API report 검증
 - HealthKit purpose text
 - review notes
 - staged release/rollback
@@ -549,7 +698,9 @@ Gate: 실제 iPhone에서 로그인→session 복구→logout→재로그인이 
 - state store와 KST rollover
 - route default selection
 - native adapter input conversion
-- iOS/Android E2E
+- Expo prebuild 결과의 entitlement/manifest/URL scheme 검증
+- macOS iOS simulator unsigned native compile와 Android debug native compile
+- iOS/Android 실제 기기 E2E
 - old app contract regression
 
 ### 실제 device matrix
@@ -574,8 +725,8 @@ Gate: 실제 iPhone에서 로그인→session 복구→logout→재로그인이 
 
 - web anonymous E2E 회귀 없음
 - web 실제 Kakao login E2E
-- mobile Kakao login 없이는 main API 진입 불가
-- 로그인 성공 후 첫 useful screen까지 불필요한 추가 consent 없음
+- guest 상태에서 인증 장애와 무관하게 장소·추천·지도 사용 가능
+- 선택 로그인 성공 후 첫 useful screen까지 불필요한 추가 consent 없음
 - 권한 거부 시 위치/걸음 수동 fallback
 - 검색어·GPS·health raw data가 DB/log에 없음
 - crash-free session 목표 99.5% 이상
@@ -595,13 +746,13 @@ privacy policy에는 다음을 구분해 적는다.
 - 동의 철회와 데이터 삭제 방법
 - 외부 provider와 역할
 
-모바일은 계정이 필수이므로 App Store/Play 제출 전에 앱 안에서 계정 삭제를
-시작할 수 있는 기능을 제공한다. 계정 삭제는 다음을 원자적으로 처리한다.
+모바일 계정은 선택 사항이지만 생성한 계정은 앱 안에서 삭제를 시작할 수 있다.
+현재 구현은 access/refresh가 같은 session family인지 확인하고 다음을 처리한다.
 
 1. 모든 CHIMap web/mobile session 폐기
 2. server 즐겨찾기·설정 삭제
 3. `oauth_accounts`와 `app_users` 삭제
-4. Kakao 연결 해제가 정책상 필요한지 별도 확인하고 사용자에게 구분 설명
+4. Apple refresh grant 철회(실패해도 내부 삭제 진행), Kakao 연결 해제 정책 검토
 5. 기기의 SecureStore/local data 삭제
 
 ## 14. 운영과 관측
@@ -659,18 +810,19 @@ recommendation failure, provider latency, DB pool, backup/restore에 alert를 �
 
 1. Kakao Developers web 설정과 staging redirect 등록
 2. 운영 secret을 노출하지 않고 staging `.env` 구성
-3. migration 3 backup/restore 검증
+3. migration 4~6 backup/restore와 refresh family/Apple credential 검증
 4. staging 실제 web login/cancel/logout E2E
 5. auth monitoring 추가
 6. web/backend 운영 배포
-7. iPhone용 Expo Development Build 기술 spike
-8. mobile auth endpoint와 SecureStore token rotation
-9. iOS feature parity
+7. Apple/Kakao/NAVER 개발 credential을 development bundle ID에 등록
+8. iPhone용 Expo Development Build 설치와 native SDK 기술 spike
+9. 실제 device에서 guest 추천, 선택 로그인, SecureStore와 grace retry 검증
 10. TestFlight
 11. Android adapter와 Play release
 
-이 순서를 바꾸지 않는다. 특히 실제 Kakao/NAVER/HealthKit spike가 통과하기 전에
-전체 모바일 화면을 구현하지 않는다.
+코드 세로 단면이 준비된 현재부터는 실제 Kakao/NAVER/HealthKit spike 결과를 먼저
+반영한 뒤 화면 범위를 넓힌다. native SDK 문제가 생기면 공용 feature를 흔들지
+않고 `src/platform` adapter 또는 config plugin만 교체한다.
 
 ## 18. 최종 Definition of Done
 
@@ -678,8 +830,8 @@ recommendation failure, provider latency, DB pool, backup/restore에 alert를 �
 
 - Web: 익명 전체 기능과 선택형 Kakao login이 공개 환경에서 동작
 - Backend: web cookie와 mobile bearer가 같은 user identity를 사용
-- iOS: Kakao 필수 login, HealthKit, NAVER map, 전체 추천 흐름 공개
-- Android: Kakao 필수 login, Health Connect, NAVER map, 전체 추천 흐름 공개
+- iOS: guest+선택 Kakao/Apple login, HealthKit, NAVER map, 전체 추천 흐름 공개
+- Android: guest+선택 Kakao login, Health Connect, NAVER map, 전체 추천 흐름 공개
 - 세 frontend가 같은 versioned API contract를 사용
 - 각 frontend를 독립 build/deploy/rollback 가능
 - raw health/search/GPS data 비저장 경계 검증

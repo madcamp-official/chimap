@@ -160,7 +160,118 @@ Kakao Developers에서 카카오 로그인을 활성화하고 위 Redirect URI�
 등록해야 합니다. Client Secret이 활성화된 앱이므로 토큰 요청에도 같은 값을
 사용합니다.
 
-## 4. 장소 검색
+## 4. 모바일 호환성과 선택 로그인
+
+모바일은 Web cookie를 사용하지 않습니다. CHIMap access/refresh 원문은 256-bit
+opaque token이고 DB에는 SHA-256 hash만 저장합니다. 성공 응답은 모두
+`Cache-Control: no-store`입니다.
+
+모바일 요청은 다음 세 header를 한 묶음으로 보냅니다. 하나만 보내는 요청은
+400이며, 최소 지원 버전보다 낮으면 `CLIENT_UPDATE_REQUIRED` 426, 점검 중이면
+`SERVICE_MAINTENANCE` 503입니다. header가 없는 기존 Web 요청은 이 mobile
+version gate의 영향을 받지 않습니다.
+
+```http
+X-Client-Platform: ios
+X-App-Version: 0.1.0
+X-Contract-Version: v1
+```
+
+### `GET /api/v1/mobile-config`
+
+인증 없이 호출하며 최소 iOS/Android 버전, maintenance 안내, 지원 지역,
+privacy policy 버전, 차량 polling 주기와 guest/Kakao/Apple 활성 상태를
+반환합니다. 앱은 이 endpoint 실패만으로 저장된 추천 화면을 막지 않습니다.
+
+### `POST /api/v1/auth/kakao/mobile`
+
+```json
+{
+  "kakaoAccessToken": "Kakao SDK가 발급한 access token",
+  "platform": "android"
+}
+```
+
+서버는 Kakao `access_token_info`의 `app_id`와 만료를 검증한 뒤 사용자 정보를
+조회합니다. Kakao token 자체를 CHIMap session으로 사용하거나 저장하지 않습니다.
+
+### `POST /api/v1/auth/apple/mobile`
+
+iOS native Sign in with Apple이 준 `identityToken`, `authorizationCode`, `nonce`,
+최초 동의 때만 제공될 수 있는 `displayName`, `platform: "ios"`를 받습니다. 서버는
+Apple 공개키로 issuer/audience/nonce를 검증하고 authorization code를 Apple
+`/auth/token`에서 교환합니다. 교환된 identity의 subject도 같아야 합니다.
+Apple refresh token은 계정 삭제 시 grant를 철회하기 위해 server에서만
+AES-256-GCM 암호화 보관합니다. 마지막 Apple 검증이 24시간을 넘으면 CHIMap
+refresh 과정에서 grant도 재검증합니다. `invalid_grant`는 mobile family를
+폐기하지만 Apple 일시 장애만으로는 사용자의 CHIMap session을 없애지 않습니다.
+
+```json
+{
+  "tokenType": "Bearer",
+  "accessToken": "CHIMap opaque access token",
+  "accessExpiresAt": "2026-07-26T03:15:00.000Z",
+  "refreshToken": "CHIMap opaque refresh token",
+  "refreshExpiresAt": "2026-08-25T03:00:00.000Z",
+  "user": {
+    "id": "00000000-0000-4000-8000-000000000000",
+    "provider": "KAKAO",
+    "displayName": "춘식이",
+    "profileImageUrl": null
+  }
+}
+```
+
+### `POST /api/v1/auth/token/refresh`
+
+본문은 `{ "refreshToken": "..." }`입니다. 정상 token은 새 generation으로
+rotation합니다. 네트워크 timeout으로 같은 이전 token을 다시 보냈을 때 DB
+`grace_period_expires_at` 이내면 직전 CHIMap token pair를 그대로 반환합니다.
+기본 grace는 120초입니다. grace가 지난 이전 token 재사용은 해당 mobile family
+전체를 revoke하고 외부에는 원인을 구분하지 않는 `AUTH_SESSION_INVALID` 401만
+반환합니다.
+
+### `GET /api/v1/auth/me`
+
+`Authorization: Bearer <accessToken>`으로 현재 사용자를 확인합니다. Web cookie는
+이 endpoint의 인증 수단이 아닙니다. 만료·revoke·종류가 다른 token은
+`AUTH_SESSION_INVALID` 401입니다.
+
+### `POST /api/v1/auth/mobile/logout`
+
+본문은 `{ "refreshToken": "..." }`입니다. 해당 mobile family만 revoke하며 다른
+기기의 family와 Web cookie session은 유지합니다. 성공은 204입니다.
+
+### `POST /api/v1/auth/mobile/account/delete`
+
+`Authorization: Bearer <accessToken>`과
+`{ "refreshToken": "...", "confirmation": "DELETE" }`를 함께 보냅니다. 두 token이
+같은 유효 family에 속할 때만 `app_users`를 삭제하며 FK cascade로 OAuth account와
+모든 Web/mobile session을 제거합니다. Apple 계정이면 transaction이 끝난 뒤
+보관해 둔 refresh grant를 Apple `/auth/revoke`에서 철회 시도합니다. 공급자
+장애나 이미 철회된 grant는 완료된 내부 삭제를 되돌리지 않습니다. 성공은
+204입니다.
+
+필수 서버 설정:
+
+```dotenv
+AUTH_MOBILE_ENABLED=1
+AUTH_MOBILE_ACCESS_TTL_MINUTES=15
+AUTH_MOBILE_REFRESH_TTL_DAYS=30
+AUTH_REFRESH_GRACE_SECONDS=120
+AUTH_REFRESH_RETRY_ENCRYPTION_KEY=
+KAKAO_APP_ID=
+APPLE_CLIENT_ID_IOS=
+APPLE_TEAM_ID=
+APPLE_KEY_ID=
+APPLE_PRIVATE_KEY_BASE64=
+```
+
+Apple 네 값은 전부 설정되었을 때만 Apple 로그인이 활성화됩니다.
+`APPLE_PRIVATE_KEY_BASE64`는 Developer Portal에서 받은 Sign in with Apple `.p8`
+내용을 한 줄 base64로 인코딩한 값입니다.
+
+## 5. 장소 검색
 
 ### `GET /api/v1/places`
 
@@ -217,7 +328,7 @@ ID 접두사:
 `degraded=true`는 일부 Kakao 호출이 실패했으나 다른 실제 결과를 반환했다는
 뜻입니다.
 
-## 5. 역지오코딩
+## 6. 역지오코딩
 
 ### `GET /api/v1/places/reverse`
 
@@ -244,7 +355,7 @@ type ReverseGeocodeResponse = {
 두 공급자가 정상적으로 주소를 찾지 못하면 `place: null`입니다. UI는 이때
 원래 GPS 좌표를 `현재 위치`로 사용할 수 있습니다.
 
-## 6. 추천
+## 7. 추천
 
 ### `POST /api/v1/recommendations`
 
@@ -364,7 +475,7 @@ Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이�
 | `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 기존 시간 제약 요청에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
 | `LIMITED_ROUTE_VARIETY` | 충분히 다른 경로가 3개 미만 |
 
-## 7. 익명 UI 이벤트
+## 8. 익명 UI 이벤트
 
 ### `POST /api/v1/ui-events`
 
@@ -404,7 +515,7 @@ strict schema이므로 검색어, 좌표, 장소·노선 ID, 신체정보, 사�
 서버는 허용된 enum 조합을 `chimap_ui_events_total` Prometheus counter로만
 집계하며 요청 본문을 PostgreSQL이나 분석 로그에 저장하지 않습니다.
 
-## 8. 교통 조회
+## 9. 교통 조회
 
 권장 prefix는 `/api/v1/transit`입니다.
 
@@ -422,7 +533,7 @@ strict schema이므로 검색어, 좌표, 장소·노선 ID, 신체정보, 사�
 `/api/transit` prefix도 현재 같은 router에 연결되어 있지만 신규 코드는
 versioned prefix를 사용합니다.
 
-## 9. 오류 코드
+## 10. 오류 코드
 
 | code | 일반 상태 | 의미 |
 | --- | --- | --- |

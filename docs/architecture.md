@@ -93,6 +93,44 @@ Express API
 외부 응답은 provider 경계에서 Zod로 검증하고 WGS84 내부 모델로
 정규화합니다. API 응답도 공유 계약 패키지로 다시 검증합니다.
 
+### Mobile application 경계
+
+```text
+apps/mobile
+  ├─ src/features            guest-first 화면/auth/place/query/store
+  ├─ src/platform
+  │    ├─ apple/kakao        OS별 선택 로그인
+  │    ├─ maps/location      NAVER native map / foreground 위치
+  │    └─ steps              HealthKit / Health Connect
+  ├─ app.config.ts           bundle/package, entitlement, native SDK key
+  └─ plugins                 AndroidManifest/Info.plist CNG 변경
+
+packages/contracts           Web/API/Mobile Zod 계약
+packages/app-core            React 비의존 선택·stale 정책
+packages/design-tokens       의미 기반 색·간격
+```
+
+Web, iOS, Android는 같은 API 계약을 사용하지만 UI component와 저장소 구현은
+공유하지 않습니다. iOS와 Android만 `apps/mobile`의 feature source를 공유하고
+OS SDK 차이는 `src/platform` 아래에 둡니다. CNG가 만드는 `ios/`, `android/`는
+Git과 Docker image에 포함하지 않으며 EAS/Development Build pipeline에서만
+생성합니다.
+
+모바일 RouteStore와 추천 Query cache key는 environment, OS, user ID hash를
+포함합니다. Web localStorage, iOS AsyncStorage, Android AsyncStorage 및 서로 다른
+계정의 자료가 같은 key에 기록되지 않습니다.
+
+guest는 고정 owner `guest-local`의 별도 namespace를 사용합니다. 로그인하면
+CHIMap user ID hash namespace로 전환하고 guest cache를 계정 cache에 암묵적으로
+합치지 않습니다. 이 원칙 때문에 Web/iOS/Android와 서로 다른 계정의 추천 응답,
+선택 경로, 열린 상세 sheet가 충돌하지 않습니다. 앱 재실행 시 RouteStore의 마지막
+요청 hash와 TanStack Query의 성공 응답을 결합해 상세 sheet까지 먼저 복원하고,
+foreground 복귀 시 5분을 넘긴 활성 추천만 조용히 refetch합니다.
+
+API는 mobile request header의 platform/app/contract version을 확인하지만 header가
+없는 Web 호출에는 mobile minimum-version gate를 적용하지 않습니다. 배포는 Web,
+iOS, Android가 독립적이고 계약 변경은 additive `/api/v1`을 우선합니다.
+
 ### UI 상태와 경험 파이프라인
 
 ```text
@@ -218,7 +256,9 @@ RecommendationRequest
 - 노선별 정류장 순서
 - migration version/name/checksum
 - 선택 로그인 사용자의 CHIMap UUID, 카카오 회원번호, 선택 nickname/profile
-- SHA-256 hash만 보관한 CHIMap session과 만료 시각
+- SHA-256 hash만 보관한 Web/Mobile CHIMap session과 만료 시각
+- 모바일 token family/generation, rotation/grace/revoke metadata
+- 120초 grace 재시도용 AES-256-GCM 암호문, IV, tag
 
 ### PostgreSQL에 저장하지 않음
 
@@ -230,6 +270,7 @@ RecommendationRequest
 - 실시간 버스 도착과 차량 위치
 - 공급자 원문과 API 키
 - 카카오 access/refresh token과 CHIMap session 원문
+- HealthKit/Health Connect raw records와 모바일 추천 Query cache
 
 검색·경로·실시간 자료는 프로세스 메모리 TTL 후 제거합니다. 개인화 걸음
 프로필과 사용자 환경설정은 브라우저 localStorage version 3 계약으로만

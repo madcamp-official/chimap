@@ -304,7 +304,7 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 
 ## 14. 현재 검증 기록
 
-2026-07-26 현재 작업 트리 검증:
+2026-07-26 17:15 KST 운영 Web/API 기준선 검증:
 
 - typecheck 통과
 - 결정적 테스트 118개 통과: contracts 9, alert-relay 3, API 63, web 43
@@ -318,6 +318,20 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - 공개 인증 session/start/state cookie/Kakao authorize smoke 통과
 - 공개 실제 추천·NAVER 지도 main E2E 통과
 - 공급자 회귀는 전체 실행 중 20초 timeout 뒤 단독 재실행 5.5초 통과
+
+2026-07-26 cross-platform foundation 로컬 검증:
+
+- workspace 경계 검사, format check, 전체 typecheck 통과
+- 결정적 테스트 148개 통과: contracts 11, app-core 3, alert-relay 3,
+  API 77, web 43, mobile 11
+- 격리 PostGIS에서 교통 5개와 mobile auth rotation/account deletion 2개 통과
+- Web production build 및 iOS·Android Hermes bundle export 통과
+- Expo prebuild 결과의 Bundle ID/package, NAVER Client ID, Apple/HealthKit,
+  Health Connect, Kakao scheme, foreground-only 위치, Privacy Manifest 설정 통과
+- Expo Doctor 21개 중 프로젝트 검사 20개 통과. React Native Directory metadata
+  검사는 외부 directory server 오류로 결과를 받지 못함
+- macOS iOS simulator compile와 Android Gradle assemble은 CI job에 구성했으며
+  첫 push/PR 결과 및 실제 기기 E2E 전에는 완료로 간주하지 않음
 
 2026-07-26 17:15 KST 전체 공개·운영 스냅샷:
 

@@ -242,11 +242,15 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 
 | 검증 | 결과 |
 | --- | --- |
-| 현재 작업 트리 TypeScript typecheck | 통과 |
-| 현재 작업 트리 production build | 통과, Vite JS 약 379KB |
-| 현재 작업 트리 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
-| 현재 작업 트리 format check | 통과 |
-| 현재 작업 트리 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
+| 운영 Web/API 기준선 TypeScript typecheck | 통과 |
+| 운영 Web/API 기준선 production build | 통과, Vite JS 약 379KB |
+| 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
+| 운영 Web/API 기준선 format check | 통과 |
+| 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
+| cross-platform foundation 로컬 검사 | 경계·format·typecheck, 결정적 테스트 148개, PostGIS 7개 통과 |
+| cross-platform build | Web production 및 iOS·Android Hermes bundle export 통과 |
+| native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
+| native compile/실기기 | CI 첫 실행과 iPhone/Android Development Build 검증 대기 |
 | PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 migration 3 적용·재적용 포함 5개 통과 |
 | 공개 strict 지도 E2E | 실제 추천·NAVER 지도 흐름 통과 |
 | 공개 반응형 Chromium smoke | 로그인 포함 1440/768/390/320px 통과; 768px 겹침 수정 후 재검증 |
