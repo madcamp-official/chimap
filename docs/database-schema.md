@@ -1,7 +1,7 @@
 # 데이터베이스 스키마와 저장 계약
 
-기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 09:40 KST
-운영 DB에서 정류장 227,223개, TAGO 연결 정류장 2,797개, 노선 134개,
+기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 15:12 KST
+운영 DB에서 정류장 227,223개, TAGO 연결 정류장 2,804개, 노선 134개,
 노선-정류장 관계 5,638개를 확인했습니다. 운영 수치는
 [구현·운영 현황](./current-state.md)에서 갱신합니다.
 
@@ -15,8 +15,8 @@ TAGO 식별자, 노선과 노선-정류장 순서처럼 재사용 가능한 정�
 
 - 사용자의 검색어와 자동완성 결과
 - 현재 위치와 출발지·목적지 선택
-- 걸음 수, 목표, 마감시간과 추천 요청
-- 출생연도, 신장, 체중, 생물학적 성별과 개인화 프로필
+- 현재·목표 걸음과 자동 추천 요청
+- 만 나이에서 파생한 출생연도, 신장, 체중, 생물학적 성별과 개인화 프로필
 - TAGO 도착·차량의 실시간 응답
 - Kakao·NAVER·TAGO 원문 응답
 - API 자격 증명
@@ -339,16 +339,13 @@ type RouteSource = "KAKAO" | "TAGO";
 type RecommendationRequest = {
   origin: Place;
   destination: Place;
-  deadline: string;
   currentSteps: number;
   goalSteps: number;
-  maxExtraMinutes: number;
   walkingMetric: {
     stepLengthMeters: number;
     source: "RESEARCH_ESTIMATE";
     modelVersion: "HAN_2026_V1";
   };
-  safetyBufferMinutes: number;
 };
 
 type RecommendationResponse = {
@@ -418,8 +415,8 @@ Prometheus `chimap_ui_events_total`만 증가시킵니다. 요청 본문과 IP�
 ### 8.7 브라우저 개인화 저장 계약
 
 ```ts
-type StoredPreferencesV2 = {
-  version: 2;
+type StoredPreferencesV3 = {
+  version: 3;
   dailyGoalSteps: number;
   walkingProfile: {
     birthYear: number;
@@ -427,17 +424,19 @@ type StoredPreferencesV2 = {
     weightKg: number;
     biologicalSex: "MALE" | "FEMALE";
   };
-  maxExtraMinutes: number;
-  safetyBufferMinutes: number;
+  currentSteps: number;
+  currentStepsDate: string; // 한국 날짜 YYYY-MM-DD
   lastOrigin?: Place;
   lastDestination?: Place;
 };
 ```
 
-생물학적 성별을 포함한 네 프로필 항목은 모두 필수입니다. 직접 한 걸음
-길이를 입력하거나 20m를 걷게 하는 측정값은 저장하지 않습니다. version 1
-계약은 기존 브라우저 값을 안전하게 읽는 용도로만 남기며 프로필이 없으므로
-온보딩을 다시 표시합니다. 새 저장은 version 2만 사용합니다. 이 객체는
+화면에서는 만 나이를 받지만 연구식과 저장 호환을 위해 `birthYear`로
+변환합니다. 생물학적 성별을 포함한 프로필과 하루 목표는 모두 필수입니다.
+직접 한 걸음 길이를 입력하거나 20m를 걷게 하는 측정값은 저장하지 않습니다. version 1
+계약은 프로필이 없으므로 온보딩을 다시 표시하고, version 2는 프로필·목표·
+장소만 이전한 뒤 현재 걸음을 0으로 시작합니다. 새 저장은 version 3만
+사용합니다. 현재 걸음은 한국 날짜가 같은 동안만 복구합니다. 이 객체는
 PostgreSQL에 복제하지 않으며 API 요청에는 연구식으로 계산한
 `walkingMetric`만 포함합니다.
 

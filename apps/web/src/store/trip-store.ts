@@ -2,27 +2,21 @@ import type { Place, WalkingProfile } from "@chimap/contracts";
 import { create } from "zustand";
 
 import { loadPreferences } from "../lib/storage.js";
-import { defaultDeadline } from "../lib/time.js";
+import { kstDateKey } from "../lib/time.js";
 
 type TripState = {
   origin: Place | undefined;
   destination: Place | undefined;
   currentSteps: number;
   goalSteps: number;
-  deadlineLocal: string;
-  maxExtraMinutes: number;
   walkingProfile: WalkingProfile | undefined;
-  safetyBufferMinutes: number;
   selectedRouteId: string | undefined;
   setOrigin: (place: Place | undefined) => void;
   setDestination: (place: Place | undefined) => void;
   swapPlaces: () => void;
   setCurrentSteps: (value: number) => void;
   setGoalSteps: (value: number) => void;
-  setDeadlineLocal: (value: string) => void;
-  setMaxExtraMinutes: (value: number) => void;
   setWalkingProfile: (value: WalkingProfile | undefined) => void;
-  setSafetyBufferMinutes: (value: number) => void;
   setSelectedRouteId: (value: string | undefined) => void;
 };
 
@@ -31,13 +25,16 @@ const preferences = loadPreferences();
 export const useTripStore = create<TripState>((set) => ({
   origin: preferences?.lastOrigin,
   destination: preferences?.lastDestination,
-  currentSteps: 0,
+  currentSteps:
+    preferences?.version === 3 &&
+    preferences.currentStepsDate === kstDateKey()
+      ? preferences.currentSteps
+      : 0,
   goalSteps: preferences?.dailyGoalSteps ?? 8000,
-  deadlineLocal: defaultDeadline(),
-  maxExtraMinutes: preferences?.maxExtraMinutes ?? 20,
   walkingProfile:
-    preferences?.version === 2 ? preferences.walkingProfile : undefined,
-  safetyBufferMinutes: preferences?.safetyBufferMinutes ?? 3,
+    preferences?.version === 2 || preferences?.version === 3
+      ? preferences.walkingProfile
+      : undefined,
   selectedRouteId: undefined,
   setOrigin: (origin) => set({ origin, selectedRouteId: undefined }),
   setDestination: (destination) =>
@@ -50,10 +47,6 @@ export const useTripStore = create<TripState>((set) => ({
     })),
   setCurrentSteps: (currentSteps) => set({ currentSteps }),
   setGoalSteps: (goalSteps) => set({ goalSteps }),
-  setDeadlineLocal: (deadlineLocal) => set({ deadlineLocal }),
-  setMaxExtraMinutes: (maxExtraMinutes) => set({ maxExtraMinutes }),
   setWalkingProfile: (walkingProfile) => set({ walkingProfile }),
-  setSafetyBufferMinutes: (safetyBufferMinutes) =>
-    set({ safetyBufferMinutes }),
   setSelectedRouteId: (selectedRouteId) => set({ selectedRouteId }),
 }));

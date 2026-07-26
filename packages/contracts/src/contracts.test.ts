@@ -8,6 +8,7 @@ import {
   routeLegSchema,
   storedPreferencesV1Schema,
   storedPreferencesV2Schema,
+  storedPreferencesV3Schema,
   uiEventPayloadSchema,
 } from "./index.js";
 
@@ -56,16 +57,13 @@ describe("공유 계약", () => {
         category: "교통",
         location: { lng: 127.4342, lat: 36.3321 },
       },
-      deadline: "2026-07-24T18:00:00+09:00",
       currentSteps: 5200,
       goalSteps: 8000,
-      maxExtraMinutes: 25,
       walkingMetric: {
         stepLengthMeters: 0.69,
         source: "RESEARCH_ESTIMATE",
         modelVersion: "HAN_2026_V1",
       },
-      safetyBufferMinutes: 3,
     };
 
     expect(recommendationRequestSchema.safeParse(baseRequest).success).toBe(
@@ -80,6 +78,20 @@ describe("공유 계약", () => {
         },
       }).success,
     ).toBe(false);
+    expect(
+      recommendationRequestSchema.safeParse({
+        ...baseRequest,
+        unknownConstraint: 30,
+      }).success,
+    ).toBe(false);
+    expect(
+      recommendationRequestSchema.safeParse({
+        ...baseRequest,
+        deadline: "2026-07-24T18:00:00+09:00",
+        maxExtraMinutes: 25,
+        safetyBufferMinutes: 3,
+      }).success,
+    ).toBe(true);
   });
 
   it("연구식으로 필수 신체정보를 개인화 한 걸음 길이로 환산한다", () => {
@@ -128,6 +140,38 @@ describe("공유 계약", () => {
         strideLengthMeters: 0.7,
         maxExtraMinutes: 20,
         safetyBufferMinutes: 3,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("v3 설정은 당일 현재 걸음과 프로필만 저장한다", () => {
+    expect(
+      storedPreferencesV3Schema.safeParse({
+        version: 3,
+        dailyGoalSteps: 8000,
+        walkingProfile: {
+          birthYear: 2000,
+          heightCm: 170,
+          weightKg: 65,
+          biologicalSex: "FEMALE",
+        },
+        currentSteps: 5200,
+        currentStepsDate: "2026-07-26",
+      }).success,
+    ).toBe(true);
+    expect(
+      storedPreferencesV3Schema.safeParse({
+        version: 3,
+        dailyGoalSteps: 8000,
+        walkingProfile: {
+          birthYear: 2000,
+          heightCm: 170,
+          weightKg: 65,
+          biologicalSex: "FEMALE",
+        },
+        currentSteps: 5200,
+        currentStepsDate: "2026-07-26",
+        maxExtraMinutes: 20,
       }).success,
     ).toBe(false);
   });

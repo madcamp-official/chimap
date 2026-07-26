@@ -22,6 +22,23 @@ export function toKstDateTimeLocal(date: Date): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
+export function kstDateKey(date = new Date()): string {
+  const parts = datePartsInKst(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+export function millisecondsUntilNextKstDay(date = new Date()): number {
+  const parts = datePartsInKst(date);
+  const nextMidnightUtc =
+    Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day) + 1,
+    ) -
+    9 * 60 * 60 * 1000;
+  return Math.max(1000, nextMidnightUtc - date.getTime());
+}
+
 export function defaultDeadline(now = new Date()): string {
   return toKstDateTimeLocal(new Date(now.getTime() + 60 * 60 * 1000));
 }

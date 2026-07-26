@@ -442,6 +442,9 @@ export function createApp(options: CreateAppOptions): Express {
     const startedAt = performance.now();
     try {
       const parsedRequest = recommendationRequestSchema.parse(request.body);
+      if ("deadline" in parsedRequest) {
+        response.setHeader("Deprecation", "true");
+      }
       const abortController = new AbortController();
       request.once("aborted", () => abortController.abort());
       const result = await recommendationService.createRecommendations({

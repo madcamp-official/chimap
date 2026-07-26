@@ -1,7 +1,9 @@
 import type {
+  LegacyRecommendationRequest,
   NormalizedRoute,
   RecommendationRequest,
 } from "@chimap/contracts";
+import { HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND } from "@chimap/contracts";
 
 import type { RouteCandidate } from "./candidate-generator.js";
 
@@ -30,6 +32,62 @@ export type EvaluatedCandidate = RouteCandidate & {
   transferPenalty: number;
   balancedScore: number;
 };
+
+export type RecommendationPolicy = {
+  mode: "AUTO" | "LEGACY";
+  maxExtraMinutes: number;
+  effectiveDeadline?: Date;
+};
+
+export function isLegacyRecommendationRequest(
+  request: RecommendationRequest,
+): request is LegacyRecommendationRequest {
+  return "deadline" in request;
+}
+
+export function calculateAutomaticMaxExtraMinutes(
+  request: RecommendationRequest,
+  baseline: NormalizedRoute,
+): number {
+  const remainingSteps = calculateRemainingSteps(
+    request.currentSteps,
+    request.goalSteps,
+  );
+  const targetWalkDistanceMeters = calculateTargetWalkDistanceMeters(
+    remainingSteps,
+    request.walkingMetric.stepLengthMeters,
+  );
+  const missingWalkDistanceMeters = Math.max(
+    targetWalkDistanceMeters - baseline.walkDistanceMeters,
+    0,
+  );
+  const walkingSpeedMetersPerSecond =
+    HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND / 100;
+  const missingWalkMinutes =
+    missingWalkDistanceMeters / walkingSpeedMetersPerSecond / 60;
+  const calculatedMinutes = Math.ceil(missingWalkMinutes * 1.25 + 5);
+  return Math.min(90, Math.max(15, calculatedMinutes));
+}
+
+export function resolveRecommendationPolicy(
+  request: RecommendationRequest,
+  baseline: NormalizedRoute,
+): RecommendationPolicy {
+  if (isLegacyRecommendationRequest(request)) {
+    return {
+      mode: "LEGACY",
+      maxExtraMinutes: request.maxExtraMinutes,
+      effectiveDeadline: new Date(
+        new Date(request.deadline).getTime() -
+          request.safetyBufferMinutes * 60_000,
+      ),
+    };
+  }
+  return {
+    mode: "AUTO",
+    maxExtraMinutes: calculateAutomaticMaxExtraMinutes(request, baseline),
+  };
+}
 
 export function calculateRemainingSteps(
   currentSteps: number,
@@ -110,29 +168,27 @@ export function evaluateCandidate(
   baseline: NormalizedRoute,
   request: RecommendationRequest,
   departureAt: Date,
+  policy: RecommendationPolicy,
 ): EvaluatedCandidate {
   const metrics = calculateStepMetrics(request, candidate.route, baseline);
   const arrivalAt = new Date(
     departureAt.getTime() + candidate.route.durationSeconds * 1000,
   );
-  const effectiveDeadline = new Date(
-    new Date(request.deadline).getTime() -
-      request.safetyBufferMinutes * 60_000,
-  );
   const extraMinutesRaw =
     (candidate.route.durationSeconds - baseline.durationSeconds) / 60;
   const deadlineSatisfied =
-    arrivalAt.getTime() <= effectiveDeadline.getTime();
+    policy.effectiveDeadline === undefined ||
+    arrivalAt.getTime() <= policy.effectiveDeadline.getTime();
   const extraTimeSatisfied =
     candidate.route.durationSeconds <=
-    baseline.durationSeconds + request.maxExtraMinutes * 60;
+    baseline.durationSeconds + policy.maxExtraMinutes * 60;
   const stepError = Math.min(
     Math.abs(metrics.routeEstimatedSteps - metrics.remainingSteps) /
       Math.max(metrics.remainingSteps, 1000),
     1,
   );
   const timePenalty = Math.min(
-    Math.max(extraMinutesRaw, 0) / Math.max(request.maxExtraMinutes, 1),
+    Math.max(extraMinutesRaw, 0) / Math.max(policy.maxExtraMinutes, 1),
     1,
   );
   const transferPenalty = Math.min(candidate.route.transferCount / 3, 1);

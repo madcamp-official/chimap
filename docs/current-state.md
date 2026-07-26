@@ -1,13 +1,14 @@
 # 구현·운영 현황
 
-이 문서는 서로 다른 세 시점을 구분합니다.
+이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
-- **현재 작업 트리**: `feat/tago-transit` HEAD `640a5a4` 위의 미커밋
-  Route Pulse UI·익명 이벤트·문서 변경. 2026-07-26 10:00 KST에 typecheck,
-  결정적 테스트 83개와 production build를 로컬에서 통과했습니다.
-- **현재 공개 배포**: 2026-07-26 09:40 KST에 health/readiness를 다시
-  확인했습니다. 공개 JavaScript asset에는 아직 `route-pulse-v1`이 없어 새
-  UI와 익명 이벤트 클라이언트는 배포 전입니다.
+- **현재 구현**: `feat/tago-transit`의 Route Pulse UI·익명 이벤트·자동 건강
+  경로 UX. 2026-07-26 15:03 KST에 typecheck, 결정적 테스트 97개와
+  production build를 통과했습니다.
+- **현재 공개 배포**: 2026-07-26 15:12 KST에 새 이미지
+  `sha256:eb4a2462…`로 API/웹 컨테이너를 교체했습니다. 공개 asset
+  `index-z-oJH86J.js`와 health/readiness, 1440·768·390·320px Chromium
+  레이아웃 smoke를 확인했습니다.
 - **마지막 전체 운영 점검**: 2026-07-26 01:26 KST에 컨테이너, PostgreSQL,
   timer, 모니터링, 공개 E2E와 GitHub Actions를 대조했습니다.
 
@@ -27,16 +28,19 @@
 - 추천 카드를 시간·이동수단·도보·환승 중심의 간략 기본 표시로 개편
 - 상세 이동 단계는 카드별 `자세히/접기`로만 표시하고 경로 변경 시 자동 닫힘
 - 운행 경고를 기본 접힌 안내로 이동하고 상세 열림 상태의 접근성 속성 적용
-- 회원가입 없이 필수 출생연도·신장·체중·생물학적 성별을 받는 개인화
+- 회원가입 없이 필수 만 나이·신장·체중·생물학적 성별·하루 목표를 받는 개인화
   온보딩과 브라우저 전용 저장·수정·삭제 구현
-- 작업 트리에 Route Pulse 색상·상태 문법과 실제 요청 기반 경로 추적 진행
-  표시 적용(공개 배포 전)
+- 헤더 중앙에 현재 걸음 수정·목표 걸음·개인화 한 걸음 요약을 배치하고,
+  767px 이하에서는 두 번째 행 3열로 전환
+- 지도 위 검색 패널을 제거하고 출발지·도착지·위치 교환·현재 위치·한 번의
+  `건강 경로 찾기` CTA를 왼쪽 탐색 영역에 통합
+- 마감시간·추가 허용시간·안전 여유시간과 경로별 걸음 목표 입력을 제거하고
+  장소·현재 걸음·목표·프로필 변경 시 이전 추천을 즉시 무효화
+- 지도 위 공급자 칩을 제거하고 왼쪽 패널 최하단에 비고정 데이터 제공 안내 배치
+- Route Pulse 색상·상태 문법과 실제 요청 기반 경로 추적 진행 표시 적용
 - 추천 성공 3회부터 보조 설명만 줄이는 guided/compact 숙련도 적용
-  (공개 배포 전)
 - 자동/자세히/간결하게, 시스템 모션/동작 줄이기, 학습 초기화 설정 추가
-  (공개 배포 전)
 - 명시적 동의 뒤 strict enum만 204로 집계하는 익명 UI 이벤트 추가
-  (공개 배포 전)
 
 ### 실제 검색·교통
 
@@ -94,15 +98,15 @@
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 현재 로컬 HEAD | `feat/tago-transit`의 `640a5a4`, Route Pulse·문서는 미커밋 작업 |
+| 구현 브랜치 | `feat/tago-transit` |
 | 마지막 CI 검증 구현 | `b294a4d`, run `30165571376` 두 job 성공 |
-| Route Pulse 공개 상태 | 공개 asset 미포함, 새 이미지 배포와 공개 E2E 필요 |
+| 자동 건강 경로 UX 공개 상태 | asset `index-z-oJH86J.js`, 공개 전체 E2E 통과 |
 | 기본 브랜치 | `main`은 아직 초기 commit, 병합·보호 규칙 사용자 작업 |
 | 공개 번들 비밀값 검사 | NAVER 서버 Client Secret 미검출 |
 
 ## 3. readiness 스냅샷
 
-2026-07-26 09:40 KST 공개 재확인 결과:
+2026-07-26 15:12 KST 공개 재확인 결과:
 
 ```json
 {
@@ -119,15 +123,15 @@
   },
   "transit": {
     "stops": 227223,
-    "linkedStops": 2797,
+    "linkedStops": 2804,
     "routes": 134,
     "routeStops": 5638
   }
 }
 ```
 
-health timestamp는 `2026-07-26T00:40:46.433Z`, readiness timestamp는
-`2026-07-26T00:40:47.478Z`였습니다. 위 JSON에서는 가독성을 위해
+health timestamp는 `2026-07-26T06:12:02.231Z`, readiness timestamp는
+`2026-07-26T06:12:10.817Z`였습니다. 위 JSON에서는 가독성을 위해
 timestamp를 생략했습니다. 네 교통 통계가 모두 0보다 크고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
@@ -155,15 +159,21 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 직행 또는 최대 1회 환승 버스 후보 생성
 - TAGO 도착정보 우선, 없으면 실제 노선의 배차·정류장 정보로 추정
 - Kakao 도보 경로를 버스 전후와 운동 구간에 사용
-- 출생연도·신장·체중·필수 생물학적 성별로 개인화 한 걸음 길이 추정
-- 직접 한 걸음 길이 입력과 20m 보행 측정 없이 localStorage v2 프로필 사용
+- 만 나이·신장·체중·필수 생물학적 성별로 개인화 한 걸음 길이 추정
+- 직접 한 걸음 길이 입력과 20m 보행 측정 없이 localStorage v3 프로필·목표·
+  한국 날짜별 현재 걸음 사용
+- 기본 경로 도보거리와 남은 목표 거리로 15~90분 자동 추가시간을 계산하고
+  자동 범위 밖 후보를 제외
+- 목표를 이미 달성한 경우 운동 우회 후보 없이 빠른 경로만 제공
+- 같은 추천 endpoint에서 간소화 요청과 기존 시간 제약 요청을 strict union으로
+  구분하고 기존 요청에는 `Deprecation: true` 응답 header 제공
 - 마지막 버스의 조기 하차 후보를 우선하고 부족하면 늦은 탑승·양쪽 조합
 - TAGO 정류장 순서를 최대 30개 경유지 단위로 Kakao 도로에 매칭
 - 빠른·균형·목표 달성 최대 3개 추천
 - 남은 목표가 있으면 목표에 가장 가까운 추천을 기본 선택
 - NAVER 지도에 도로 매칭 경로와 첫 승차·환승·최종 하차만 표시
 - 운동 시작 마커를 제거하고 모든 도보 구간을 주황색 실선으로 통일
-- 작업 트리의 지도는 비선택 0.18, 카드 hover/focus 0.55, 선택 0.95
+- 지도는 비선택 0.18, 카드 hover/focus 0.55, 선택 0.95
   불투명도를 사용하고 SVG 복구 지도의 선택 경로는 1.0으로 표시
 - 선택한 각 버스 구간에서 탑승 정류장에 가장 가까이 접근 중인 차량 최대 1대
 - 차량은 노선번호 중심의 작은 마커로 표시하고 지도 bounds 계산에서는 제외
@@ -177,7 +187,7 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 추천 전체 제한은 20초이며 UI는 가상 단계·퍼센트 없이 실제 요청의 단일
   경로 추적 표시만 사용하고 8초가 넘으면 공급자 지연과 장소 수정 가능성을
   설명
-- 작업 트리의 Route Pulse는 7개 `PlannerUiState`, guided/compact 안내 밀도,
+- Route Pulse는 7개 `PlannerUiState`, guided/compact 안내 밀도,
   OS·서비스 모션 축소, 설정 대화상자와 동의 배너를 포함
 - 사용자가 허용한 경우에만 strict UI enum을 `/api/v1/ui-events`로 보내고
   PostgreSQL 대신 `chimap_ui_events_total`에 집계
@@ -210,19 +220,19 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 
 ## 5. 검증 기록
 
-로컬 검증은 2026-07-26 10:00 KST 현재 미커밋 작업 트리를, 공개·운영 검증은
-별도로 적힌 마지막 배포 스냅샷을 대상으로 합니다.
+로컬 검증은 2026-07-26 15:03 KST 구현을, 공개 검증은 15:12~15:21 KST에
+배포된 같은 웹/API 이미지를 대상으로 합니다.
 
 | 검증 | 결과 |
 | --- | --- |
 | 현재 작업 트리 TypeScript typecheck | 통과 |
-| 현재 작업 트리 production build | 통과, Vite 단일 JS chunk 약 632KB 경고만 존재 |
-| 현재 작업 트리 계약·API·웹·알림 릴레이 테스트 | 83개 통과(7+42+31+3) |
+| 현재 작업 트리 production build | 통과, Vite 단일 JS chunk 약 620KB 경고만 존재 |
+| 현재 작업 트리 계약·API·웹·알림 릴레이 테스트 | 97개 통과(8+47+39+3) |
 | 현재 작업 트리 format check | 통과 |
-| 현재 작업 트리 UI 수동 확인 | 1440/390px idle·설정·calculating, 가로 overflow 없음 |
+| 현재 작업 트리 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
 | PostgreSQL/PostGIS 통합 테스트 | 마지막 전체 운영 점검에서 5개 통과 |
-| 공개 strict 지도 E2E | 마지막 전체 운영 점검에서 기존 공개 UI 2개 통과 |
-| Route Pulse 공개 E2E | 미실행, 공개 asset 미반영으로 배포 후 필요 |
+| 공개 strict 지도 E2E | 2026-07-26 15:21 KST 새 UI 전체 흐름 2개 통과 |
+| 공개 반응형 Chromium smoke | 1440/768/390/320px 1개 통과 |
 | GitHub Actions | 구현 commit `b294a4d`, run `30165571376`, 품질·PostGIS 두 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
@@ -230,7 +240,7 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | KAIST 본원 중심→대전 갤러리아 | HTTP 200, 실제 추천 3건·Kakao 승차 도보 확인 |
 | 버스 geometry | 도로 vertex가 정류장 수보다 많고 정류장 외 좌표 포함 확인 |
 | 지도 교통 마커 | 탑승 1·환승 1·하차 1·중간 정류장 0 육안/E2E 확인 |
-| 지도 도보 표현 | 기존 공개 UI는 모든 도보 주황색 실선·운동 시작 마커 0 확인; 새 0.18/0.55/0.95 opacity는 로컬 구현 |
+| 지도 도보 표현 | 모든 도보 주황색 실선·운동 시작 마커 0·0.18/0.55/0.95 opacity 구현 |
 | NAVER 서버 API | Geocoding 200 1건, Reverse Geocoding 200 4건 |
 | 차량 마커 E2E | 마커 수≤선택 버스 구간 수, 탑승 접근 차량 title 확인 |
 | Prometheus | API/relay/Alertmanager target `up`, 20개 rule healthy |
@@ -300,11 +310,10 @@ push했습니다. GitHub CI run `30165571376`에서 다음 두 job이 모두
 - `Typecheck, tests, build, config`
 - `PostgreSQL and PostGIS integration`
 
-이후 문서 갱신 `6002541`과 release 검증 기록 `640a5a4`가 같은 브랜치의
-현재 HEAD입니다. 이번 Route Pulse UI, 익명 이벤트와 문서 재구성은 그 위의
-미커밋 작업이므로 `b294a4d`의 CI 성공을 이 변경의 CI 결과로 간주하지
-않습니다. 새 변경은 commit·push·CI·운영 이미지 승격·공개 E2E가 아직
-필요합니다.
+이후 문서 갱신 `6002541`과 release 검증 기록 `640a5a4` 위에서 Route Pulse
+UI, 익명 이벤트와 자동 건강 경로 UX를 구현했습니다. 이 변경은 운영 이미지
+승격과 공개 E2E를 완료했지만 `b294a4d`의 CI 성공을 새 변경의 CI 결과로
+간주하지 않으며, push 뒤 생성되는 CI를 별도로 확인해야 합니다.
 
 `b294a4d`까지의 개인화 추천 구현은 운영 배포·검증과 기능 브랜치 push까지
 완료했습니다. 기본
@@ -329,7 +338,6 @@ push했습니다. GitHub CI run `30165571376`에서 다음 두 job이 모두
   `ChimapAlertDeliveryNotConfigured` 경보가 의도대로 발생 중입니다.
   [사용자 작업](../needs.md)의 1번을 완료해야 실제 운영 채널 전달이
   활성화됩니다.
-- Route Pulse와 익명 UI 이벤트 클라이언트는 현재 작업 트리에만 있습니다.
-  새 이미지를 배포한 뒤 공개 asset에서 `route-pulse-v1`을 확인하고 상태,
-  설정, 동의 경계, reduced motion과 1440/768/390/320px E2E를 다시
-  승인해야 합니다.
+- 기존 시간 제약 추천 요청은 전환 릴리스 동안만 유지합니다. 사용 현황과
+  downstream 전환을 확인한 뒤 `deadline`, `maxExtraMinutes`,
+  `safetyBufferMinutes` 계약과 기존 warning을 제거해야 합니다.

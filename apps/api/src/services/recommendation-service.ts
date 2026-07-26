@@ -8,7 +8,11 @@ import {
 import type { Logger } from "pino";
 
 import { AppError, mapProviderError, ProviderError } from "../errors.js";
-import { calculateStepMetrics } from "./calculations.js";
+import {
+  calculateStepMetrics,
+  isLegacyRecommendationRequest,
+  resolveRecommendationPolicy,
+} from "./calculations.js";
 import { CandidateGenerator } from "./candidate-generator.js";
 import { selectRecommendations } from "./recommendation-engine.js";
 
@@ -55,17 +59,25 @@ export class RecommendationService {
         });
       }
 
+      const policy = resolveRecommendationPolicy(
+        input.request,
+        generated.baseline,
+      );
+
       const selection = selectRecommendations({
         candidates: generated.candidates,
         baseline: generated.baseline,
         request: input.request,
         departureAt,
+        policy,
       });
       if (selection.recommendations.length === 0) {
         throw new AppError({
           code: "NO_ROUTE_WITHIN_DEADLINE",
           message:
-            "설정한 시간 안에 도착할 수 있는 운동 경로를 찾지 못했어요.",
+            policy.mode === "LEGACY"
+              ? "설정한 시간 안에 도착할 수 있는 운동 경로를 찾지 못했어요."
+              : "현재 조건에서 추천할 수 있는 건강 경로를 찾지 못했어요.",
           status: 404,
         });
       }
@@ -125,9 +137,14 @@ export class RecommendationService {
       }
       if (!selection.goalReachable) {
         warnings.push({
-          code: "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
+          code:
+            policy.mode === "AUTO"
+              ? "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET"
+              : "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
           message:
-            "설정한 마감시간과 추가시간 안에서는 목표 걸음의 ±5% 범위에 맞추기 어려워 가장 가까운 경로를 보여드려요.",
+            policy.mode === "AUTO"
+              ? "자동 추천 범위 안에서는 목표 걸음의 ±5%에 맞추기 어려워 가장 가까운 경로를 보여드려요."
+              : "설정한 마감시간과 추가시간 안에서는 목표 걸음의 ±5% 범위에 맞추기 어려워 가장 가까운 경로를 보여드려요.",
         });
       }
       if (selection.recommendations.length < 3) {
@@ -173,6 +190,8 @@ export class RecommendationService {
         candidateFailureCount: generated.candidateFailureCount,
         recommendationCount: response.recommendations.length,
         routeApiCallCount: generated.routeApiCallCount,
+        recommendationMode: policy.mode,
+        maxExtraMinutes: policy.maxExtraMinutes,
       });
       return response;
     } catch (error) {
@@ -210,6 +229,10 @@ export class RecommendationService {
         message: "출발지와 목적지가 너무 가까워요.",
         status: 400,
       });
+    }
+
+    if (!isLegacyRecommendationRequest(request)) {
+      return;
     }
 
     const deadline = new Date(request.deadline);

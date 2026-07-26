@@ -346,18 +346,39 @@ export function estimatePersonalizedStepLengthMeters(
   return Math.round((stepLengthCentimeters / 100) * 10_000) / 10_000;
 }
 
-export const recommendationRequestSchema = z
+const recommendationRequestBaseShape = {
+  origin: placeSchema,
+  destination: placeSchema,
+  currentSteps: z.number().int().min(0).max(100_000),
+  goalSteps: z.number().int().min(1).max(100_000),
+  walkingMetric: walkingMetricSchema,
+};
+
+export const automaticRecommendationRequestSchema = z
+  .object(recommendationRequestBaseShape)
+  .strict();
+
+export type AutomaticRecommendationRequest = z.infer<
+  typeof automaticRecommendationRequestSchema
+>;
+
+export const legacyRecommendationRequestSchema = z
   .object({
-    origin: placeSchema,
-    destination: placeSchema,
+    ...recommendationRequestBaseShape,
     deadline: z.iso.datetime({ offset: true }),
-    currentSteps: z.number().int().min(0).max(100_000),
-    goalSteps: z.number().int().min(1).max(100_000),
     maxExtraMinutes: z.number().int().min(0).max(120),
-    walkingMetric: walkingMetricSchema,
     safetyBufferMinutes: z.number().int().min(0).max(15).default(3),
   })
   .strict();
+
+export type LegacyRecommendationRequest = z.infer<
+  typeof legacyRecommendationRequestSchema
+>;
+
+export const recommendationRequestSchema = z.union([
+  automaticRecommendationRequestSchema,
+  legacyRecommendationRequestSchema,
+]);
 
 export type RecommendationRequest = z.infer<
   typeof recommendationRequestSchema
@@ -437,6 +458,7 @@ export const warningCodeSchema = z.enum([
   "ESTIMATED_STEPS",
   "PARTIAL_CANDIDATE_FAILURE",
   "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
+  "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
   "LIMITED_ROUTE_VARIETY",
   "CURRENT_TIME_ESTIMATE",
   "REALTIME_UNAVAILABLE",
@@ -718,6 +740,22 @@ export const storedPreferencesV2Schema = z
 
 export type StoredPreferencesV2 = z.infer<
   typeof storedPreferencesV2Schema
+>;
+
+export const storedPreferencesV3Schema = z
+  .object({
+    version: z.literal(3),
+    dailyGoalSteps: z.number().int().min(1).max(100_000),
+    walkingProfile: walkingProfileSchema,
+    currentSteps: z.number().int().min(0).max(100_000),
+    currentStepsDate: z.iso.date(),
+    lastOrigin: placeSchema.optional(),
+    lastDestination: placeSchema.optional(),
+  })
+  .strict();
+
+export type StoredPreferencesV3 = z.infer<
+  typeof storedPreferencesV3Schema
 >;
 
 export const storedTripV1Schema = z

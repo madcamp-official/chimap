@@ -4,24 +4,6 @@ import {
 } from "@chimap/contracts";
 import { expect, test } from "@playwright/test";
 
-function kstDateTimeLocal(hoursFromNow: number): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  })
-    .formatToParts(new Date(Date.now() + hoursFromNow * 60 * 60 * 1000))
-    .reduce<Record<string, string>>((result, part) => {
-      result[part.type] = part.value;
-      return result;
-    }, {});
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
-}
-
 test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장한다", async ({
   page,
 }) => {
@@ -47,12 +29,13 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await page.getByRole("button", { name: "인트로 건너뛰기" }).click();
   await expect(intro).toBeHidden();
   const walkingProfile = page.getByRole("dialog", {
-    name: "내 한 걸음 길이 계산",
+    name: "내 건강 경로 설정",
   });
   await expect(walkingProfile).toBeVisible();
-  await page.getByLabel("출생연도").fill("2000");
+  await page.getByLabel("만 나이").fill("26");
   await page.getByLabel("신장").fill("170");
   await page.getByLabel("체중").fill("65");
+  await page.getByLabel("하루 목표 걸음").fill("8000");
   await page.getByLabel("여성").check();
   await page.getByRole("button", { name: "이 값으로 시작" }).click();
   await expect(walkingProfile).toBeHidden();
@@ -64,17 +47,15 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     .getByRole("option", { name: /^한국과학기술원/u })
     .click();
 
-  const destination = page.getByRole("combobox", { name: "목적지" });
+  const destination = page.getByRole("combobox", { name: "도착지" });
   await destination.fill("대전역");
-  await page.getByRole("button", { name: "목적지 검색" }).click();
+  await page.getByRole("button", { name: "도착지 검색" }).click();
   await page
     .getByRole("option", { name: /^대전역 대전 동구 중앙로/u })
     .click();
 
-  await page.getByLabel("현재 걸음 수").fill("5200");
-  await page.getByLabel("하루 목표").fill("8000");
-  await page.getByLabel("도착 마감시간").fill(kstDateTimeLocal(3));
-  await page.getByLabel("최대 추가 허용시간 숫자").fill("25");
+  await page.getByLabel("현재 걸음").fill("5200");
+  await page.getByLabel("현재 걸음").press("Enter");
 
   await page.getByRole("button", { name: "건강 경로 찾기" }).click();
 
@@ -115,11 +96,10 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   } else {
     await expect(mapStatus).toContainText("네이버 지도");
   }
-  await expect(
-    page.getByLabel("지도와 경로 데이터 제공자"),
-  ).toContainText(
-    /NAVER\s*지도\s*\+\s*KAKAO\s*검색\/도보\s*\+\s*TAGO\s*버스/u,
+  await expect(page.locator(".data-sources-footer")).toContainText(
+    "데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO 버스",
   );
+  await expect(page.locator(".map-provider-chip")).toHaveCount(0);
   const busLegs = page.locator(".bus-leg-meta");
   await expect.poll(() => busLegs.count()).toBeGreaterThan(0);
   const selectedBusLegCount = await busLegs.count();
@@ -167,14 +147,14 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
 
   await expect
     .poll(async () =>
-      page.evaluate(() => localStorage.getItem("chimap:last-trip")),
-    )
-    .toContain("BALANCED");
-  await expect
-    .poll(async () =>
       page.evaluate(() => localStorage.getItem("chimap:preferences")),
     )
-    .toContain('"maxExtraMinutes":25');
+    .toContain('"version":3');
+  await expect
+    .poll(async () =>
+      page.evaluate(() => localStorage.getItem("chimap:last-trip")),
+    )
+    .toBeNull();
 
   await page.reload();
   await expect(
@@ -183,11 +163,13 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await expect(page.getByRole("combobox", { name: "출발지" })).toHaveValue(
     "한국과학기술원",
   );
-  await expect(page.getByRole("combobox", { name: "목적지" })).toHaveValue(
+  await expect(page.getByRole("combobox", { name: "도착지" })).toHaveValue(
     "대전역",
   );
-  await expect(page.getByLabel("하루 목표")).toHaveValue("8000");
-  await expect(page.getByLabel("최대 추가 허용시간 숫자")).toHaveValue("25");
+  await expect(page.getByLabel("현재 걸음")).toHaveValue("5200");
+  await expect(page.locator('[aria-label="오늘의 걸음 요약"]')).toContainText(
+    "8,000걸음",
+  );
 
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 720 });

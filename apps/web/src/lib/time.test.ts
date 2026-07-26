@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatKstTime,
+  kstDateKey,
   kstDateTimeLocalToIso,
+  millisecondsUntilNextKstDay,
   toKstDateTimeLocal,
 } from "./time.js";
 
@@ -17,5 +19,11 @@ describe("KST 시간 처리", () => {
     expect(kstDateTimeLocalToIso("2026-07-24T18:00")).toBe(
       "2026-07-24T09:00:00.000Z",
     );
+  });
+
+  it("한국 날짜 키와 다음 자정까지 남은 시간을 계산한다", () => {
+    const date = new Date("2026-07-24T14:59:00.000Z");
+    expect(kstDateKey(date)).toBe("2026-07-24");
+    expect(millisecondsUntilNextKstDay(date)).toBe(60_000);
   });
 });

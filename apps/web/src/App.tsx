@@ -1,6 +1,6 @@
 import {
   estimatePersonalizedStepLengthMeters,
-  recommendationRequestSchema,
+  automaticRecommendationRequestSchema,
   type Coordinate,
   type Place,
   type PlannerUiState,
@@ -28,8 +28,8 @@ import {
   useState,
 } from "react";
 
-import { GoalForm } from "./components/GoalForm.js";
 import { ExperienceSettingsDialog } from "./components/ExperienceSettingsDialog.js";
+import { HeaderStepSummary } from "./components/HeaderStepSummary.js";
 import {
   IntroSequence,
   shouldPlayIntro,
@@ -53,14 +53,13 @@ import {
 } from "./lib/api.js";
 import {
   clearPreferences,
-  loadLastTrip,
-  saveLastTrip,
   savePreferences,
 } from "./lib/storage.js";
 import {
   formatDistance,
   formatDuration,
-  kstDateTimeLocalToIso,
+  kstDateKey,
+  millisecondsUntilNextKstDay,
 } from "./lib/time.js";
 import { selectRelevantVehiclePositions } from "./lib/vehicle-positions.js";
 import { useTripStore } from "./store/trip-store.js";
@@ -106,6 +105,7 @@ function ResultsNotice({
 }) {
   const caution =
     warning.code === "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS" ||
+    warning.code === "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET" ||
     warning.code === "PARTIAL_CANDIDATE_FAILURE" ||
     warning.code === "LIMITED_ROUTE_VARIETY";
   return (
@@ -154,14 +154,13 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
     destination,
     currentSteps,
     goalSteps,
-    deadlineLocal,
-    maxExtraMinutes,
     walkingProfile,
-    safetyBufferMinutes,
     selectedRouteId,
     setOrigin,
     setDestination,
     swapPlaces,
+    setCurrentSteps,
+    setGoalSteps,
     setWalkingProfile,
     setSelectedRouteId,
   } = useTripStore();
@@ -186,7 +185,7 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
   );
   const recommendationStartedAt = useRef<number | undefined>(undefined);
   const plannerViewedTracked = useRef(false);
-  const lastTrip = useMemo(() => loadLastTrip(), []);
+  const currentStepsDateRef = useRef(kstDateKey());
   const revealApp = useCallback(() => setAppEntered(true), []);
   const completeIntro = useCallback(() => setIntroActive(false), []);
   const emitUiEvent = useCallback(
@@ -241,6 +240,8 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
       });
     },
   });
+  const recommendationResetRef = useRef(recommendationMutation.reset);
+  recommendationResetRef.current = recommendationMutation.reset;
 
   useEffect(
     () => () => {
@@ -287,11 +288,11 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
     }
     const timeout = window.setTimeout(() => {
       savePreferences({
-        version: 2,
+        version: 3,
         dailyGoalSteps: goalSteps,
         walkingProfile,
-        maxExtraMinutes,
-        safetyBufferMinutes,
+        currentSteps,
+        currentStepsDate: kstDateKey(),
         ...(origin === undefined ? {} : { lastOrigin: origin }),
         ...(destination === undefined
           ? {}
@@ -301,12 +302,53 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
     return () => window.clearTimeout(timeout);
   }, [
     destination,
+    currentSteps,
     goalSteps,
-    maxExtraMinutes,
     origin,
-    safetyBufferMinutes,
     walkingProfile,
   ]);
+
+  useEffect(() => {
+    let midnightTimeout: number | undefined;
+    const resetForNewDay = () => {
+      const nextDate = kstDateKey();
+      if (nextDate === currentStepsDateRef.current) {
+        return;
+      }
+      currentStepsDateRef.current = nextDate;
+      requestAbortController.current?.abort();
+      recommendationResetRef.current();
+      setSelectedRouteId(undefined);
+      setExpandedRouteId(undefined);
+      setPreviewRouteId(undefined);
+      setRouteInteracted(false);
+      setFormError(undefined);
+      setCurrentSteps(0);
+    };
+    const scheduleMidnightReset = () => {
+      if (midnightTimeout !== undefined) {
+        window.clearTimeout(midnightTimeout);
+      }
+      midnightTimeout = window.setTimeout(() => {
+        resetForNewDay();
+        scheduleMidnightReset();
+      }, millisecondsUntilNextKstDay() + 100);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        resetForNewDay();
+        scheduleMidnightReset();
+      }
+    };
+    scheduleMidnightReset();
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      if (midnightTimeout !== undefined) {
+        window.clearTimeout(midnightTimeout);
+      }
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [setCurrentSteps, setSelectedRouteId]);
 
   const result = recommendationMutation.data;
   const hasPlaces = origin !== undefined && destination !== undefined;
@@ -506,27 +548,24 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
       return;
     }
     try {
-      const request = recommendationRequestSchema.parse({
+      const request = automaticRecommendationRequestSchema.parse({
         origin,
         destination,
-        deadline: kstDateTimeLocalToIso(deadlineLocal),
         currentSteps,
         goalSteps,
-        maxExtraMinutes,
         walkingMetric: {
           stepLengthMeters:
             estimatePersonalizedStepLengthMeters(walkingProfile),
           source: "RESEARCH_ESTIMATE",
           modelVersion: "HAN_2026_V1",
         },
-        safetyBufferMinutes,
       });
       setFormError(undefined);
       recommendationStartedAt.current = performance.now();
       emitUiEvent("recommendation_started", "calculating");
       recommendationMutation.mutate(request);
     } catch {
-      setFormError("입력 범위와 도착 마감시간을 확인해 주세요.");
+      setFormError("현재 걸음과 개인화 설정을 확인해 주세요.");
     }
   }
 
@@ -540,15 +579,6 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
     setRouteInteracted(true);
     setSelectedRouteId(recommendation.id);
     emitUiEvent("route_selected", "route-selected", { outcome: "success" });
-    saveLastTrip({
-      version: 1,
-      selectedAt: new Date().toISOString(),
-      originName: origin.name,
-      destinationName: destination.name,
-      routeType: recommendation.type,
-      expectedSteps: recommendation.estimatedSteps,
-      expectedArrivalAt: recommendation.arrivalAt,
-    });
   }
 
   function toggleRecommendationDetails(
@@ -577,15 +607,23 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
             ? {}
             : {
                 initialProfile: walkingProfile,
+                initialDailyGoalSteps: goalSteps,
                 onCancel: () => setProfileEditorOpen(false),
                 onClear: () => {
                   clearPreferences();
+                  invalidateResult();
+                  setOrigin(undefined);
+                  setDestination(undefined);
+                  setCurrentSteps(0);
+                  setGoalSteps(8000);
                   setWalkingProfile(undefined);
                   setProfileEditorVersion((version) => version + 1);
                 },
               })}
-          onSave={(profile) => {
+          onSave={(profile, dailyGoalSteps) => {
+            invalidateResult();
             setWalkingProfile(profile);
+            setGoalSteps(dailyGoalSteps);
             setProfileEditorOpen(false);
           }}
         />
@@ -611,102 +649,47 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
         data-telemetry-consent={experienceState.telemetryConsent}
         inert={introActive || profileEditorOpen || settingsOpen || undefined}
       >
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark">
-            <Navigation aria-hidden="true" />
-          </span>
-          <span>
-            <strong>CHIMap</strong>
-            <small>가는 길을 더 건강하게</small>
-          </span>
-        </div>
-        <div className="header-status">
-          <span className="departure-badge">
-            <span className="live-dot" />
-            지금 출발 기준
-          </span>
-          <button
-            type="button"
-            className="header-settings-button"
-            aria-label="화면 사용 설정 열기"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <Settings2 aria-hidden="true" />
-            <span>화면 설정</span>
-          </button>
-        </div>
-      </header>
+        <header className="app-header">
+          <div className="brand">
+            <span className="brand-mark">
+              <Navigation aria-hidden="true" />
+            </span>
+            <span>
+              <strong>CHIMap</strong>
+              <small>가는 길을 더 건강하게</small>
+            </span>
+          </div>
+          <HeaderStepSummary
+            currentSteps={currentSteps}
+            goalSteps={goalSteps}
+            {...(walkingProfile === undefined ? {} : { walkingProfile })}
+            onCurrentStepsChange={(value) => {
+              if (value !== currentSteps) {
+                invalidateResult();
+                setCurrentSteps(value);
+              }
+            }}
+            onEditProfile={() => setProfileEditorOpen(true)}
+          />
+          <div className="header-status">
+            <span className="departure-badge">
+              <span className="live-dot" />
+              지금 출발 기준
+            </span>
+            <button
+              type="button"
+              className="header-settings-button"
+              aria-label="화면 사용 설정 열기"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Settings2 aria-hidden="true" />
+              <span>화면 설정</span>
+            </button>
+          </div>
+        </header>
 
       <main className="workspace">
         <div className="map-column">
-          <div
-            className="search-panel"
-            aria-label="출발지와 목적지 검색"
-            data-active-editor={activePlaceEditor ?? "none"}
-          >
-            <div className="search-fields">
-              <PlaceCombobox
-                label="출발지"
-                placeholder="출발 장소 검색"
-                value={origin}
-                {...(currentLocation === undefined
-                  ? {}
-                  : { center: currentLocation })}
-                onChange={chooseOrigin}
-                onEditingChange={(editing) =>
-                  setPlaceEditing("origin", editing)
-                }
-                onSearchStart={() =>
-                  emitUiEvent("place_search_started", "editing-place")
-                }
-              />
-              <div className="place-actions">
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="출발지와 목적지 바꾸기"
-                  disabled={origin === undefined && destination === undefined}
-                  onClick={() => {
-                    invalidateResult();
-                    swapPlaces();
-                  }}
-                >
-                  <ArrowDownUp aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="현재 위치를 출발지로 사용"
-                  onClick={useCurrentLocation}
-                >
-                  <Crosshair aria-hidden="true" />
-                </button>
-              </div>
-              <PlaceCombobox
-                label="목적지"
-                placeholder="도착 장소 검색"
-                value={destination}
-                {...destinationSearchCenter === undefined
-                  ? {}
-                  : { center: destinationSearchCenter }}
-                onChange={chooseDestination}
-                onEditingChange={(editing) =>
-                  setPlaceEditing("destination", editing)
-                }
-                onSearchStart={() =>
-                  emitUiEvent("place_search_started", "editing-place")
-                }
-              />
-            </div>
-            {locationMessage === undefined ? null : (
-              <p className="location-message" role="status">
-                <MapPin aria-hidden="true" size={15} />
-                {locationMessage}
-              </p>
-            )}
-          </div>
-
           <MapView
             origin={origin}
             destination={destination}
@@ -724,51 +707,104 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
 
         <aside id="trip-panel" className="trip-panel">
           <div className="sheet-handle" aria-hidden="true" />
-          {!hasPlaces ? (
-            <section className="initial-state">
-              <span className="initial-icon">
-                <Navigation aria-hidden="true" />
-              </span>
-              <span className="eyebrow">건강한 이동의 시작</span>
-              <h1>어디로 이동하시나요?</h1>
-              <p>
-                출발지와 목적지는 그대로 두고, 마감시간 안에서 조금 더 걷는
-                경로를 찾아드려요.
-              </p>
-              <ol className="guided-copy">
-                <li><span>1</span>장소를 선택해요</li>
-                <li><span>2</span>오늘 걸음 목표를 알려주세요</li>
-                <li><span>3</span>시간에 맞는 건강 경로를 비교해요</li>
-              </ol>
-              {lastTrip === undefined ? null : (
-                <div className="last-trip">
-                  <small>지난 선택</small>
-                  <strong>
-                    {lastTrip.originName} → {lastTrip.destinationName}
-                  </strong>
-                  <span>
-                    {lastTrip.routeType} · 약{" "}
-                    {lastTrip.expectedSteps.toLocaleString("ko-KR")}걸음
-                  </span>
-                </div>
-              )}
-            </section>
-          ) : recommendationMutation.isPending ? (
-            <RecommendationProgress />
-          ) : result === undefined ? (
-            <GoalForm
-              canSubmit={hasPlaces && walkingProfile !== undefined}
-              isSubmitting={false}
-              {...(formError === undefined ? {} : { errorMessage: formError })}
-              onSubmit={submitRecommendation}
-              onEditWalkingProfile={() => setProfileEditorOpen(true)}
+          <form
+            className="route-search-form"
+            aria-label="출발지와 목적지 검색"
+            data-active-editor={activePlaceEditor ?? "none"}
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitRecommendation();
+            }}
+          >
+            <PlaceCombobox
+              label="출발지"
+              placeholder="출발 장소 검색"
+              value={origin}
+              {...(currentLocation === undefined
+                ? {}
+                : { center: currentLocation })}
+              onChange={chooseOrigin}
+              onEditingChange={(editing) =>
+                setPlaceEditing("origin", editing)
+              }
+              onSearchStart={() =>
+                emitUiEvent("place_search_started", "editing-place")
+              }
             />
-          ) : (
-            <div className="results">
+            <div className="route-place-actions">
+              <button
+                type="button"
+                className="route-place-action"
+                disabled={origin === undefined && destination === undefined}
+                onClick={() => {
+                  invalidateResult();
+                  swapPlaces();
+                }}
+              >
+                <ArrowDownUp aria-hidden="true" />
+                출발·도착 바꾸기
+              </button>
+              <button
+                type="button"
+                className="route-place-action"
+                aria-label="현재 위치를 출발지로 사용"
+                onClick={useCurrentLocation}
+              >
+                <Crosshair aria-hidden="true" />
+                현재 위치
+              </button>
+            </div>
+            <PlaceCombobox
+              label="도착지"
+              placeholder="도착 장소 검색"
+              value={destination}
+              {...(destinationSearchCenter === undefined
+                ? {}
+                : { center: destinationSearchCenter })}
+              onChange={chooseDestination}
+              onEditingChange={(editing) =>
+                setPlaceEditing("destination", editing)
+              }
+              onSearchStart={() =>
+                emitUiEvent("place_search_started", "editing-place")
+              }
+            />
+            {locationMessage === undefined ? null : (
+              <p className="location-message" role="status">
+                <MapPin aria-hidden="true" size={15} />
+                {locationMessage}
+              </p>
+            )}
+            {formError === undefined ? null : (
+              <div className="form-error" role="alert">
+                {formError}
+              </div>
+            )}
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={
+                !hasPlaces ||
+                walkingProfile === undefined ||
+                recommendationMutation.isPending
+              }
+            >
+              {recommendationMutation.isPending
+                ? "건강 경로 계산 중…"
+                : "건강 경로 찾기"}
+            </button>
+          </form>
+
+          <div className="route-output">
+            {recommendationMutation.isPending ? (
+              <RecommendationProgress />
+            ) : result === undefined ? null : (
+              <div className="results">
               <div className="results-heading">
                 <span className="eyebrow">건강 경로 추천</span>
                 <h1>
-                  {origin.name} <span>→</span> {destination.name}
+                  {origin?.name ?? "출발지"} <span>→</span>{" "}
+                  {destination?.name ?? "도착지"}
                 </h1>
                 <p>
                   기본 {formatDuration(result.baseline.durationSeconds)} · 기본
@@ -860,24 +896,16 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
                 </>
               )}
 
-              <details className="condition-editor">
-                <summary>
-                  이동 조건 수정
-                  <ChevronDown aria-hidden="true" size={18} />
-                </summary>
-                <GoalForm
-                  canSubmit={hasPlaces && walkingProfile !== undefined}
-                  isSubmitting={false}
-                  onSubmit={submitRecommendation}
-                  onEditWalkingProfile={() => setProfileEditorOpen(true)}
-                />
-              </details>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+          <footer className="data-sources-footer">
+            데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO 버스
+          </footer>
         </aside>
-      </main>
-      {!introActive && experienceState.telemetryConsent === "unknown" ? (
-        <aside className="telemetry-banner" aria-label="익명 사용성 정보 선택">
+        </main>
+        {!introActive && experienceState.telemetryConsent === "unknown" ? (
+          <aside className="telemetry-banner" aria-label="익명 사용성 정보 선택">
           <span>
             <ShieldCheck aria-hidden="true" />
             <span>
@@ -900,8 +928,8 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
               괜찮아요
             </button>
           </div>
-        </aside>
-      ) : null}
+          </aside>
+        ) : null}
       </div>
     </>
   );

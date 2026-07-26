@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clearPreferences,
   LAST_TRIP_STORAGE_KEY,
   loadLastTrip,
   loadPreferences,
@@ -13,7 +14,7 @@ describe("버전형 localStorage", () => {
   it("정상 설정과 마지막 선택 요약을 저장하고 복원한다", () => {
     expect(
       savePreferences({
-        version: 2,
+        version: 3,
         dailyGoalSteps: 8000,
         walkingProfile: {
           birthYear: 2000,
@@ -21,13 +22,14 @@ describe("버전형 localStorage", () => {
           weightKg: 65,
           biologicalSex: "FEMALE",
         },
-        maxExtraMinutes: 20,
-        safetyBufferMinutes: 3,
+        currentSteps: 5200,
+        currentStepsDate: "2026-07-26",
       }),
     ).toBe(true);
     expect(loadPreferences()).toMatchObject({
-      version: 2,
+      version: 3,
       dailyGoalSteps: 8000,
+      currentSteps: 5200,
     });
 
     expect(
@@ -67,5 +69,14 @@ describe("버전형 localStorage", () => {
     expect(localStorage.getItem(LAST_TRIP_STORAGE_KEY)).not.toContain(
       "coordinates",
     );
+  });
+
+  it("저장 정보 삭제 시 현재 설정과 과거 마지막 선택을 함께 지운다", () => {
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 3 }));
+    localStorage.setItem(LAST_TRIP_STORAGE_KEY, JSON.stringify({ version: 1 }));
+
+    expect(clearPreferences()).toBe(true);
+    expect(localStorage.getItem(PREFERENCES_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(LAST_TRIP_STORAGE_KEY)).toBeNull();
   });
 });

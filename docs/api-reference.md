@@ -4,9 +4,9 @@
 성공·오류 응답은 `@chimap/contracts`의 Zod schema로 검증합니다. 익명 UI
 이벤트 성공만 본문 없는 `204 No Content`를 반환합니다.
 
-계약은 현재 작업 트리를 기준으로 합니다. 2026-07-26 09:40 KST 공개 asset은
-Route Pulse 이전 버전이므로 `/api/v1/ui-events`를 포함한 새 변경의 실제 공개
-반영 여부는 [구현·운영 현황](./current-state.md)을 확인합니다.
+계약은 현재 `feat/tago-transit` 구현과 2026-07-26 15:12 KST 공개 배포를
+기준으로 합니다. 배포 시점과 운영 통계는
+[구현·운영 현황](./current-state.md)에서 관리합니다.
 
 ## 1. 공통 규칙
 
@@ -70,14 +70,14 @@ DB를 조회하지 않습니다.
   },
   "transit": {
     "stops": 227223,
-    "linkedStops": 2797,
+    "linkedStops": 2804,
     "routes": 134,
     "routeStops": 5638
   }
 }
 ```
 
-위 응답은 2026-07-26 09:40 KST 공개 재확인 예시이며 실제 데이터 동기화에
+위 응답은 2026-07-26 15:12 KST 공개 재확인 예시이며 실제 데이터 동기화에
 따라 시각과 통계가 달라질 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
@@ -184,29 +184,57 @@ type ReverseGeocodeResponse = {
 type RecommendationRequest = {
   origin: Place;
   destination: Place;
-  deadline: string;
   currentSteps: number;       // 0~100000
   goalSteps: number;          // 1~100000
-  maxExtraMinutes: number;    // 0~120
   walkingMetric: {
     stepLengthMeters: number; // 0.3~1.2, 한 걸음 길이
     source: "RESEARCH_ESTIMATE";
     modelVersion: "HAN_2026_V1";
   };
-  safetyBufferMinutes: number;// 0~15
 };
 ```
 
-브라우저는 필수 출생연도·신장·체중·생물학적 성별로 한 걸음 길이를
-계산합니다. 이 원본 프로필은 요청 계약에 포함하지 않으며 서버에는 위
-`walkingMetric` 파생값만 전송합니다. API는 직접 보폭 입력이나 20m 보행
-측정값을 받지 않습니다.
+브라우저는 최초 설정에서 받은 만 나이·신장·체중·생물학적 성별로 한 걸음
+길이를 계산합니다. 연구식 적용 직전에 만 나이를 출생연도로 변환하며, 원본
+프로필은 요청 계약에 포함하지 않고 서버에는 위 `walkingMetric` 파생값만
+전송합니다. API는 직접 보폭 입력이나 20m 보행 측정값을 받지 않습니다.
 
 추가 검증:
 
 - 출발지와 목적지는 50m 이상 떨어져야 함
-- 마감시간은 요청 시점보다 미래이고 6시간 이내
-- 안전 여유시간을 제외한 유효 마감시간도 미래여야 함
+- 현재 걸음은 0~100,000, 목표 걸음은 1~100,000 범위여야 함
+- 요청에 선언되지 않은 필드는 거절함
+
+서버는 최단 기본 경로를 먼저 구한 뒤 다음 식으로 자동 추가시간 범위를
+정합니다.
+
+```text
+부족 도보거리 = max((목표−현재) × 한 걸음 길이 − 기본 경로 도보거리, 0)
+부족 도보시간 = 부족 도보거리 ÷ 1.2835m/s
+자동 추가시간 = clamp(ceil(부족 도보시간 × 1.25 + 5분), 15분, 90분)
+```
+
+목표를 이미 달성했다면 운동을 위한 우회 후보를 만들지 않고 빠른 경로만
+반환합니다. 그렇지 않으면 자동 추가시간 안에서 `FAST`, `BALANCED`, `GOAL`
+후보를 선별하며, 균형 점수의 시간 페널티도 같은 범위로 정규화합니다.
+
+이번 전환 릴리스 동안에는 기존의 `deadline`, `maxExtraMinutes`,
+`safetyBufferMinutes`를 모두 포함한 strict 요청도 같은 endpoint에서
+허용합니다. 기존 요청에는 종전 마감시간 검증과 필터를 적용하고 응답에
+`Deprecation: true` header를 붙입니다. 새 웹 앱은 이 기존 형식을 보내지
+않습니다. 새 형식과 기존 형식의 일부 필드만 섞은 요청은 거절합니다.
+
+```ts
+type LegacyRecommendationRequest = RecommendationRequest & {
+  deadline: string;            // 현재보다 미래, 최대 6시간
+  maxExtraMinutes: number;     // 0~120
+  safetyBufferMinutes: number; // 0~15
+};
+```
+
+기존 요청의 성공·오류 응답 모두 파싱이 끝난 뒤에는 `Deprecation: true`가
+포함됩니다. 제거 시점은 이 전환 릴리스의 사용 현황을 확인한 뒤 별도로
+공지합니다.
 
 응답:
 
@@ -262,7 +290,8 @@ Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이�
 | `REALTIME_UNAVAILABLE` | 일부 도착정보를 정적 노선으로 추정 |
 | `PARTIAL_TRANSIT_DATA` | 일부 TAGO 갱신 실패 |
 | `PARTIAL_CANDIDATE_FAILURE` | 일부 후보만 계산 성공 |
-| `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 제한 안에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
+| `GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET` | 자동 추천 범위에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
+| `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 기존 시간 제약 요청에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
 | `LIMITED_ROUTE_VARIETY` | 충분히 다른 경로가 3개 미만 |
 
 ## 6. 익명 UI 이벤트

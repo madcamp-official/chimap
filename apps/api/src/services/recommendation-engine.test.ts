@@ -5,6 +5,10 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import type { RouteCandidate } from "./candidate-generator.js";
+import {
+  calculateAutomaticMaxExtraMinutes,
+  resolveRecommendationPolicy,
+} from "./calculations.js";
 import { selectRecommendations } from "./recommendation-engine.js";
 import { deduplicateRoutes } from "./route-deduplicator.js";
 
@@ -31,16 +35,13 @@ const request: RecommendationRequest = {
       lat: 36.332338,
     },
   },
-  deadline: "2026-07-25T15:00:00.000Z",
   currentSteps: 5200,
   goalSteps: 8000,
-  maxExtraMinutes: 30,
   walkingMetric: {
     stepLengthMeters: 0.7,
     source: "RESEARCH_ESTIMATE",
     modelVersion: "HAN_2026_V1",
   },
-  safetyBufferMinutes: 3,
 };
 
 function actualRoute(input: {
@@ -125,6 +126,7 @@ describe("건강 경로 추천 선정", () => {
       baseline: fast,
       request,
       departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      policy: resolveRecommendationPolicy(request, fast),
     });
 
     expect(result.recommendations.map((item) => item.type)).toEqual([
@@ -142,14 +144,16 @@ describe("건강 경로 추천 선정", () => {
   });
 
   it("이미 목표를 달성한 사용자는 불필요한 추가 도보 없이 빠른 경로만 본다", () => {
+    const completedRequest: RecommendationRequest = {
+      ...request,
+      currentSteps: 8100,
+    };
     const result = selectRecommendations({
       candidates: [candidate(fast), candidate(balanced), candidate(goal)],
       baseline: fast,
-      request: {
-        ...request,
-        currentSteps: 8100,
-      },
+      request: completedRequest,
       departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      policy: resolveRecommendationPolicy(completedRequest, fast),
     });
 
     expect(result.recommendations).toHaveLength(1);
@@ -160,19 +164,60 @@ describe("건강 경로 추천 선정", () => {
   });
 
   it("추가 허용시간을 넘는 경로를 카드 후보에서 제외한다", () => {
+    const legacyRequest: RecommendationRequest = {
+      ...request,
+      deadline: "2026-07-25T15:00:00.000Z",
+      maxExtraMinutes: 0,
+      safetyBufferMinutes: 3,
+    };
     const result = selectRecommendations({
       candidates: [candidate(fast), candidate(balanced), candidate(goal)],
       baseline: fast,
-      request: {
-        ...request,
-        maxExtraMinutes: 0,
-      },
+      request: legacyRequest,
       departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      policy: resolveRecommendationPolicy(legacyRequest, fast),
     });
 
     expect(result.recommendations.map((item) => item.id)).toEqual([
       "actual-fast-108",
     ]);
+  });
+
+  it("자동 추천 범위를 넘는 운동 후보를 카드에서 제외한다", () => {
+    const outsideAutomaticBudget = actualRoute({
+      id: "outside-auto-budget",
+      routeNo: "999",
+      durationSeconds: fast.durationSeconds + 27 * 60,
+      walkDistanceMeters: 1960,
+    });
+    const result = selectRecommendations({
+      candidates: [candidate(fast), candidate(outsideAutomaticBudget)],
+      baseline: fast,
+      request,
+      departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      policy: resolveRecommendationPolicy(request, fast),
+    });
+
+    expect(result.recommendations.map((item) => item.id)).toEqual([
+      "actual-fast-108",
+    ]);
+    expect(result.goalReachable).toBe(false);
+  });
+
+  it("부족한 도보거리로 자동 추가시간을 계산하고 15~90분으로 제한한다", () => {
+    expect(
+      calculateAutomaticMaxExtraMinutes(
+        { ...request, currentSteps: 8000 },
+        fast,
+      ),
+    ).toBe(15);
+    expect(calculateAutomaticMaxExtraMinutes(request, fast)).toBe(26);
+    expect(
+      calculateAutomaticMaxExtraMinutes(
+        { ...request, currentSteps: 0, goalSteps: 100_000 },
+        fast,
+      ),
+    ).toBe(90);
   });
 
   it("노선·시간·도보·형상이 같은 경로는 하나만 유지한다", () => {

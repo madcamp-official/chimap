@@ -9,29 +9,34 @@ import { type FormEvent, useMemo, useState } from "react";
 
 type WalkingProfileDialogProps = {
   initialProfile?: WalkingProfile;
-  onSave: (profile: WalkingProfile) => void;
+  initialDailyGoalSteps?: number;
+  onSave: (profile: WalkingProfile, dailyGoalSteps: number) => void;
   onCancel?: () => void;
   onClear?: () => void;
 };
 
 export function WalkingProfileDialog({
   initialProfile,
+  initialDailyGoalSteps = 8000,
   onSave,
   onCancel,
   onClear,
 }: WalkingProfileDialogProps) {
   const currentYear = new Date().getFullYear();
-  const [birthYear, setBirthYear] = useState(
-    initialProfile?.birthYear ?? currentYear - 25,
+  const [age, setAge] = useState(
+    initialProfile === undefined ? 25 : currentYear - initialProfile.birthYear,
   );
   const [heightCm, setHeightCm] = useState(initialProfile?.heightCm ?? 170);
   const [weightKg, setWeightKg] = useState(initialProfile?.weightKg ?? 65);
   const [biologicalSex, setBiologicalSex] = useState<
     BiologicalSex | undefined
   >(initialProfile?.biologicalSex);
+  const [dailyGoalSteps, setDailyGoalSteps] = useState(
+    initialDailyGoalSteps,
+  );
   const profile = useMemo(() => {
     const parsed = walkingProfileSchema.safeParse({
-      birthYear,
+      birthYear: currentYear - age,
       heightCm,
       weightKg,
       biologicalSex,
@@ -39,9 +44,12 @@ export function WalkingProfileDialog({
     if (!parsed.success) {
       return undefined;
     }
-    const age = currentYear - parsed.data.birthYear;
     return age >= 18 && age <= 90 ? parsed.data : undefined;
-  }, [biologicalSex, birthYear, currentYear, heightCm, weightKg]);
+  }, [age, biologicalSex, currentYear, heightCm, weightKg]);
+  const dailyGoalValid =
+    Number.isInteger(dailyGoalSteps) &&
+    dailyGoalSteps >= 1 &&
+    dailyGoalSteps <= 100_000;
   const stepLengthMeters =
     profile === undefined
       ? undefined
@@ -51,8 +59,8 @@ export function WalkingProfileDialog({
 
   function submit(event: FormEvent): void {
     event.preventDefault();
-    if (profile !== undefined) {
-      onSave(profile);
+    if (profile !== undefined && dailyGoalValid) {
+      onSave(profile, dailyGoalSteps);
     }
   }
 
@@ -70,7 +78,7 @@ export function WalkingProfileDialog({
           </div>
           <div>
             <span className="eyebrow">개인화 걸음 설정</span>
-            <h2 id="walking-profile-title">내 한 걸음 길이 계산</h2>
+            <h2 id="walking-profile-title">내 건강 경로 설정</h2>
           </div>
           {onCancel === undefined ? null : (
             <button
@@ -85,28 +93,28 @@ export function WalkingProfileDialog({
         </div>
 
         <p className="profile-dialog-description">
-          건강 경로의 도보거리와 예상 걸음 수를 맞추기 위해 신체정보로 한
-          걸음 길이를 추정합니다.
+          신체정보로 한 걸음 길이를 추정하고 하루 목표에 맞는 경로를 자동으로
+          추천합니다.
         </p>
 
         <form onSubmit={submit}>
           <div className="profile-form-grid">
             <div className="field">
-              <label htmlFor="profile-birth-year">출생연도</label>
+              <label htmlFor="profile-age">만 나이</label>
               <div className="number-field">
                 <input
-                  id="profile-birth-year"
+                  id="profile-age"
                   type="number"
                   inputMode="numeric"
-                  min={currentYear - 90}
-                  max={currentYear - 18}
+                  min={18}
+                  max={90}
                   required
-                  value={birthYear}
+                  value={age}
                   onChange={(event) =>
-                    setBirthYear(Number(event.target.value))
+                    setAge(Number(event.target.value))
                   }
                 />
-                <span>년</span>
+                <span>세</span>
               </div>
             </div>
             <div className="field">
@@ -126,6 +134,24 @@ export function WalkingProfileDialog({
                   }
                 />
                 <span>cm</span>
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="profile-daily-goal">하루 목표 걸음</label>
+              <div className="number-field">
+                <input
+                  id="profile-daily-goal"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={100000}
+                  required
+                  value={dailyGoalSteps}
+                  onChange={(event) =>
+                    setDailyGoalSteps(Number(event.target.value))
+                  }
+                />
+                <span>걸음</span>
               </div>
             </div>
             <div className="field">
@@ -197,8 +223,8 @@ export function WalkingProfileDialog({
 
           <p className="profile-privacy-note">
             <ShieldCheck aria-hidden="true" />
-            입력값은 이 브라우저에만 저장되며 서버나 데이터베이스에는
-            전송되지 않습니다.
+            신체정보는 이 브라우저에만 저장되며 서버에는 계산된 한 걸음
+            길이와 현재·목표 걸음만 전송됩니다.
           </p>
 
           <div className="profile-dialog-actions">
@@ -214,7 +240,7 @@ export function WalkingProfileDialog({
             <button
               type="submit"
               className="primary-button"
-              disabled={profile === undefined}
+              disabled={profile === undefined || !dailyGoalValid}
             >
               이 값으로 시작
             </button>

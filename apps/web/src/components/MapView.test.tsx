@@ -105,8 +105,8 @@ describe("MapView", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByLabelText("지도와 경로 데이터 제공자"),
-    ).toHaveTextContent("NAVER 지도+KAKAO 검색/도보+TAGO 버스");
+      screen.queryByLabelText("지도와 경로 데이터 제공자"),
+    ).not.toBeInTheDocument();
   });
 
   it("경로 선택 전에는 다음 행동을 설명한다", () => {

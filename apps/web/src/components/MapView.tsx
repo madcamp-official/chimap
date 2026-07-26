@@ -716,7 +716,7 @@ export function MapView({
         new maps.LatLng(Math.max(...latitudes), Math.max(...longitudes)),
       );
       map.fitBounds(bounds, {
-        top: 128,
+        top: 54,
         right: 54,
         bottom: 54,
         left: 54,
@@ -809,13 +809,6 @@ export function MapView({
         </div>
       ) : null}
 
-      <div className="map-provider-chip" aria-label="지도와 경로 데이터 제공자">
-        <span><strong>NAVER</strong> 지도</span>
-        <i aria-hidden="true">+</i>
-        <span><strong>KAKAO</strong> 검색/도보</span>
-        <i aria-hidden="true">+</i>
-        <span><strong>TAGO</strong> 버스</span>
-      </div>
       <div className="map-legend" aria-label="지도 경로 범례">
         <span><i className="legend-bus" />버스</span>
         <span><i className="legend-subway" />지하철</span>

@@ -1,9 +1,11 @@
 import {
   storedPreferencesV1Schema,
   storedPreferencesV2Schema,
+  storedPreferencesV3Schema,
   storedTripV1Schema,
   type StoredPreferencesV1,
   type StoredPreferencesV2,
+  type StoredPreferencesV3,
   type StoredTripV1,
 } from "@chimap/contracts";
 
@@ -48,8 +50,16 @@ function safelyWrite(
 
 export function loadPreferences(
   storage = browserStorage(),
-): StoredPreferencesV1 | StoredPreferencesV2 | undefined {
+):
+  | StoredPreferencesV1
+  | StoredPreferencesV2
+  | StoredPreferencesV3
+  | undefined {
   const value = safelyRead(PREFERENCES_STORAGE_KEY, storage);
+  const latest = storedPreferencesV3Schema.safeParse(value);
+  if (latest.success) {
+    return latest.data;
+  }
   const current = storedPreferencesV2Schema.safeParse(value);
   if (current.success) {
     return current.data;
@@ -59,10 +69,10 @@ export function loadPreferences(
 }
 
 export function savePreferences(
-  preferences: StoredPreferencesV2,
+  preferences: StoredPreferencesV3,
   storage = browserStorage(),
 ): boolean {
-  const parsed = storedPreferencesV2Schema.safeParse(preferences);
+  const parsed = storedPreferencesV3Schema.safeParse(preferences);
   return parsed.success
     ? safelyWrite(PREFERENCES_STORAGE_KEY, parsed.data, storage)
     : false;
@@ -76,6 +86,7 @@ export function clearPreferences(
   }
   try {
     storage.removeItem(PREFERENCES_STORAGE_KEY);
+    storage.removeItem(LAST_TRIP_STORAGE_KEY);
     return true;
   } catch {
     return false;

@@ -49,10 +49,11 @@ React Web
   │    숙련도·안내 밀도·모션·지표 동의(localStorage)
   ├─ ExperienceSettingsDialog
   ├─ WalkingProfileDialog
-  │    필수 출생연도/신장/체중/생물학적 성별
+  │    필수 만 나이/신장/체중/생물학적 성별/하루 목표
+  ├─ HeaderStepSummary
+  │    현재 걸음 수정/목표/개인화 한 걸음
   ├─ PlaceCombobox                │
   │    캠퍼스 중심/주소/출입구    │
-  ├─ GoalForm                     │
   ├─ RecommendationCard          │ HTTPS
   ├─ RouteDetails                │
   └─ MapView                     │
@@ -195,18 +196,19 @@ RecommendationRequest
 
 - 검색어와 장소 검색 결과
 - GPS·출발지·목적지
-- 걸음 수·목표·마감시간
+- 걸음 수·목표와 자동 추천 요청
 - 출생연도·신장·체중·생물학적 성별 원본 프로필
 - 추천 요청·응답
 - 실시간 버스 도착과 차량 위치
 - 공급자 원문과 API 키
 
 검색·경로·실시간 자료는 프로세스 메모리 TTL 후 제거합니다. 개인화 걸음
-프로필과 사용자 환경설정은 브라우저 localStorage version 2 계약으로만
+프로필과 사용자 환경설정은 브라우저 localStorage version 3 계약으로만
 저장하고, API에는 `stepLengthMeters`, `RESEARCH_ESTIMATE`,
 `HAN_2026_V1`로 구성된 파생 `walkingMetric`만 전달합니다. version 1
-선호는 읽기 호환만 유지하고 개인화 온보딩을 다시 요구하며, 새 저장은
-version 2만 사용합니다. 인트로 완료 상태는 sessionStorage에 저장합니다.
+선호는 개인화 온보딩을 다시 요구하고 version 2는 프로필·목표·장소를
+이전합니다. 새 저장은 version 3만 사용하며 현재 걸음은 한국 날짜가 같은
+동안만 복구합니다. 인트로 완료 상태는 sessionStorage에 저장합니다.
 
 UI 숙련도는 별도 `UiExperienceStateV1` localStorage에만 저장합니다.
 추천 성공 횟수로 보조 설명 밀도만 파생하며 서버 사용자 프로필과 결합하지

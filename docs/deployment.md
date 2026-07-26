@@ -4,8 +4,8 @@
 origin은 `http://127.0.0.1:3000`입니다. 명령은 저장소 루트에서
 실행합니다.
 
-Route Pulse UI와 익명 UI 이벤트는 현재 작업 트리 기준으로 공개 배포 전입니다.
-아래 UI smoke와 asset 확인은 새 이미지 승격 시 반드시 실행해야 합니다.
+자동 건강 경로 UX와 Route Pulse UI는 2026-07-26 15:12 KST 공개 배포됐습니다.
+아래 UI smoke와 asset 확인은 이후 모든 이미지 승격에서도 반복합니다.
 
 ## 1. 사전 조건
 
@@ -288,27 +288,33 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 
 1. `GET /api/v1/health`
 2. `GET /api/v1/readiness`
-3. 최초 이용 개인화에서 출생연도·신장·체중·생물학적 성별 필수 확인
+3. 최초 이용 개인화에서 만 나이·신장·체중·생물학적 성별·하루 목표 필수 확인
 4. 직접 한 걸음 길이 입력·20m 보행 측정 필드가 없는지 확인
-5. KAIST 장소 검색과 명시 선택
-6. 대전역 검색과 명시 선택
-7. 8,000보 목표에서 조기 하차 우선 추천과 목표 오차 확인
-8. 역지오코딩
-9. NAVER 지도 경로선
-10. 차량 마커 수가 선택 버스 구간 수 이하
-11. localStorage v2 저장·새로고침 복구
-12. 1440/768/390/320px overflow
-13. 루트 `data-ui-state`가 idle→editing-place→ready→calculating→results→
+5. 헤더 현재 걸음은 Enter·포커스 이탈에 반영되고 잘못된 값은 이전 값 유지
+6. 왼쪽 패널에 출발지·도착지·위치 교환·현재 위치·CTA만 표시되고 지도 위
+   검색 패널과 공급자 칩이 없는지 확인
+7. KAIST 장소 검색과 명시 선택
+8. 대전역 검색과 명시 선택
+9. 새 추천 요청 body에 `deadline`, `maxExtraMinutes`,
+   `safetyBufferMinutes`가 없는지 확인
+10. 8,000보 목표에서 조기 하차 우선 추천과 목표 오차 확인
+11. 역지오코딩과 NAVER 지도 경로선
+12. 차량 마커 수가 선택 버스 구간 수 이하
+13. 왼쪽 패널 최하단 데이터 제공 안내와 NAVER SDK 기본 저작권 표시 확인
+14. localStorage v3 프로필·장소·당일 현재 걸음 저장과 새로고침 복구,
+    v2 프로필·목표·장소 이전
+15. 1440/768/390/320px overflow
+16. 루트 `data-ui-state`가 idle→editing-place→ready→calculating→results→
     route-selected로 전환되고 오류 시 `error`인지 확인
-14. 추천 성공 0~2회 `guided`, 3회부터 `compact`이며 설정에서 자동/자세히/
+17. 추천 성공 0~2회 `guided`, 3회부터 `compact`이며 설정에서 자동/자세히/
     간결하게를 바꿔도 주요 컨트롤 위치가 유지되는지 확인
-15. OS 또는 서비스의 동작 줄이기에서 드로잉·슬라이드·펄스가 제거되는지 확인
-16. 계산 중 가상 단계·퍼센트 없이 단일 요청 표시가 보이고 8초 뒤 지연
+18. OS 또는 서비스의 동작 줄이기에서 드로잉·슬라이드·펄스가 제거되는지 확인
+19. 계산 중 가상 단계·퍼센트 없이 단일 요청 표시가 보이고 8초 뒤 지연
     안내만 추가되는지 확인
-17. 지도 경로 opacity가 비선택 0.18, hover/focus 0.55, 선택 NAVER 0.95·
+20. 지도 경로 opacity가 비선택 0.18, hover/focus 0.55, 선택 NAVER 0.95·
     SVG fallback 1.0인지 확인
-18. 익명 정보 동의 전·거부·철회 시 UI 이벤트 요청이 0건인지 확인
-19. 동의 후 허용 이벤트가 `204 No Content`이고 Prometheus
+21. 익명 정보 동의 전·거부·철회 시 UI 이벤트 요청이 0건인지 확인
+22. 동의 후 허용 이벤트가 `204 No Content`이고 Prometheus
     `chimap_ui_events_total`이 증가하는지 확인
 
 자동 E2E:
@@ -336,10 +342,9 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 
 두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
-수동 실행합니다. 마지막으로 확인된 CI는 구현 commit `b294a4d`의 run
-`30165571376`이며 두 job이 모두 성공했습니다. 현재 브랜치 HEAD는
-`640a5a4`이고 Route Pulse·문서 변경은 그 위의 미커밋 작업이므로 새
-commit의 CI가 별도로 필요합니다. 기본 브랜치 병합과 보호 규칙은
+수동 실행합니다. 마지막으로 완료된 원격 CI는 구현 commit `b294a4d`의 run
+`30165571376`이며 두 job이 모두 성공했습니다. 자동 건강 경로 UX commit은
+push 뒤 새 CI 결과를 별도로 확인해야 합니다. 기본 브랜치 병합과 보호 규칙은
 [사용자 작업](../needs.md)을 따릅니다.
 
 ## 12. 공개 번들 비밀값 검사

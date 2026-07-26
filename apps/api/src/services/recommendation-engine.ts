@@ -9,6 +9,7 @@ import {
   calculateRemainingSteps,
   evaluateCandidate,
   type EvaluatedCandidate,
+  type RecommendationPolicy,
 } from "./calculations.js";
 import type { RouteCandidate } from "./candidate-generator.js";
 import { deduplicateRoutes } from "./route-deduplicator.js";
@@ -27,7 +28,7 @@ const TYPE_COPY: Record<
 > = {
   FAST: {
     title: "빠른 경로",
-    reason: "마감시간을 지키면서 가장 빠르게 도착해요.",
+    reason: "지금 출발 기준 가장 빠르게 도착해요.",
   },
   BALANCED: {
     title: "균형 경로",
@@ -128,6 +129,7 @@ export function selectRecommendations(input: {
   baseline: NormalizedRoute;
   request: RecommendationRequest;
   departureAt: Date;
+  policy: RecommendationPolicy;
 }): RecommendationSelection {
   const evaluated = input.candidates
     .map((candidate) =>
@@ -136,6 +138,7 @@ export function selectRecommendations(input: {
         input.baseline,
         input.request,
         input.departureAt,
+        input.policy,
       ),
     )
     .filter(

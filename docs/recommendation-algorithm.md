@@ -1,7 +1,7 @@
 # 추천 알고리즘
 
-추천은 TAGO 버스 경로와 Kakao 도보 경로를 조합해 마감시간 안에서 더 걸을
-수 있는 최대 3개의 서로 다른 실제 경로를 선택합니다.
+추천은 TAGO 버스 경로와 Kakao 도보 경로를 조합해 사용자의 남은 하루 목표와
+기본 경로에서 자동 계산한 시간 범위 안에서 최대 3개의 실제 경로를 선택합니다.
 
 이 문서는 현재 `RecommendationService`, 후보 생성기와 공유 계약을 기준으로
 합니다. UI의 guided/compact 전환과 익명 이벤트는 추천 점수·후보 생성·API
@@ -13,19 +13,14 @@
 | --- | --- |
 | 현재 걸음 | 0~100,000 |
 | 하루 목표 | 1~100,000 |
-| 최대 추가시간 | 0~120분 |
 | 개인화 한 걸음 길이 | 0.3~1.2m, `HAN_2026_V1` |
-| 안전 여유시간 | 0~15분 |
-| 마감시간 | 현재보다 미래, 최대 6시간 이내 |
 
 장소는 검색 결과를 사용자가 선택한 경우에만 입력으로 인정합니다. 출발지와
 목적지가 50m 미만이면 `LOCATIONS_TOO_CLOSE`로 거절합니다.
 
-유효 마감시간:
-
-```text
-effectiveDeadline = deadline - safetyBufferMinutes
-```
+기존 클라이언트의 마감시간·최대 추가시간·안전 여유시간 포함 요청도 한 전환
+릴리스 동안 허용합니다. 이 요청에만 기존 범위와 마감 검증을 적용하고 응답에
+`Deprecation: true`를 표시합니다.
 
 ## 2. 버스 baseline 생성
 
@@ -88,11 +83,10 @@ Directions의 다중 경유지에 전달해 받은 도로 vertex입니다. 한 �
 
 ## 4. 개인화 한 걸음 길이
 
-브라우저는 최초 이용 시 출생연도·신장·체중·생물학적 성별을 필수로
-입력받습니다. 계정은 만들지 않으며 원본 신체정보는 브라우저 localStorage에만
-version 2로 저장합니다. 직접 한 걸음 길이를 입력하거나 20m 보행 결과를
-받는 경로는 없습니다. 생물학적 성별을 선택하기 전에는 프로필을 저장할 수
-없습니다.
+브라우저는 최초 이용 시 만 나이·신장·체중·생물학적 성별·하루 목표를
+필수로 입력받습니다. 만 나이는 현재 연도 기준 출생연도로 변환합니다. 계정은
+만들지 않으며 원본 신체정보는 브라우저 localStorage version 3에만 저장합니다.
+직접 한 걸음 길이를 입력하거나 20m 보행 결과를 받는 경로는 없습니다.
 
 ```text
 stepLengthCm =
@@ -111,7 +105,8 @@ stepLengthCm =
 계약 범위는 만 18~90세, 신장 120~220cm, 체중 30~200kg입니다. BMI
 30 이상이면 UI가 적용 연구의 중심 범위를 벗어날 수 있다는 안내를
 표시합니다. 기존 localStorage version 1은 읽기만 가능하고 필수 프로필이
-없으므로 온보딩을 다시 거친 뒤 version 2로 저장합니다.
+없으므로 온보딩을 다시 거칩니다. version 2는 프로필·목표·마지막 장소를
+보존해 version 3으로 이전하고 현재 걸음은 0으로 시작합니다.
 
 API에는 원본 프로필 대신 다음 파생값만 보냅니다.
 
@@ -158,8 +153,8 @@ toleranceSteps = round(remainingSteps × 0.05)
 abs(routeSteps - remainingSteps) <= toleranceSteps
 ```
 
-조기 하차를 최우선으로 하되 범위 안의 후보가 없으면 시간 제약 안에서 절대
-걸음 오차가 가장 작은 경로를 반환하고 부족·초과량을 표시합니다.
+조기 하차를 최우선으로 하되 범위 안의 후보가 없으면 자동 시간 예산 안에서
+절대 걸음 오차가 가장 작은 경로를 반환하고 부족·초과량을 표시합니다.
 
 ## 6. 외부 호출 예산
 
@@ -173,7 +168,7 @@ abs(routeSteps - remainingSteps) <= toleranceSteps
 | 동시성 | 3 |
 | 추천 전체 timeout | 20초 |
 
-## 7. 마감·추가시간 필터
+## 7. 자동 시간 예산
 
 후보 도착:
 
@@ -181,14 +176,18 @@ abs(routeSteps - remainingSteps) <= toleranceSteps
 arrivalAt = departureAt + route.durationSeconds
 ```
 
-유효 후보:
+자동 요청의 부족 도보거리와 허용 추가시간:
 
 ```text
-arrivalAt <= effectiveDeadline
-routeDuration <= baselineDuration + maxExtraMinutes
+missingWalkMeters = max(targetWalkMeters - baselineWalkMeters, 0)
+missingWalkMinutes = missingWalkMeters / 1.2835m/s / 60
+autoExtraMinutes = clamp(ceil(missingWalkMinutes × 1.25 + 5), 15, 90)
 ```
 
-조건을 만족하는 후보가 없으면 `NO_ROUTE_WITHIN_DEADLINE`입니다.
+자동 요청은 절대 마감시간을 적용하지 않고
+`routeDuration <= baselineDuration + autoExtraMinutes`인 후보만 사용합니다.
+기존 요청만 `deadline - safetyBufferMinutes`와 `maxExtraMinutes`를 종전대로
+적용하며 조건을 만족하는 후보가 없으면 `NO_ROUTE_WITHIN_DEADLINE`입니다.
 
 ## 8. 걸음과 점수
 
@@ -243,6 +242,10 @@ BALANCED를 가리키며 UI가 이 경로를 처음부터 선택합니다. 목�
 TAGO 실시간 도착이 없으면 `REALTIME_UNAVAILABLE`, 주변 정류장 갱신이
 부분 실패하면 `PARTIAL_TRANSIT_DATA`, 충분히 다른 결과가 3개 미만이면
 `LIMITED_ROUTE_VARIETY`를 반환합니다.
+
+자동 시간 예산 안에서 목표 ±5% 후보가 없으면
+`GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET`, 기존 시간 제약 요청에서는
+`GOAL_UNREACHABLE_WITHIN_CONSTRAINTS`를 반환합니다.
 
 공급자 경로가 없는 직선 거리 결과를 생성하지 않습니다. 지도 SDK가
 실패하는 경우에만 이미 성공한 추천 응답 좌표를 SVG로 다시 그립니다.

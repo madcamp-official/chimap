@@ -22,10 +22,13 @@ function createWrapper() {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   sessionStorage.setItem(INTRO_SESSION_KEY, "1");
   useTripStore.setState({
     origin: undefined,
     destination: undefined,
+    currentSteps: 0,
+    goalSteps: 8000,
     walkingProfile: {
       birthYear: 2000,
       heightCm: 170,
@@ -35,6 +38,24 @@ beforeEach(() => {
     selectedRouteId: undefined,
   });
 });
+
+const origin = {
+  id: "origin",
+  name: "한국과학기술원",
+  address: "대전 유성구 구성동 23",
+  roadAddress: "대전 유성구 대학로 291",
+  category: "대학교",
+  location: { lng: 127.359293, lat: 36.369725 },
+};
+
+const destination = {
+  id: "destination",
+  name: "대전역",
+  address: "대전 동구 정동 1-1",
+  roadAddress: "대전 동구 중앙로 215",
+  category: "기차역",
+  location: { lng: 127.434217, lat: 36.332338 },
+};
 
 describe("현재 위치 출발지 UX", () => {
   it("주소를 찾지 못해도 좌표를 출발지로 유지하고 이유를 안내한다", async () => {
@@ -172,5 +193,36 @@ describe("Route Pulse 화면 설정과 동의 경계", () => {
       "data-chimap-reduced-motion",
       "true",
     );
+  });
+});
+
+describe("자동 건강 경로 입력", () => {
+  it("왼쪽 검색 폼과 헤더 걸음만 사용해 시간 필드 없는 요청을 보낸다", async () => {
+    useTripStore.setState({ origin, destination, currentSteps: 5200 });
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />, { wrapper: createWrapper() });
+
+    expect(document.querySelector(".map-column .route-search-form")).toBeNull();
+    expect(
+      screen.getByRole("form", { name: "출발지와 목적지 검색" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/데이터 제공: NAVER 지도/u)).toBeInTheDocument();
+    expect(screen.queryByText("얼마나 더 걸어볼까요?")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "건강 경로 찾기" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, request] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toContain("/api/v1/recommendations");
+    const body = JSON.parse(String(request.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ currentSteps: 5200, goalSteps: 8000 });
+    expect(body).not.toHaveProperty("deadline");
+    expect(body).not.toHaveProperty("maxExtraMinutes");
+    expect(body).not.toHaveProperty("safetyBufferMinutes");
   });
 });

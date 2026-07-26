@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { WalkingProfileDialog } from "./WalkingProfileDialog.js";
 
 describe("개인화 걸음 설정", () => {
-  it("생물학적 성별을 필수로 받고 연구식 보폭을 저장한다", () => {
+  it("만 나이·성별·하루 목표를 필수로 받고 연구식 보폭을 저장한다", () => {
     const onSave = vi.fn();
     render(<WalkingProfileDialog onSave={onSave} />);
 
@@ -15,11 +15,14 @@ describe("개인화 걸음 설정", () => {
     fireEvent.click(screen.getByLabelText("여성"));
     fireEvent.click(submit);
 
-    expect(onSave).toHaveBeenCalledWith({
-      birthYear: new Date().getFullYear() - 25,
-      heightCm: 170,
-      weightKg: 65,
-      biologicalSex: "FEMALE",
-    });
+    expect(onSave).toHaveBeenCalledWith(
+      {
+        birthYear: new Date().getFullYear() - 25,
+        heightCm: 170,
+        weightKg: 65,
+        biologicalSex: "FEMALE",
+      },
+      8000,
+    );
   });
 });
