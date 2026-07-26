@@ -20,6 +20,3 @@ data
 *.tsbuildinfo
 README.md
 docs
-plan.md
-IA.md
-db_schema.md

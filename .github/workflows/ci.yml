@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           if grep -RniE '\b(mock|fake|dummy|demo)\b' \
-            apps packages scripts docs README.md IA.md plan.md db_schema.md \
+            apps packages scripts docs README.md \
             Dockerfile .env.example package.json \
             --exclude-dir=node_modules --exclude-dir=dist \
             --exclude='*.tsbuildinfo'; then

@@ -256,7 +256,6 @@ Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
 - [구현·운영 현황](./docs/current-state.md)
 - [사용자가 완료할 운영 작업](./needs.md)
 - [사용자 경험과 화면 상호작용](./docs/user-experience.md)
-- [구현 계획과 완료 상태](./plan.md)
 - [시스템 아키텍처](./docs/architecture.md)
 - [API 레퍼런스](./docs/api-reference.md)
 - [데이터베이스 스키마와 저장 계약](./docs/database-schema.md)
