@@ -2,8 +2,15 @@
 
 현재 공개 앱, PostgreSQL/PostGIS, TAGO 정기 동기화, Prometheus,
 Alertmanager와 알림 릴레이는 배포되어 있습니다. 2026-07-26 01:26 KST
-기준 relay의 구성 지표는 `0`이고 `ChimapAlertDeliveryNotConfigured`만
-발생 중입니다. 아래 1번을 완료하면 외부 장애 알림까지 활성화됩니다.
+전체 운영 점검 기준 relay의 구성 지표는 `0`이고
+`ChimapAlertDeliveryNotConfigured`만 발생 중입니다. 공개 health/readiness는
+09:40 KST에도 정상임을 재확인했습니다. 아래 1번을 완료하면 외부 장애
+알림까지 활성화됩니다.
+
+Route Pulse UI와 익명 UI 이벤트는 현재 HEAD `640a5a4` 위 작업 트리에만
+있고 공개 asset에는 아직 없습니다. 이 문서의 2번 릴리스 절차에는 해당
+변경을 commit·push·CI한 뒤 새 이미지를 배포하고 공개 E2E를 다시 실행하는
+과정이 포함됩니다.
 
 ## 1. 외부 장애 알림 webhook 연결 — 필수
 
@@ -36,18 +43,25 @@ docker compose up -d --no-build --force-recreate alert-relay
 ## 2. 기본 브랜치 병합과 공개 E2E — 릴리스 시 필요
 
 개인화 한 걸음 길이, 조기 하차 우선과 지도 도보 표현까지 포함한
-`b294a4d`가 `feat/tago-transit`에 push됐고 CI run `30165571376`의 두
-job이 모두 통과했습니다. GitHub 기본 브랜치 `main`에 반영하려면 다음을
-수행해 주세요.
+`b294a4d`는 `feat/tago-transit`에 push됐고 CI run `30165571376`의 두
+job이 모두 통과했습니다. 이후 HEAD는 `640a5a4`이며 Route Pulse·문서
+변경은 아직 미커밋이므로 이 변경을 포함한 새 commit에는 별도 CI가
+필요합니다. GitHub 기본 브랜치 `main`에 반영하려면 다음을 수행해 주세요.
 
-1. `feat/tago-transit`에서 `main`으로 Pull Request를 만들고 검토 후
+1. 현재 변경을 검토해 commit하고 `feat/tago-transit`에 push합니다.
+2. 새 commit의 품질·PostGIS CI 두 job이 통과했는지 확인합니다.
+3. 새 이미지를 운영에 승격하고 공개 asset의 `route-pulse-v1` marker를
+   확인합니다.
+4. `feat/tago-transit`에서 `main`으로 Pull Request를 만들고 검토 후
    병합합니다.
-2. 병합 뒤 Actions의 `Public live E2E`를 수동 실행합니다.
-3. 실제 지도·공급자 호출을 사용하는 이 workflow의 성공을 확인합니다.
+5. 병합 뒤 Actions의 `Public live E2E`를 수동 실행합니다.
+6. 실제 지도·공급자 호출과 Route Pulse 상태·설정·동의·반응형 smoke가
+   모두 성공하는지 확인합니다.
 
 `workflow_dispatch` workflow는 파일이 기본 브랜치에 들어간 뒤 Actions에서
-수동 실행할 수 있습니다. 같은 시나리오는 현재 서버에서 직접 실행해 2개
-모두 통과한 상태입니다.
+수동 실행할 수 있습니다. 기존 공개 UI 시나리오 2개는 현재 서버에서 직접
+실행해 통과했지만, Route Pulse 항목은 공개 asset 반영 뒤 별도 승인해야
+합니다.
 
 ## 3. GitHub 보호 규칙 — 권장
 

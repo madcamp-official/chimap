@@ -45,11 +45,11 @@ git diff --check
 
 현재 일반 test 구성:
 
-- contracts: 6개
+- contracts: 7개
 - alert-relay: 3개
-- API: 40개
-- web: 25개
-- 합계: 74개
+- API: 42개
+- web: 31개
+- 합계: 83개
 
 PostgreSQL 전용 5개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
 건너뜁니다.
@@ -217,7 +217,41 @@ UI 전체 흐름:
 
 배포 gate에서만 실행하고 외부 API 부하 테스트로 사용하지 않습니다.
 
-## 9. 배포 보안 검사
+## 9. Route Pulse UI 상태·접근성
+
+현재 결정적 테스트가 직접 보장하는 범위는 UI 경험 상태의 저장·손상 복구,
+추천 성공 3회 threshold, 학습 초기화 시 동의 보존, 설정에서 compact·동작
+줄이기 선택, 8초 지연 문구, 동의 전 요청 차단과 허용 뒤 이벤트 전송입니다.
+
+다음은 배포 전 수동·브라우저 E2E까지 포함해 확인할 전체 release gate입니다.
+
+- `idle/editing-place/ready/calculating/results/route-selected/error` 상태
+  조합의 `data-ui-state`와 레이아웃 안정성
+- 추천 성공 0~2회 guided, 3회 compact 전환과 되돌리기·재접속 복구
+- 자동/자세히/간결하게 설정에서도 주요 컨트롤 위치 불변
+- OS와 로컬 `동작 줄이기` 각각에서 드로잉·슬라이드·펄스 제거
+- 계산 화면이 가상 단계나 퍼센트를 만들지 않고 8초 지연만 안내
+- 결과 카드 80ms 간격, 선택/hover/focus 지도 경로
+  NAVER 0.95/0.55/0.18과 SVG 1.0/0.55/0.18
+- 키보드만으로 검색·경로 선택·상세·설정 변경
+- 텍스트 WCAG AA와 의미 있는 선·포커스·선택 3:1 이상
+- 모바일·데스크톱 상태 전환에서 레이아웃 이동과 가로 overflow 없음
+
+## 10. 익명 이벤트 동의 경계
+
+계약·API·웹 단위 테스트는 동의 전/거부 차단, 허용 뒤 제한 payload,
+추가 개인정보 필드 거절, 204 응답과 Prometheus enum label을 자동 검증합니다.
+철회 뒤 네트워크 요청 0건과 공개 배포 bundle 동작은 release smoke에서 다시
+확인합니다.
+
+- 동의 전·거부·철회 상태에서 `/api/v1/ui-events` 요청 0건
+- 허용 후에만 `planner_viewed` 등 allowlist 이벤트 전송
+- duration은 네 bucket만 허용하고 정확한 시간값 거절
+- 검색어·좌표·장소/노선 ID·신체정보·세션/사용자 ID 추가 시 HTTP 400
+- 응답 `204 No Content`, 분석 로그에는 body와 IP 없음
+- Prometheus label에는 허용된 enum만 존재
+
+## 11. 배포 보안 검사
 
 - `.env` Git ignore
 - 추적 파일 비밀값 검색
@@ -226,7 +260,7 @@ UI 전체 흐름:
 - API 로그에 query string·좌표·키·원문 없음
 - Docker image에 root `.env` 없음
 
-## 10. 운영 자동화와 모니터링
+## 12. 운영 자동화와 모니터링
 
 - 백업 파일 비어 있지 않음, `pg_restore --list`, SHA-256 일치
 - 최신 백업을 `template0` 기반 별도 PostGIS 18 DB에 전부 복원
@@ -241,7 +275,7 @@ UI 전체 흐름:
 - 외부 URL 미설정 시 relay 구성 지표 `0`과 설정 필요 경보 확인
 - 지표와 로그에 검색어·좌표·키·원문 없음
 
-## 11. 폐기 대상 잔존 검사
+## 13. 폐기 대상 잔존 검사
 
 lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기한 데이터
 경로와 실행 변수가 다시 들어오지 않았는지 검사합니다. 검사 대상은
@@ -251,14 +285,21 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 삭제된 파일 경로는 Git status에 삭제 항목으로 보일 수 있지만 작업 파일
 내용과 build asset에는 남지 않아야 합니다.
 
-## 12. 현재 검증 기록
+## 14. 현재 검증 기록
 
-2026-07-26 01:26 KST:
+2026-07-26 10:00 KST 현재 작업 트리 검증:
 
 - typecheck 통과
-- 결정적 테스트 74개 통과
-- PostGIS 통합 테스트 5개 통과
-- production build 통과
+- 결정적 테스트 83개 통과: contracts 7, alert-relay 3, API 42, web 31
+- production build 통과(Vite 단일 JS chunk 약 632KB 경고만 존재)
+- format check와 `git diff --check` 통과
+- 1440px·390px의 idle·설정·calculating 화면과 가로 overflow 수동 확인
+- `DATABASE_TEST_URL` 미지정으로 이 일반 실행에서는 PostGIS 5개 skip
+- Route Pulse 변경은 아직 공개 asset에 미배포
+
+2026-07-26 01:26 KST 전체 공개·운영 스냅샷:
+
+- PostgreSQL/PostGIS 통합 테스트 5개 통과
 - 공개 strict 지도 E2E 2개 통과
 - KAIST→대전역 8,000보 요청에서 조기 하차 7,995보, 목표 오차 -5보 확인
 - KAIST 본원 중심→대전 갤러리아 HTTP 200, 추천 3건
@@ -272,5 +313,9 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - Alertmanager 0.32.1 ready, 격리 수신처 relay HTTP 전달 확인
 - 외부 운영 채널은 webhook 입력 전이며 구성 필요 경보 확인
 - 구현 commit `b294a4d`의 GitHub CI run `30165571376` 품질·PostGIS 두 job 성공
+
+2026-07-26 09:40 KST에 공개 health `ok`, readiness `ready`와 같은 교통
+통계를 다시 확인했습니다. 현재 Git HEAD는 `640a5a4`이며 그 이후 작업 트리의
+Route Pulse·문서 변경은 위 GitHub CI와 공개 E2E 기록의 검증 범위가 아닙니다.
 
 새 배포 후 이 절을 갱신하거나 별도 release 기록으로 이동합니다.

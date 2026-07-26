@@ -21,6 +21,8 @@ type PlaceComboboxProps = {
   center?: Coordinate;
   onChange: (place: Place | undefined) => void;
   search?: typeof searchPlaces;
+  onEditingChange?: (editing: boolean) => void;
+  onSearchStart?: () => void;
 };
 
 export function PlaceCombobox({
@@ -30,6 +32,8 @@ export function PlaceCombobox({
   center,
   onChange,
   search = searchPlaces,
+  onEditingChange,
+  onSearchStart,
 }: PlaceComboboxProps) {
   const inputId = useId();
   const listboxId = `${inputId}-listbox`;
@@ -109,6 +113,7 @@ export function PlaceCombobox({
 
   const resolve = useCallback(() => {
     const normalized = query.trim();
+    onSearchStart?.();
     if (normalized.length < 2) {
       setOpen(true);
       return;
@@ -119,7 +124,7 @@ export function PlaceCombobox({
       query: normalized,
       sequence: (current?.sequence ?? 0) + 1,
     }));
-  }, [query]);
+  }, [onSearchStart, query]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     if (event.key === "ArrowDown") {
@@ -172,9 +177,20 @@ export function PlaceCombobox({
           aria-activedescendant={activeId}
           placeholder={placeholder}
           value={query}
-          onFocus={() => setOpen(true)}
-          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onFocus={() => {
+            setOpen(true);
+            onEditingChange?.(true);
+          }}
+          onBlur={() =>
+            window.setTimeout(() => {
+              setOpen(false);
+              onEditingChange?.(false);
+            }, 120)
+          }
           onChange={(event) => {
+            if (query.trim().length === 0 && event.target.value.length > 0) {
+              onSearchStart?.();
+            }
             setQuery(event.target.value);
             setOpen(true);
             setActiveIndex(-1);

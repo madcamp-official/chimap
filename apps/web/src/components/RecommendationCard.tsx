@@ -6,6 +6,7 @@ import {
   Footprints,
   TrainFront,
 } from "lucide-react";
+import type { CSSProperties, FocusEvent } from "react";
 
 import {
   formatDistance,
@@ -20,6 +21,8 @@ type RecommendationCardProps = {
   detailsId: string;
   onSelect: () => void;
   onToggleDetails: () => void;
+  resultIndex?: number;
+  onPreviewChange?: (active: boolean) => void;
 };
 
 const TYPE_META = {
@@ -99,6 +102,8 @@ export function RecommendationCard({
   detailsId,
   onSelect,
   onToggleDetails,
+  resultIndex = 0,
+  onPreviewChange,
 }: RecommendationCardProps) {
   const meta = TYPE_META[recommendation.type];
   const completionPercent = Math.round(
@@ -111,10 +116,29 @@ export function RecommendationCard({
   );
   const routeLegs = compactLegs(recommendation.legs);
   const routeDescription = routeLegs.map((leg) => leg.label).join(", ");
+  const goalComplete = completionPercent >= 100;
+
+  function handleBlur(event: FocusEvent<HTMLElement>): void {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      onPreviewChange?.(false);
+    }
+  }
 
   return (
     <article
-      className={`recommendation-card ${selected ? "is-selected" : ""}`}
+      className={`recommendation-card ${selected ? "is-selected" : ""} ${
+        selected && goalComplete ? "is-goal-complete" : ""
+      }`}
+      style={
+        {
+          "--result-index": resultIndex,
+          "--result-delay": `${resultIndex * 80}ms`,
+        } as CSSProperties
+      }
+      onMouseEnter={() => onPreviewChange?.(true)}
+      onMouseLeave={() => onPreviewChange?.(false)}
+      onFocusCapture={() => onPreviewChange?.(true)}
+      onBlurCapture={handleBlur}
     >
       <button
         type="button"

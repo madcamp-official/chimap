@@ -3,6 +3,10 @@
 추천은 TAGO 버스 경로와 Kakao 도보 경로를 조합해 마감시간 안에서 더 걸을
 수 있는 최대 3개의 서로 다른 실제 경로를 선택합니다.
 
+이 문서는 현재 `RecommendationService`, 후보 생성기와 공유 계약을 기준으로
+합니다. UI의 guided/compact 전환과 익명 이벤트는 추천 점수·후보 생성·API
+응답을 바꾸지 않는 별도 경험 계층입니다.
+
 ## 1. 입력 검증
 
 | 입력 | 범위 |
@@ -226,6 +230,10 @@ expectedTotalSteps = currentSteps + estimatedSteps
 남은 걸음이 있으면 `primaryRecommendationId`는 GOAL, GOAL이 없으면
 BALANCED를 가리키며 UI가 이 경로를 처음부터 선택합니다. 목표를 이미
 달성한 경우 FAST가 기본입니다.
+
+브라우저의 추천 성공 횟수는 성공 응답을 받은 뒤 안내 밀도를 조절하는 데만
+사용합니다. 이 값은 추천 요청에 포함하지 않고 서버나 PostgreSQL에 저장하지
+않으므로 같은 입력의 경로 계산 결과에 영향을 주지 않습니다.
 
 ## 10. 부분 장애와 warning
 

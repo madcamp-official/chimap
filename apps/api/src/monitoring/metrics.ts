@@ -1,4 +1,8 @@
-import type { ErrorCode, PlaceSearchResponse } from "@chimap/contracts";
+import type {
+  ErrorCode,
+  PlaceSearchResponse,
+  UiEventPayload,
+} from "@chimap/contracts";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -37,7 +41,8 @@ function canonicalRoute(path: string): string {
     normalized === "/api/v1/readiness" ||
     normalized === "/api/v1/places" ||
     normalized === "/api/v1/places/reverse" ||
-    normalized === "/api/v1/recommendations"
+    normalized === "/api/v1/recommendations" ||
+    normalized === "/api/v1/ui-events"
   ) {
     return normalized;
   }
@@ -83,6 +88,7 @@ export class AppMetrics {
   readonly #recommendationRequests: Counter;
   readonly #recommendationDuration: Histogram;
   readonly #recommendationCount: Histogram;
+  readonly #uiEvents: Counter;
   readonly #apiErrors: Counter;
   readonly #databaseReady: Gauge;
   readonly #databasePoolConnections: Gauge;
@@ -169,6 +175,18 @@ export class AppMetrics {
       name: "chimap_recommendation_result_count",
       help: "추천 한 요청의 경로 수",
       buckets: [0, 1, 2, 3],
+      registers: [this.registry],
+    });
+    this.#uiEvents = new Counter({
+      name: "chimap_ui_events_total",
+      help: "동의 사용자 UI 흐름의 enum 기반 익명 집계",
+      labelNames: [
+        "event",
+        "ui_state",
+        "experience_mode",
+        "outcome",
+        "duration_bucket",
+      ] as const,
       registers: [this.registry],
     });
     this.#apiErrors = new Counter({
@@ -304,6 +322,16 @@ export class AppMetrics {
     if (input.resultCount !== undefined) {
       this.#recommendationCount.observe(input.resultCount);
     }
+  }
+
+  public observeUiEvent(event: UiEventPayload): void {
+    this.#uiEvents.inc({
+      event: event.event,
+      ui_state: event.uiState,
+      experience_mode: event.experienceMode,
+      outcome: event.outcome ?? "none",
+      duration_bucket: event.durationBucket ?? "none",
+    });
   }
 
   public observeApiError(

@@ -4,6 +4,9 @@
 origin은 `http://127.0.0.1:3000`입니다. 명령은 저장소 루트에서
 실행합니다.
 
+Route Pulse UI와 익명 UI 이벤트는 현재 작업 트리 기준으로 공개 배포 전입니다.
+아래 UI smoke와 asset 확인은 새 이미지 승격 시 반드시 실행해야 합니다.
+
 ## 1. 사전 조건
 
 - Node.js 24, pnpm 10, Docker와 Docker Compose
@@ -295,6 +298,18 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 10. 차량 마커 수가 선택 버스 구간 수 이하
 11. localStorage v2 저장·새로고침 복구
 12. 1440/768/390/320px overflow
+13. 루트 `data-ui-state`가 idle→editing-place→ready→calculating→results→
+    route-selected로 전환되고 오류 시 `error`인지 확인
+14. 추천 성공 0~2회 `guided`, 3회부터 `compact`이며 설정에서 자동/자세히/
+    간결하게를 바꿔도 주요 컨트롤 위치가 유지되는지 확인
+15. OS 또는 서비스의 동작 줄이기에서 드로잉·슬라이드·펄스가 제거되는지 확인
+16. 계산 중 가상 단계·퍼센트 없이 단일 요청 표시가 보이고 8초 뒤 지연
+    안내만 추가되는지 확인
+17. 지도 경로 opacity가 비선택 0.18, hover/focus 0.55, 선택 NAVER 0.95·
+    SVG fallback 1.0인지 확인
+18. 익명 정보 동의 전·거부·철회 시 UI 이벤트 요청이 0건인지 확인
+19. 동의 후 허용 이벤트가 `204 No Content`이고 Prometheus
+    `chimap_ui_events_total`이 증가하는지 확인
 
 자동 E2E:
 
@@ -321,8 +336,10 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 
 두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
-수동 실행합니다. 최신 구현 commit `b294a4d`의 CI run `30165571376`에서
-두 job이 모두 성공했습니다. 기본 브랜치 병합과 보호 규칙은
+수동 실행합니다. 마지막으로 확인된 CI는 구현 commit `b294a4d`의 run
+`30165571376`이며 두 job이 모두 성공했습니다. 현재 브랜치 HEAD는
+`640a5a4`이고 Route Pulse·문서 변경은 그 위의 미커밋 작업이므로 새
+commit의 CI가 별도로 필요합니다. 기본 브랜치 병합과 보호 규칙은
 [사용자 작업](../needs.md)을 따릅니다.
 
 ## 12. 공개 번들 비밀값 검사
@@ -349,6 +366,25 @@ node --env-file=.env --input-type=module -e '
 추가로 Docker build context와 Git 추적 파일에 `.env`가 들어가지 않는지
 확인합니다.
 
+### Route Pulse asset 버전 확인
+
+새 UI 배포 뒤 공개 HTML이 참조하는 JavaScript asset에서 현재 계약 marker를
+확인합니다. 문자열 존재만으로 E2E를 대체하지는 않지만, 이전 bundle이 계속
+서비스되는 배포 오류를 빠르게 찾을 수 있습니다.
+
+```bash
+node --input-type=module -e '
+  const origin = "https://chimap.madcamp-kaist.org";
+  const html = await (await fetch(origin)).text();
+  const asset = html.match(/src="([^"]+\.js)"/u)?.[1];
+  if (!asset) throw new Error("JavaScript asset을 찾지 못했습니다.");
+  const bundle = await (await fetch(new URL(asset, origin))).text();
+  const current = bundle.includes("route-pulse-v1");
+  console.log(`ROUTE_PULSE_BUNDLE=${current ? "current" : "stale"}`);
+  if (!current) process.exit(1);
+'
+```
+
 ## 13. 운영 점검
 
 ### 매일
@@ -372,7 +408,8 @@ curl -fsS http://127.0.0.1:9090/api/v1/rules
 Prometheus에서 검색 0건률·NAVER 보완률, 공급자별 429/5xx, API p95,
 DB pool 대기, TAGO timeout과 백업 시각·크기를 확인합니다. API 9091은
 host에 publish하지 않습니다. 교통 동기화 성공 시각·최근 실패 노선 수와
-외부 알림 전달 성공·실패도 함께 확인합니다.
+외부 알림 전달 성공·실패도 함께 확인합니다. UI 정보 공유를 활성화한 뒤에는
+`chimap_ui_events_total` label이 계약의 허용 enum만 사용하는지도 확인합니다.
 
 ### 정기
 

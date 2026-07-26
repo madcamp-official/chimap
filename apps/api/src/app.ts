@@ -16,6 +16,7 @@ import {
   recommendationRequestSchema,
   reverseGeocodeQuerySchema,
   reverseGeocodeResponseSchema,
+  uiEventPayloadSchema,
   type ErrorResponse,
 } from "@chimap/contracts";
 import compression from "compression";
@@ -54,6 +55,7 @@ type RateLimitOptions = {
   windowMs?: number;
   placesMax?: number;
   recommendationsMax?: number;
+  uiEventsMax?: number;
 };
 
 export type CreateAppOptions = {
@@ -461,6 +463,16 @@ export function createApp(options: CreateAppOptions): Express {
       throw error;
     }
   };
+
+  app.post(
+    "/api/v1/ui-events",
+    rateLimiter(options.rateLimits?.uiEventsMax ?? 120, rateLimitWindow),
+    (request, response) => {
+      const event = uiEventPayloadSchema.parse(request.body);
+      metrics.observeUiEvent(event);
+      response.status(204).end();
+    },
+  );
 
   app.post(
     "/api/v1/recommendations",

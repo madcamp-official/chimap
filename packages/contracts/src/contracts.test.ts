@@ -8,6 +8,7 @@ import {
   routeLegSchema,
   storedPreferencesV1Schema,
   storedPreferencesV2Schema,
+  uiEventPayloadSchema,
 } from "./index.js";
 
 describe("공유 계약", () => {
@@ -138,5 +139,26 @@ describe("공유 계약", () => {
         { lng: 127.4342, lat: 36.3321 },
       ),
     ).toBeGreaterThan(50);
+  });
+
+  it("익명 UI 이벤트는 허용된 enum만 받고 위치·검색·식별 정보는 거절한다", () => {
+    const event = {
+      version: "route-pulse-v1",
+      event: "recommendation_succeeded",
+      uiState: "results",
+      experienceMode: "guided",
+      outcome: "success",
+      durationBucket: "1to3s",
+    };
+
+    expect(uiEventPayloadSchema.safeParse(event).success).toBe(true);
+    expect(
+      uiEventPayloadSchema.safeParse({
+        ...event,
+        query: "대전역",
+        coordinates: { lat: 36.3, lng: 127.4 },
+        sessionId: "private-session",
+      }).success,
+    ).toBe(false);
   });
 });

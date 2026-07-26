@@ -14,15 +14,16 @@ describe("RecommendationProgress", () => {
 
     expect(
       screen.getByText(
-        "보통 몇 초 안에 끝나요. 새 검색을 시작하면 이 요청은 취소됩니다.",
+        "실제 경로 요청을 처리하고 있어요. 보통 몇 초 안에 완료됩니다.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByText("추천 요청 진행 중")).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(8000));
 
     expect(
       screen.getByText(
-        "실제 버스 운행 응답이 늦어 조금 더 확인하고 있어요. 새 검색을 시작하면 이 요청은 취소됩니다.",
+        "교통 정보 응답이 평소보다 늦어요. 그대로 기다리거나 장소를 수정해 새로 검색할 수 있어요.",
       ),
     ).toBeInTheDocument();
   });

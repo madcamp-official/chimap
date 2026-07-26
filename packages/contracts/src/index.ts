@@ -517,6 +517,46 @@ export type RecommendationResponse = z.infer<
   typeof recommendationResponseSchema
 >;
 
+export const plannerUiStateSchema = z.enum([
+  "idle",
+  "editing-place",
+  "ready",
+  "calculating",
+  "results",
+  "route-selected",
+  "error",
+]);
+
+export type PlannerUiState = z.infer<typeof plannerUiStateSchema>;
+
+export const experienceModeSchema = z.enum(["guided", "compact"]);
+export type ExperienceMode = z.infer<typeof experienceModeSchema>;
+
+export const uiEventPayloadSchema = z
+  .object({
+    version: z.literal("route-pulse-v1"),
+    event: z.enum([
+      "planner_viewed",
+      "place_search_started",
+      "place_selected",
+      "recommendation_started",
+      "recommendation_succeeded",
+      "recommendation_failed",
+      "route_selected",
+      "route_details_opened",
+      "experience_mode_changed",
+    ]),
+    uiState: plannerUiStateSchema,
+    experienceMode: experienceModeSchema,
+    outcome: z.enum(["success", "empty", "error", "cancelled"]).optional(),
+    durationBucket: z
+      .enum(["lt1s", "1to3s", "3to8s", "gt8s"])
+      .optional(),
+  })
+  .strict();
+
+export type UiEventPayload = z.infer<typeof uiEventPayloadSchema>;
+
 export const healthResponseSchema = z
   .object({
     status: z.literal("ok"),

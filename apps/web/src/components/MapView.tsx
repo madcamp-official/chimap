@@ -299,18 +299,27 @@ export function transitMarkers(
 }
 
 function RoutePreview({
-  route,
+  recommendations,
+  selectedRouteId,
+  highlightedRouteId,
   origin,
   destination,
   vehiclePositions,
 }: {
-  route: Recommendation | undefined;
+  recommendations: Recommendation[];
+  selectedRouteId: string | undefined;
+  highlightedRouteId: string | undefined;
   origin: Place | undefined;
   destination: Place | undefined;
   vehiclePositions: RelevantVehiclePosition[];
 }) {
+  const selectedRoute =
+    recommendations.find((route) => route.id === selectedRouteId) ??
+    recommendations[0];
   const geometry = useMemo(() => {
-    const coordinates = route?.legs.flatMap((leg) => leg.coordinates) ?? [];
+    const coordinates = recommendations.flatMap((route) =>
+      route.legs.flatMap((leg) => leg.coordinates),
+    );
     const all = [
       ...coordinates,
       ...(origin === undefined ? [] : [origin.location]),
@@ -332,9 +341,9 @@ function RoutePreview({
       212 - ((point.lat - minLat) / latSpan) * 184,
     ];
     return { project };
-  }, [destination, origin, route]);
+  }, [destination, origin, recommendations]);
 
-  if (geometry === undefined || route === undefined) {
+  if (geometry === undefined) {
     return (
       <div className="map-empty-illustration">
         <Map aria-hidden="true" />
@@ -366,25 +375,43 @@ function RoutePreview({
         </pattern>
       </defs>
       <rect width="360" height="240" fill="url(#grid)" />
-      {route.legs.map((leg) => {
-        if (leg.coordinates.length < 2) {
-          return null;
-        }
-        const style = legStyle(leg);
-        return (
-          <polyline
-            key={leg.id}
-            points={leg.coordinates
-              .map((point) => geometry.project(point).join(","))
-              .join(" ")}
-            fill="none"
-            stroke={style.color}
-            strokeWidth={style.width}
-            strokeDasharray={style.dash === "shortdash" ? "5 7" : undefined}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        );
+      {recommendations.length === 0 &&
+      origin !== undefined &&
+      destination !== undefined ? (
+        <line
+          className="preview-place-connection"
+          x1={geometry.project(origin.location)[0]}
+          y1={geometry.project(origin.location)[1]}
+          x2={geometry.project(destination.location)[0]}
+          y2={geometry.project(destination.location)[1]}
+        />
+      ) : null}
+      {recommendations.map((route) => {
+        const selected = route.id === selectedRoute?.id;
+        const highlighted = route.id === highlightedRouteId;
+        return route.legs.map((leg) => {
+          if (leg.coordinates.length < 2) {
+            return null;
+          }
+          const style = legStyle(leg);
+          return (
+            <polyline
+              key={`${route.id}:${leg.id}`}
+              className={`preview-route-line ${
+                selected ? "is-selected" : highlighted ? "is-highlighted" : ""
+              }`}
+              points={leg.coordinates
+                .map((point) => geometry.project(point).join(","))
+                .join(" ")}
+              fill="none"
+              stroke={style.color}
+              strokeWidth={selected ? style.width : Math.max(3, style.width - 2)}
+              strokeDasharray={style.dash === "shortdash" ? "5 7" : undefined}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          );
+        });
       })}
       {origin === undefined ? null : (
         <g transform={`translate(${geometry.project(origin.location).join(" ")})`}>
@@ -404,7 +431,7 @@ function RoutePreview({
           </text>
         </g>
       )}
-      {transitMarkers(route).map((marker) => {
+      {transitMarkers(selectedRoute).map((marker) => {
           const [x, y] = geometry.project(marker.coordinate);
           const fill =
             marker.tone === "boarding"
@@ -450,6 +477,7 @@ type MapViewProps = {
   destination: Place | undefined;
   recommendations: Recommendation[];
   selectedRouteId: string | undefined;
+  highlightedRouteId?: string;
   ncpKeyId?: string;
   vehiclePositions?: RelevantVehiclePosition[];
 };
@@ -459,6 +487,7 @@ export function MapView({
   destination,
   recommendations,
   selectedRouteId,
+  highlightedRouteId,
   ncpKeyId,
   vehiclePositions = [],
 }: MapViewProps) {
@@ -576,6 +605,7 @@ export function MapView({
 
     for (const recommendation of recommendations) {
       const selected = recommendation.id === selectedRoute?.id;
+      const highlighted = recommendation.id === highlightedRouteId;
       for (const leg of recommendation.legs) {
         if (leg.coordinates.length < 2) {
           continue;
@@ -589,7 +619,7 @@ export function MapView({
             ),
             strokeWeight: selected ? style.width : Math.max(3, style.width - 2),
             strokeColor: style.color,
-            strokeOpacity: selected ? 0.95 : 0.2,
+            strokeOpacity: selected ? 0.95 : highlighted ? 0.55 : 0.18,
             strokeStyle: style.dash,
             strokeLineCap: "round",
             strokeLineJoin: "round",
@@ -721,6 +751,7 @@ export function MapView({
     destination,
     origin,
     recommendations,
+    highlightedRouteId,
     selectedRoute,
     status,
     vehiclePositions,
@@ -745,7 +776,9 @@ export function MapView({
       {status !== "ready" ? (
         <div className="map-fallback">
           <RoutePreview
-            route={selectedRoute}
+            recommendations={recommendations}
+            selectedRouteId={selectedRouteId}
+            highlightedRouteId={highlightedRouteId}
             origin={origin}
             destination={destination}
             vehiclePositions={vehiclePositions}

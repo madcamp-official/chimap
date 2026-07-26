@@ -3,9 +3,11 @@
 기준 시각은 2026-07-26 KST입니다. 실제 데이터 전환, NAVER Client Secret
 재발급, 운영 재배포, 백업·교통 동기화 자동화와 장애 알림 계층까지
 완료했습니다. 개인화 한 걸음 길이·조기 하차 우선·지도 도보 표현까지
-포함한 `b294a4d`를 `feat/tago-transit`에 반영했고 GitHub 품질·PostGIS
-CI도 통과했습니다. 외부 webhook 입력과 기본 브랜치 병합·보호 규칙
-설정은 남아 있습니다. 운영 수치와 검증 근거는
+포함한 `b294a4d`는 GitHub 품질·PostGIS CI를 통과했고 현재 브랜치 HEAD는
+`640a5a4`입니다. 그 위 작업 트리에는 Route Pulse 상태 UI, 안내 밀도·모션
+설정과 동의 기반 익명 UI 이벤트가 구현됐지만 아직 commit·CI·공개 배포
+전입니다. 외부 webhook 입력과 기본 브랜치 병합·보호 규칙 설정도 남아
+있습니다. 운영 수치와 검증 근거는
 [구현·운영 현황](./docs/current-state.md)을 참고합니다.
 
 ## 1. 확정된 기술 결정
@@ -20,6 +22,7 @@ CI도 통과했습니다. 외부 webhook 입력과 기본 브랜치 병합·보�
 - 별도 프로세스 관리자를 추가하지 않음
 - 운영 도메인은 `https://chimap.madcamp-kaist.org`
 - 사용자 검색·위치·추천 요청과 실시간 원문은 영구 저장하지 않음
+- UI 경험은 브라우저에만 저장하고 명시적 동의 뒤 허용 enum만 Prometheus로 집계
 
 ## 2. 구현 단계
 
@@ -37,25 +40,33 @@ CI도 통과했습니다. 외부 webhook 입력과 기본 브랜치 병합·보�
 | 개인화 한 걸음 길이 | 완료 | 계정 없이 출생연도·신장·체중·필수 생물학적 성별, `HAN_2026_V1`, localStorage v2 |
 | 목표 도보 조정 | 완료 | 실제 TAGO 정류장 순서로 조기 하차 우선, 부족 시 늦은 탑승·양쪽 조합 |
 | 목표 기본 선택 | 완료 | 남은 목표가 있으면 GOAL/최접근, 달성 후 FAST |
+| Route Pulse UI | 작업 트리 완료 | 7개 명시 상태, 실제 요청 tracer, 카드·지도 상호작용, guided/compact |
+| 화면 사용 설정 | 작업 트리 완료 | 안내 밀도, OS/서비스 동작 줄이기, 학습 초기화 |
+| 익명 UI 이벤트 | 작업 트리 완료 | 동의 뒤 strict enum, 204, Prometheus counter, 개인정보 필드 거절 |
 | Compose 운영 | 완료 | API/DB/Prometheus/Alertmanager/relay healthcheck, MTU 1400 |
 | 실제 데이터 import | 완료 | 전국 정류장과 대전 초기 노선 |
 | 백업·restore | 완료 | 일일 systemd timer, checksum, 월간 별도 DB 복구 검증 |
 | 교통 정기 동기화 | 완료 | KAIST·대전역 45개 노선, 일일 timer, 상태 지표 |
 | 모니터링 | 완료 | Prometheus 15초 수집, 20개 경보 규칙, Alertmanager/relay |
 | 외부 알림 URL | 사용자 작업 | Alertmanager/relay 배포·형식 검증, 루트 `needs.md`의 webhook 입력 필요 |
-| 공개 배포·E2E | 완료 | 검색→추천→지도→저장·반응형 검증 |
+| 기존 공개 배포·E2E | 완료 | 검색→추천→지도→저장·반응형 검증 |
+| Route Pulse 공개 배포·E2E | 대기 | 공개 asset 미반영, 새 이미지 승격과 상태·설정·동의 smoke 필요 |
 | NAVER Secret 재발급 | 완료 | 교체 후 geocode/reverse 200과 번들 미검출 확인 |
-| Git 기능 브랜치 | 완료 | 개인화·조기 하차·지도 표현까지 `feat/tago-transit`에 반영 |
+| Git 기능 브랜치 | 진행 중 | HEAD `640a5a4`; Route Pulse·문서는 아직 미커밋 |
 | Git 기본 브랜치 | 사용자 작업 | `main` 병합, 수동 공개 E2E와 보호 규칙 설정 |
 
-## 3. 완료된 공개 계약
+## 3. 현재 코드의 API 계약
 
 - `GET /api/v1/health`: `status`, `timestamp`
 - `GET /api/v1/readiness`: DB, PostGIS, migration, 공급자, 교통 통계
 - `GET /api/v1/places`: `suggest|resolve`, 공급자·전략·성능 저하 meta
 - `GET /api/v1/places/reverse`: Place 또는 정상 0건
 - `POST /api/v1/recommendations`: baseline, 최대 3개 추천, warning
+- `POST /api/v1/ui-events`: 동의 기반 strict enum, `204 No Content`
 - 공개 route source: `KAKAO | TAGO`
+
+`/api/v1/ui-events`는 작업 트리 구현이며 새 이미지 배포 전까지 현재 공개
+서버에 반영됐다고 간주하지 않습니다.
 
 자세한 필드와 오류 코드는 [API 레퍼런스](./docs/api-reference.md)에
 기록합니다.
@@ -90,8 +101,10 @@ CI도 통과했습니다. 외부 webhook 입력과 기본 브랜치 병합·보�
 - 정기 교통 동기화 45개 성공·0개 실패
 - Alertmanager와 relay의 Slack 형식 HTTP 전달 검증
 - 외부 운영 채널 전달은 webhook 입력 후 별도 확인
-- 타입검사, 테스트, build, 공개 strict E2E 통과
-- 최신 구현 commit `b294a4d`의 GitHub CI run `30165571376` 두 job 통과
+- 현재 작업 트리 타입검사, 결정적 테스트 83개와 build 통과
+- 기존 공개 UI strict E2E 2개 통과; Route Pulse 공개 E2E는 배포 후 필요
+- 마지막 CI 검증 구현 commit `b294a4d`의 run `30165571376` 두 job 통과
+- 현재 HEAD `640a5a4` 이후 미커밋 변경은 새 commit의 CI가 별도로 필요
 - 폐기 대상 용어·변수 내용 검색 0건
 - 공개 health 계약과 운영 도메인 정상
 

@@ -16,6 +16,7 @@ import {
   type RecommendationRequest,
   type RecommendationResponse,
   type ReverseGeocodeResponse,
+  type UiEventPayload,
 } from "@chimap/contracts";
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -141,6 +142,25 @@ export async function createRecommendations(
       ...(signal === undefined ? {} : { signal }),
     }),
   );
+}
+
+export async function sendUiEvent(
+  payload: UiEventPayload,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/ui-events`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    keepalive: true,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (!response.ok) {
+    throw new Error("사용성 이벤트를 집계하지 못했습니다.");
+  }
 }
 
 export async function getBusRouteStops(input: {

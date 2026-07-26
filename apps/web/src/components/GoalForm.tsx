@@ -5,7 +5,7 @@ import {
   Pencil,
   Sparkles,
 } from "lucide-react";
-import { type FormEvent, useMemo } from "react";
+import { type CSSProperties, type FormEvent, useMemo } from "react";
 
 import { defaultDeadline, toKstDateTimeLocal } from "../lib/time.js";
 import { useTripStore } from "../store/trip-store.js";
@@ -43,6 +43,8 @@ export function GoalForm({
       ? 0
       : estimatePersonalizedStepLengthMeters(walkingProfile);
   const remainingSteps = Math.max(goalSteps - currentSteps, 0);
+  const goalProgressPercent =
+    goalSteps <= 0 ? 0 : Math.min(100, Math.round((currentSteps / goalSteps) * 100));
   const targetDistance = remainingSteps * stepLengthMeters;
   const deadlineBounds = useMemo(() => {
     const now = new Date();
@@ -95,7 +97,27 @@ export function GoalForm({
             </span>
           </>
         )}
+        <span
+          className="goal-progress-track"
+          role="progressbar"
+          aria-label="오늘 걸음 목표 달성률"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={goalProgressPercent}
+          style={
+            {
+              "--goal-progress": `${goalProgressPercent}%`,
+            } as CSSProperties
+          }
+        >
+          <i />
+        </span>
       </div>
+
+      <p className="guided-copy goal-form-guidance">
+        현재 걸음 수와 도착 시간을 기준으로 무리 없이 더 걸을 수 있는 경로를
+        비교해 드려요.
+      </p>
 
       <div className="form-grid">
         <div className="field">

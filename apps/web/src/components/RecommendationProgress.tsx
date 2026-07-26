@@ -1,59 +1,49 @@
-import { BusFront, Footprints, Route, Scale } from "lucide-react";
+import { Footprints } from "lucide-react";
 import { useEffect, useState } from "react";
 
-const STEPS = [
-  {
-    label: "입력 조건을 확인하고 있어요",
-    icon: Route,
-  },
-  {
-    label: "가장 빠른 기본 경로를 찾고 있어요",
-    icon: BusFront,
-  },
-  {
-    label: "조금 더 걸을 수 있는 하차 지점을 살펴보고 있어요",
-    icon: Footprints,
-  },
-  {
-    label: "시간과 걸음 수를 비교하고 있어요",
-    icon: Scale,
-  },
-] as const;
-
 export function RecommendationProgress() {
-  const [step, setStep] = useState(0);
   const [waitingLonger, setWaitingLonger] = useState(false);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      setStep((current) => Math.min(current + 1, STEPS.length - 1));
-    }, 1200);
     const longerTimer = window.setTimeout(() => setWaitingLonger(true), 8000);
-    return () => {
-      window.clearInterval(interval);
-      window.clearTimeout(longerTimer);
-    };
+    return () => window.clearTimeout(longerTimer);
   }, []);
 
-  const current = STEPS[step]!;
-  const Icon = current.icon;
   return (
-    <section className="recommendation-progress" aria-live="polite">
-      <div className="progress-icon">
-        <Icon aria-hidden="true" />
+    <section
+      className="recommendation-progress"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="route-tracer" aria-hidden="true">
+        <svg viewBox="0 0 300 116">
+          <path
+            className="route-tracer-base"
+            d="M18 90C68 19 118 102 166 52S244 22 282 33"
+          />
+          <path
+            className="route-tracer-line"
+            pathLength="1"
+            d="M18 90C68 19 118 102 166 52S244 22 282 33"
+          />
+          <circle className="route-tracer-origin" cx="18" cy="90" r="7" />
+          <circle className="route-tracer-destination" cx="282" cy="33" r="7" />
+        </svg>
+        <span className="route-tracer-walker">
+          <Footprints />
+        </span>
       </div>
       <span className="eyebrow">건강 경로 계산 중</span>
-      <h2>{current.label}</h2>
-      <div className="loading-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </div>
+      <h2>시간 안에 걸을 수 있는 경로를 찾고 있어요</h2>
       <p>
         {waitingLonger
-          ? "실제 버스 운행 응답이 늦어 조금 더 확인하고 있어요. 새 검색을 시작하면 이 요청은 취소됩니다."
-          : "보통 몇 초 안에 끝나요. 새 검색을 시작하면 이 요청은 취소됩니다."}
+          ? "교통 정보 응답이 평소보다 늦어요. 그대로 기다리거나 장소를 수정해 새로 검색할 수 있어요."
+          : "실제 경로 요청을 처리하고 있어요. 보통 몇 초 안에 완료됩니다."}
       </p>
+      <span className="progress-status">
+        <i aria-hidden="true" />
+        추천 요청 진행 중
+      </span>
     </section>
   );
 }

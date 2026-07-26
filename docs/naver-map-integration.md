@@ -4,6 +4,10 @@ NAVER는 브라우저 지도 렌더링과 Kakao 주소 검색 보완을 담당�
 Dynamic Map과 서버 REST API는 같은 Application을 사용할 수 있지만
 브라우저·서버 자격 증명의 노출 범위를 엄격히 분리합니다.
 
+이 문서는 현재 작업 트리의 구현과 2026-07-26에 확인한 NAVER Cloud 공식
+문서를 기준으로 합니다. 실제 공개 asset 반영 여부는
+[구현·운영 현황](./current-state.md)에서 별도로 관리합니다.
+
 ## 1. 자격 증명
 
 | 변수 | 위치 | 값 |
@@ -62,6 +66,13 @@ https://oapi.map.naver.com/openapi/v3/maps.js
 TAGO 정류장 순서를 Kakao Mobility Directions 도로 vertex에 매칭한 좌표를
 사용합니다. 노선 전체 차량과 이미 탑승 순서를 지난 차량은 표시하지 않으며
 차량 좌표는 지도 bounds 계산에서 제외합니다.
+
+여러 추천을 동시에 비교할 때 선택하지 않은 경로는 opacity 0.18, 카드
+hover/focus 경로는 0.55, 선택 경로는 0.95로 그립니다. 카드 선택·hover·
+focus와 지도 경로는 같은 route ID로 동기화됩니다. SDK fallback SVG는 같은
+추천 좌표와 0.18/0.55/1.0 규칙을 사용합니다. OS 또는 서비스 설정에서 동작
+줄이기가 활성화되면 경로 그리기·opacity 전환과 위치 이동 animation을
+제거합니다.
 
 SDK 인증·network·timeout 장애가 발생해도 추천 데이터는 제거하지 않습니다.
 동일 추천 응답의 실제 좌표를 SVG로 표시하고 카드와 텍스트 이동 단계를

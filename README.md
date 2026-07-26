@@ -4,17 +4,22 @@ CHIMap은 목적지와 도착 마감시간을 유지하면서 더 많이 걸을 
 대중교통 경로를 비교·추천하는 웹 애플리케이션입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 최종 운영 검증: 2026-07-26 01:26 KST
+- 공개 health/readiness 재확인: 2026-07-26 09:40 KST
+- 전체 운영 검증 스냅샷: 2026-07-26 01:26 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- GitHub 최신 구현: `feat/tago-transit`의 `b294a4d`, 품질·PostGIS CI 성공
-- Git 상태: 개인화·조기 하차·지도 표현 변경을 `feat/tago-transit`에 반영
+- 현재 Git HEAD: `feat/tago-transit`의 `640a5a4`
+- 작업 트리: Route Pulse UI·익명 지표·문서 최신화 변경이 아직 commit·배포 전
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
 현재 공개 readiness는 정류장 227,223개, TAGO 연결 정류장 2,797개,
 노선 134개, 노선-정류장 관계 5,638개입니다. 추천 요청이 새 지역의 실제
 노선을 동기화하면 이 수치는 증가할 수 있습니다.
+
+현재 작업 트리에는 상태가 분명한 Route Pulse UI, 안내 밀도·동작 줄이기
+설정과 동의 기반 익명 UI 이벤트가 구현되어 있습니다. 이 변경은 아직 공개
+JavaScript asset에 포함되지 않았으므로 공개 배포 검증 결과와 구분합니다.
 
 ## 핵심 사용자 흐름
 
@@ -34,6 +39,12 @@ CHIMap은 목적지와 도착 마감시간을 유지하면서 더 많이 걸을 
    비교합니다.
 8. 카드를 선택해 NAVER 지도 경로를 바꾸고, 필요한 경로만 `자세히`를
    열어 전체 텍스트 이동 단계와 승하차 정보를 확인합니다.
+9. 화면 설정에서 안내 밀도와 움직임을 조절하고 익명 사용성 정보 공유 여부를
+   언제든 바꿀 수 있습니다.
+
+추천 계산 중에는 가상 퍼센트나 완료된 것처럼 보이는 단계를 만들지 않고 실제
+요청이 진행 중임을 한 경로 추적으로 표시합니다. 8초가 넘으면 교통 정보가
+지연되고 있다는 설명과 장소를 수정할 수 있다는 선택지를 제공합니다.
 
 현재 위치 버튼은 브라우저 GPS 좌표를 받아 Kakao→NAVER 순서로 주소를
 확인합니다. 주소를 얻지 못해도 좌표 자체를 `현재 위치`로 사용할 수
@@ -61,7 +72,8 @@ CHIMap은 목적지와 도착 마감시간을 유지하면서 더 많이 걸을 
 준비되지 않으면 같은 추천 응답의 실제 좌표를 SVG로 표시합니다.
 
 사용자 검색어, GPS 좌표, 추천 요청, 실시간 도착·차량 원문은 PostgreSQL에
-저장하지 않습니다.
+저장하지 않습니다. 익명 UI 이벤트도 명시적 동의 뒤 허용된 enum만
+Prometheus counter로 집계하며 본문을 PostgreSQL에 저장하지 않습니다.
 
 ## 시스템 구성
 
@@ -95,15 +107,17 @@ systemd timers
 ```text
 apps/api                 Express API, 공급자, 추천, 교통 DB/CLI
 apps/alert-relay         Alertmanager 메시지 정규화와 외부 webhook 전달
-apps/api/migrations      PostgreSQL/PostGIS migration 기준 DDL
+apps/api/src/transit/migrations.ts  실행 migration의 source of truth
+apps/api/migrations      version 1 PostgreSQL/PostGIS 참고 DDL
 apps/api/test-data       출처와 checksum이 있는 실제 응답 캡처
 apps/web                 React 검색·지도·추천 UI와 Playwright E2E
 apps/web/test-data       출처와 checksum이 있는 실제 차량 응답 캡처
 packages/contracts       요청·응답·내부 정규화 Zod 계약
 docs                     아키텍처, 운영, 공급자, 테스트 문서
+docs/user-experience.md  사용자 흐름, 상태, 반응형·접근성 계약
+docs/database-schema.md  물리 스키마, API·브라우저 저장 계약
 ops                      백업·동기화 timer, Prometheus와 Alertmanager 설정
 compose.yml              운영 API, DB, 모니터링과 장애 알림
-db_schema.md             물리 스키마와 공개 데이터 계약
 .env.example             유일한 환경변수 템플릿
 ```
 
@@ -189,6 +203,7 @@ GET  /api/v1/places?query=카이스트&scope=suggest&limit=8
 GET  /api/v1/places?query=카이스트&scope=resolve&x=127.36&y=36.37&limit=8
 GET  /api/v1/places/reverse?x=127.36&y=36.37
 POST /api/v1/recommendations
+POST /api/v1/ui-events
 ```
 
 검색 중심 좌표는 전국 검색 범위를 제한하지 않고 결과 순서에만 사용합니다.
@@ -207,6 +222,9 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 일반 테스트는 캡처 시각·호출 API·SHA-256 checksum을 기록한 실제 공급자
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
+
+현재 결정적 테스트는 contracts 7개, alert-relay 3개, API 42개, web
+31개로 총 83개입니다. PostGIS 전용 5개는 별도 DB가 있을 때 실행합니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
@@ -237,11 +255,11 @@ Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
 
 - [구현·운영 현황](./docs/current-state.md)
 - [사용자가 완료할 운영 작업](./needs.md)
-- [화면 구조와 상호작용](./IA.md)
+- [사용자 경험과 화면 상호작용](./docs/user-experience.md)
 - [구현 계획과 완료 상태](./plan.md)
 - [시스템 아키텍처](./docs/architecture.md)
 - [API 레퍼런스](./docs/api-reference.md)
-- [데이터베이스 계약](./db_schema.md)
+- [데이터베이스 스키마와 저장 계약](./docs/database-schema.md)
 - [배포·백업·복구](./docs/deployment.md)
 - [Kakao 연동](./docs/kakao-api-integration.md)
 - [NAVER 연동](./docs/naver-map-integration.md)

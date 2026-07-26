@@ -4,6 +4,10 @@ CHIMap의 버스 정류장·노선·도착·차량은 국토교통부 TAGO를 �
 전국 공개 정류장 CSV는 검색 기반 공간 인덱스를 제공하고 TAGO가 도시별
 식별자와 실시간 정보를 보완합니다.
 
+이 문서는 현재 TAGO client·service·repository 구현을 기준으로 합니다.
+테이블·migration과 브라우저에 저장하지 않는 데이터 경계는
+[데이터베이스 스키마와 저장 계약](./database-schema.md)을 함께 봅니다.
+
 ## 1. 서비스와 키
 
 | 서비스 | 환경변수 | base path |

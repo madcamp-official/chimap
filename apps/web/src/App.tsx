@@ -3,8 +3,10 @@ import {
   recommendationRequestSchema,
   type Coordinate,
   type Place,
+  type PlannerUiState,
   type Recommendation,
   type RecommendationRequest,
+  type UiEventPayload,
 } from "@chimap/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -14,6 +16,8 @@ import {
   Info,
   MapPin,
   Navigation,
+  Settings2,
+  ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -25,6 +29,7 @@ import {
 } from "react";
 
 import { GoalForm } from "./components/GoalForm.js";
+import { ExperienceSettingsDialog } from "./components/ExperienceSettingsDialog.js";
 import {
   IntroSequence,
   shouldPlayIntro,
@@ -36,10 +41,15 @@ import { RecommendationProgress } from "./components/RecommendationProgress.js";
 import { RouteDetails } from "./components/RouteDetails.js";
 import { WalkingProfileDialog } from "./components/WalkingProfileDialog.js";
 import {
+  UiExperienceProvider,
+  useUiExperience,
+} from "./components/UiExperienceProvider.js";
+import {
   ApiClientError,
   createRecommendations,
   getBusVehicles,
   reverseGeocode,
+  sendUiEvent,
 } from "./lib/api.js";
 import {
   clearPreferences,
@@ -57,6 +67,25 @@ import { useTripStore } from "./store/trip-store.js";
 
 const naverMapNcpKeyId =
   import.meta.env.VITE_NAVER_MAP_NCP_KEY_ID?.trim() || undefined;
+
+function durationBucket(
+  startMilliseconds: number | undefined,
+): UiEventPayload["durationBucket"] {
+  if (startMilliseconds === undefined) {
+    return undefined;
+  }
+  const duration = performance.now() - startMilliseconds;
+  if (duration < 1000) {
+    return "lt1s";
+  }
+  if (duration < 3000) {
+    return "1to3s";
+  }
+  if (duration < 8000) {
+    return "3to8s";
+  }
+  return "gt8s";
+}
 
 function readableError(error: unknown): string {
   if (error instanceof ApiClientError) {
@@ -96,8 +125,30 @@ type AppProps = {
 };
 
 export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
-  const [introActive, setIntroActive] = useState(shouldPlayIntro);
-  const [appEntered, setAppEntered] = useState(() => !shouldPlayIntro());
+  return (
+    <UiExperienceProvider>
+      <PlannerApp reverseAddress={reverseAddress} />
+    </UiExperienceProvider>
+  );
+}
+
+function PlannerApp({ reverseAddress }: Required<AppProps>) {
+  const {
+    state: experienceState,
+    mode: experienceMode,
+    reducedMotion,
+    compactTransitionVisible,
+    setTelemetryConsent,
+    registerRecommendationSuccess,
+    dismissCompactTransition,
+    restoreGuidedMode,
+  } = useUiExperience();
+  const [introActive, setIntroActive] = useState(
+    () => !reducedMotion && shouldPlayIntro(),
+  );
+  const [appEntered, setAppEntered] = useState(
+    () => reducedMotion || !shouldPlayIntro(),
+  );
   const {
     origin,
     destination,
@@ -124,12 +175,45 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
   const [locationMessage, setLocationMessage] = useState<string>();
   const [formError, setFormError] = useState<string>();
   const [expandedRouteId, setExpandedRouteId] = useState<string>();
+  const [activePlaceEditor, setActivePlaceEditor] = useState<
+    "origin" | "destination" | undefined
+  >();
+  const [previewRouteId, setPreviewRouteId] = useState<string>();
+  const [routeInteracted, setRouteInteracted] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const requestAbortController = useRef<AbortController | undefined>(
     undefined,
   );
+  const recommendationStartedAt = useRef<number | undefined>(undefined);
+  const plannerViewedTracked = useRef(false);
   const lastTrip = useMemo(() => loadLastTrip(), []);
   const revealApp = useCallback(() => setAppEntered(true), []);
   const completeIntro = useCallback(() => setIntroActive(false), []);
+  const emitUiEvent = useCallback(
+    (
+      event: UiEventPayload["event"],
+      uiState: PlannerUiState,
+      extra: Pick<UiEventPayload, "outcome" | "durationBucket"> = {},
+      mode = experienceMode,
+    ): void => {
+      if (experienceState.telemetryConsent !== "granted") {
+        return;
+      }
+      void sendUiEvent({
+        version: "route-pulse-v1",
+        event,
+        uiState,
+        experienceMode: mode,
+        ...(extra.outcome === undefined ? {} : { outcome: extra.outcome }),
+        ...(extra.durationBucket === undefined
+          ? {}
+          : { durationBucket: extra.durationBucket }),
+      }).catch(() => {
+        // 사용성 지표 전송 실패는 경로 탐색 흐름을 방해하지 않는다.
+      });
+    },
+    [experienceMode, experienceState.telemetryConsent],
+  );
 
   const recommendationMutation = useMutation({
     mutationFn: (request: RecommendationRequest) => {
@@ -141,10 +225,20 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
     onSuccess: (response) => {
       setSelectedRouteId(response.primaryRecommendationId);
       setExpandedRouteId(undefined);
+      setRouteInteracted(false);
       setFormError(undefined);
+      registerRecommendationSuccess();
+      emitUiEvent("recommendation_succeeded", "results", {
+        outcome: "success",
+        durationBucket: durationBucket(recommendationStartedAt.current),
+      });
     },
     onError: (error) => {
       setFormError(readableError(error));
+      emitUiEvent("recommendation_failed", "error", {
+        outcome: "error",
+        durationBucket: durationBucket(recommendationStartedAt.current),
+      });
     },
   });
 
@@ -156,6 +250,23 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
   );
 
   useEffect(() => {
+    if (reducedMotion && introActive) {
+      setAppEntered(true);
+      setIntroActive(false);
+    }
+  }, [introActive, reducedMotion]);
+
+  useEffect(() => {
+    if (
+      experienceState.telemetryConsent === "granted" &&
+      !plannerViewedTracked.current
+    ) {
+      plannerViewedTracked.current = true;
+      emitUiEvent("planner_viewed", "idle");
+    }
+  }, [emitUiEvent, experienceState.telemetryConsent]);
+
+  useEffect(() => {
     if (expandedRouteId === undefined) {
       return;
     }
@@ -163,15 +274,12 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
       document
         .getElementById(`route-details-${expandedRouteId}`)
         ?.scrollIntoView({
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
-            .matches
-            ? "auto"
-            : "smooth",
+          behavior: reducedMotion ? "auto" : "smooth",
           block: "start",
         });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [expandedRouteId]);
+  }, [expandedRouteId, reducedMotion]);
 
   useEffect(() => {
     if (walkingProfile === undefined) {
@@ -201,6 +309,7 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
   ]);
 
   const result = recommendationMutation.data;
+  const hasPlaces = origin !== undefined && destination !== undefined;
   const selectedRecommendation =
     result?.recommendations.find((route) => route.id === selectedRouteId) ??
     result?.recommendations.find(
@@ -214,6 +323,34 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
       ) ?? [],
     [selectedRecommendation],
   );
+  const plannerUiState = useMemo<PlannerUiState>(() => {
+    if (recommendationMutation.isPending) {
+      return "calculating";
+    }
+    if (formError !== undefined) {
+      return "error";
+    }
+    if (activePlaceEditor !== undefined) {
+      return "editing-place";
+    }
+    if (result !== undefined) {
+      return routeInteracted ? "route-selected" : "results";
+    }
+    return hasPlaces ? "ready" : "idle";
+  }, [
+    activePlaceEditor,
+    formError,
+    hasPlaces,
+    recommendationMutation.isPending,
+    result,
+    routeInteracted,
+  ]);
+  const routeFit =
+    selectedRecommendation === undefined
+      ? "none"
+      : selectedRecommendation.dailyGoalCompletionRate >= 1
+        ? "complete"
+        : "in-progress";
   const vehicleQuery = useQuery({
     queryKey: [
       "bus-vehicles",
@@ -265,17 +402,34 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
     recommendationMutation.reset();
     setSelectedRouteId(undefined);
     setExpandedRouteId(undefined);
+    setPreviewRouteId(undefined);
+    setRouteInteracted(false);
     setFormError(undefined);
   }
 
   function chooseOrigin(place: Place | undefined): void {
     invalidateResult();
     setOrigin(place);
+    if (place !== undefined) {
+      emitUiEvent("place_selected", "editing-place", { outcome: "success" });
+    }
   }
 
   function chooseDestination(place: Place | undefined): void {
     invalidateResult();
     setDestination(place);
+    if (place !== undefined) {
+      emitUiEvent("place_selected", "editing-place", { outcome: "success" });
+    }
+  }
+
+  function setPlaceEditing(
+    editor: "origin" | "destination",
+    editing: boolean,
+  ): void {
+    setActivePlaceEditor((current) =>
+      editing ? editor : current === editor ? undefined : current,
+    );
   }
 
   function useCurrentLocation(): void {
@@ -368,6 +522,8 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
         safetyBufferMinutes,
       });
       setFormError(undefined);
+      recommendationStartedAt.current = performance.now();
+      emitUiEvent("recommendation_started", "calculating");
       recommendationMutation.mutate(request);
     } catch {
       setFormError("입력 범위와 도착 마감시간을 확인해 주세요.");
@@ -381,7 +537,9 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
     if (selectedRouteId !== recommendation.id) {
       setExpandedRouteId(undefined);
     }
+    setRouteInteracted(true);
     setSelectedRouteId(recommendation.id);
+    emitUiEvent("route_selected", "route-selected", { outcome: "success" });
     saveLastTrip({
       version: 1,
       selectedAt: new Date().toISOString(),
@@ -399,9 +557,10 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
     const willOpen = expandedRouteId !== recommendation.id;
     selectRecommendation(recommendation);
     setExpandedRouteId(willOpen ? recommendation.id : undefined);
+    if (willOpen) {
+      emitUiEvent("route_details_opened", "route-selected");
+    }
   }
-
-  const hasPlaces = origin !== undefined && destination !== undefined;
 
   return (
     <>
@@ -431,9 +590,26 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
           }}
         />
       ) : null}
+      <ExperienceSettingsDialog
+        open={!introActive && settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onModeChanged={(nextMode) =>
+          emitUiEvent(
+            "experience_mode_changed",
+            plannerUiState,
+            {},
+            nextMode,
+          )
+        }
+      />
       <div
         className={`app-shell ${appEntered ? "is-entered" : "is-intro-pending"}`}
-        inert={introActive || profileEditorOpen || undefined}
+        data-ui-state={plannerUiState}
+        data-experience-mode={experienceMode}
+        data-route-fit={routeFit}
+        data-reduced-motion={reducedMotion ? "true" : "false"}
+        data-telemetry-consent={experienceState.telemetryConsent}
+        inert={introActive || profileEditorOpen || settingsOpen || undefined}
       >
       <header className="app-header">
         <div className="brand">
@@ -450,12 +626,25 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
             <span className="live-dot" />
             지금 출발 기준
           </span>
+          <button
+            type="button"
+            className="header-settings-button"
+            aria-label="화면 사용 설정 열기"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings2 aria-hidden="true" />
+            <span>화면 설정</span>
+          </button>
         </div>
       </header>
 
       <main className="workspace">
         <div className="map-column">
-          <div className="search-panel" aria-label="출발지와 목적지 검색">
+          <div
+            className="search-panel"
+            aria-label="출발지와 목적지 검색"
+            data-active-editor={activePlaceEditor ?? "none"}
+          >
             <div className="search-fields">
               <PlaceCombobox
                 label="출발지"
@@ -465,6 +654,12 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
                   ? {}
                   : { center: currentLocation })}
                 onChange={chooseOrigin}
+                onEditingChange={(editing) =>
+                  setPlaceEditing("origin", editing)
+                }
+                onSearchStart={() =>
+                  emitUiEvent("place_search_started", "editing-place")
+                }
               />
               <div className="place-actions">
                 <button
@@ -496,6 +691,12 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
                   ? {}
                   : { center: destinationSearchCenter }}
                 onChange={chooseDestination}
+                onEditingChange={(editing) =>
+                  setPlaceEditing("destination", editing)
+                }
+                onSearchStart={() =>
+                  emitUiEvent("place_search_started", "editing-place")
+                }
               />
             </div>
             {locationMessage === undefined ? null : (
@@ -511,6 +712,9 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
             destination={destination}
             recommendations={result?.recommendations ?? []}
             selectedRouteId={selectedRouteId}
+            {...(previewRouteId === undefined
+              ? {}
+              : { highlightedRouteId: previewRouteId })}
             vehiclePositions={vehicleQuery.data?.items ?? []}
             {...(naverMapNcpKeyId === undefined
               ? {}
@@ -531,7 +735,7 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
                 출발지와 목적지는 그대로 두고, 마감시간 안에서 조금 더 걷는
                 경로를 찾아드려요.
               </p>
-              <ol>
+              <ol className="guided-copy">
                 <li><span>1</span>장소를 선택해요</li>
                 <li><span>2</span>오늘 걸음 목표를 알려주세요</li>
                 <li><span>3</span>시간에 맞는 건강 경로를 비교해요</li>
@@ -570,7 +774,31 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
                   기본 {formatDuration(result.baseline.durationSeconds)} · 기본
                   도보 {formatDistance(result.baseline.walkDistanceMeters)}
                 </p>
+                <small className="guided-copy results-guidance">
+                  카드를 선택하면 같은 색의 지도 경로와 승하차 위치가 함께
+                  바뀝니다.
+                </small>
               </div>
+
+              {compactTransitionVisible ? (
+                <div className="compact-transition-notice" role="status">
+                  <span>
+                    <strong>자주 쓰는 화면을 간결하게 정리했어요.</strong>
+                    주요 기능 위치는 그대로이고 보조 설명만 줄였습니다.
+                  </span>
+                  <button type="button" onClick={restoreGuidedMode}>
+                    자세히 보기
+                  </button>
+                  <button
+                    type="button"
+                    className="compact-notice-dismiss"
+                    aria-label="안내 닫기"
+                    onClick={dismissCompactTransition}
+                  >
+                    닫기
+                  </button>
+                </div>
+              ) : null}
 
               {result.warnings.length === 0 ? null : (
                 <details className="results-notices">
@@ -588,7 +816,7 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
               )}
 
               <div className="recommendation-list">
-                {result.recommendations.map((recommendation) => {
+                {result.recommendations.map((recommendation, index) => {
                   const detailsId = `route-details-${recommendation.id}`;
                   return (
                     <RecommendationCard
@@ -600,6 +828,10 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
                       detailsOpen={expandedRouteId === recommendation.id}
                       detailsId={detailsId}
                       onSelect={() => selectRecommendation(recommendation)}
+                      resultIndex={index}
+                      onPreviewChange={(active) =>
+                        setPreviewRouteId(active ? recommendation.id : undefined)
+                      }
                       onToggleDetails={() =>
                         toggleRecommendationDetails(recommendation)
                       }
@@ -644,6 +876,32 @@ export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
           )}
         </aside>
       </main>
+      {!introActive && experienceState.telemetryConsent === "unknown" ? (
+        <aside className="telemetry-banner" aria-label="익명 사용성 정보 선택">
+          <span>
+            <ShieldCheck aria-hidden="true" />
+            <span>
+              <strong>더 편한 화면을 만드는 데 도움을 주실래요?</strong>
+              검색어나 위치 없이 사용 흐름만 익명으로 집계합니다.
+            </span>
+          </span>
+          <div>
+            <button
+              type="button"
+              className="telemetry-accept"
+              onClick={() => setTelemetryConsent("granted")}
+            >
+              허용
+            </button>
+            <button
+              type="button"
+              onClick={() => setTelemetryConsent("denied")}
+            >
+              괜찮아요
+            </button>
+          </div>
+        </aside>
+      ) : null}
       </div>
     </>
   );

@@ -1,8 +1,12 @@
 # API 레퍼런스
 
-기준 base URL은 `https://chimap.madcamp-kaist.org`입니다. 모든 응답은
-JSON이며 성공 응답과 오류 응답을 `@chimap/contracts`의 Zod schema로
-검증합니다.
+기준 base URL은 `https://chimap.madcamp-kaist.org`입니다. JSON 본문이 있는
+성공·오류 응답은 `@chimap/contracts`의 Zod schema로 검증합니다. 익명 UI
+이벤트 성공만 본문 없는 `204 No Content`를 반환합니다.
+
+계약은 현재 작업 트리를 기준으로 합니다. 2026-07-26 09:40 KST 공개 asset은
+Route Pulse 이전 버전이므로 `/api/v1/ui-events`를 포함한 새 변경의 실제 공개
+반영 여부는 [구현·운영 현황](./current-state.md)을 확인합니다.
 
 ## 1. 공통 규칙
 
@@ -12,6 +16,7 @@ JSON이며 성공 응답과 오류 응답을 `@chimap/contracts`의 Zod schema�
 - JSON request body 상한: 32KB
 - 장소 조회 rate limit: IP당 기본 60회/분
 - 추천 rate limit: IP당 기본 10회/분
+- 익명 UI 이벤트 rate limit: IP당 기본 120회/분
 - CORS: `WEB_ORIGIN`과 origin이 없는 서버 요청만 허용
 
 오류 응답:
@@ -41,7 +46,7 @@ DB를 조회하지 않습니다.
 ```json
 {
   "status": "ok",
-  "timestamp": "2026-07-25T16:26:00.000Z"
+  "timestamp": "2026-07-26T00:40:46.433Z"
 }
 ```
 
@@ -52,7 +57,7 @@ DB를 조회하지 않습니다.
 ```json
 {
   "status": "ready",
-  "timestamp": "2026-07-25T16:26:00.000Z",
+  "timestamp": "2026-07-26T00:40:47.478Z",
   "database": {
     "connected": true,
     "postgis": true,
@@ -72,8 +77,8 @@ DB를 조회하지 않습니다.
 }
 ```
 
-위 통계는 2026-07-26 01:26 KST 운영 스냅샷 예시이며 실제 데이터
-동기화에 따라 증가할 수 있습니다.
+위 응답은 2026-07-26 09:40 KST 공개 재확인 예시이며 실제 데이터 동기화에
+따라 시각과 통계가 달라질 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
 
@@ -260,7 +265,47 @@ Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이�
 | `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 제한 안에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
 | `LIMITED_ROUTE_VARIETY` | 충분히 다른 경로가 3개 미만 |
 
-## 6. 교통 조회
+## 6. 익명 UI 이벤트
+
+### `POST /api/v1/ui-events`
+
+사용자가 화면 설정에서 공유를 허용한 경우에만 브라우저가 호출합니다.
+성공 응답은 항상 `204 No Content`이며 `x-request-id` header는 유지합니다.
+기본 rate limit은 IP당 120회/분입니다.
+
+```ts
+type UiEventPayload = {
+  version: "route-pulse-v1";
+  event:
+    | "planner_viewed"
+    | "place_search_started"
+    | "place_selected"
+    | "recommendation_started"
+    | "recommendation_succeeded"
+    | "recommendation_failed"
+    | "route_selected"
+    | "route_details_opened"
+    | "experience_mode_changed";
+  uiState:
+    | "idle"
+    | "editing-place"
+    | "ready"
+    | "calculating"
+    | "results"
+    | "route-selected"
+    | "error";
+  experienceMode: "guided" | "compact";
+  outcome?: "success" | "empty" | "error" | "cancelled";
+  durationBucket?: "lt1s" | "1to3s" | "3to8s" | "gt8s";
+};
+```
+
+strict schema이므로 검색어, 좌표, 장소·노선 ID, 신체정보, 사용자·세션 ID,
+정확한 시간값 등 추가 필드가 있으면 HTTP 400으로 거절합니다.
+서버는 허용된 enum 조합을 `chimap_ui_events_total` Prometheus counter로만
+집계하며 요청 본문을 PostgreSQL이나 분석 로그에 저장하지 않습니다.
+
+## 7. 교통 조회
 
 권장 prefix는 `/api/v1/transit`입니다.
 
@@ -278,7 +323,7 @@ Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이�
 `/api/transit` prefix도 현재 같은 router에 연결되어 있지만 신규 코드는
 versioned prefix를 사용합니다.
 
-## 7. 오류 코드
+## 8. 오류 코드
 
 | code | 일반 상태 | 의미 |
 | --- | --- | --- |

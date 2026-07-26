@@ -1,5 +1,9 @@
 # 시스템 아키텍처
 
+이 문서는 현재 작업 트리의 애플리케이션 구조를 설명합니다. 실제 공개
+컨테이너와 번들에 반영됐는지는 [구현·운영 현황](./current-state.md)의 배포
+스냅샷을 별도로 확인합니다.
+
 ## 1. 운영 토폴로지
 
 ```text
@@ -41,6 +45,9 @@ Alertmanager 9093도 host loopback에만 공개하고 relay는 host port를
 ```text
 React Web
   ├─ IntroSequence
+  ├─ UiExperienceProvider
+  │    숙련도·안내 밀도·모션·지표 동의(localStorage)
+  ├─ ExperienceSettingsDialog
   ├─ WalkingProfileDialog
   │    필수 출생연도/신장/체중/생물학적 성별
   ├─ PlaceCombobox                │
@@ -68,7 +75,7 @@ Express API
   │                   └─ TransitRepository
   │
   ├─ AppMetrics
-  │    ├─ HTTP·검색·추천·오류
+  │    ├─ HTTP·검색·추천·오류·동의 기반 UI enum
   │    ├─ DB pool·교통 통계·공급자 설정
   │    └─ 백업·교통 동기화 상태 파일
   └─ PostgreSQL Pool
@@ -76,6 +83,44 @@ Express API
 
 외부 응답은 provider 경계에서 Zod로 검증하고 WGS84 내부 모델로
 정규화합니다. API 응답도 공유 계약 패키지로 다시 검증합니다.
+
+### UI 상태와 경험 파이프라인
+
+```text
+React query·폼·선택 상태
+  → PlannerUiState 우선순위 계산
+      calculating → error → editing-place
+      → route-selected → results → ready → idle
+  → app-shell data 속성
+      ui-state / experience-mode / route-fit
+      / reduced-motion / telemetry-consent
+  → 검색·CTA·카드·지도 강조와 자동화 검증
+```
+
+숙련도와 안내 밀도는 추천 결과나 서버 점수에 관여하지 않습니다. 자동 모드는
+브라우저의 추천 성공 횟수 0~2회에 `guided`, 3회부터 `compact`를 선택하고
+보조 설명만 줄입니다. OS 모션 설정 또는 서비스의 `reduced` 설정 중 하나가
+켜지면 경로 그리기·슬라이드·펄스를 제거합니다.
+
+사용성 이벤트는 `telemetryConsent=granted`일 때만 브라우저에서 전송됩니다.
+API의 strict schema와 분당 120회 IP rate limit을 통과한 enum만 Prometheus
+counter로 집계하며 PostgreSQL이나 사용자별 분석 저장소를 만들지 않습니다.
+
+`route-selected`는 결과가 존재하는 것뿐 아니라 사용자가 카드 선택이나 상세
+열기로 경로와 상호작용한 상태입니다. 앱 루트는 CSS와 테스트가 함께 읽을 수
+있는 다음 속성으로 계산 결과를 투영합니다.
+
+| 속성 | 값 |
+| --- | --- |
+| `data-ui-state` | `idle`, `editing-place`, `ready`, `calculating`, `results`, `route-selected`, `error` |
+| `data-experience-mode` | `guided`, `compact` |
+| `data-route-fit` | `none`, `in-progress`, `complete` |
+| `data-reduced-motion` | `true`, `false` |
+| `data-telemetry-consent` | `unknown`, `granted`, `denied` |
+
+`UiExperienceProvider`가 추천 성공 횟수와 사용자 설정을 localStorage에서
+읽어 안내 밀도와 모션을 파생합니다. UI 이벤트 전송이 실패해도 추천 흐름은
+계속됩니다.
 
 ## 3. 검색 시퀀스
 
@@ -163,6 +208,13 @@ RecommendationRequest
 선호는 읽기 호환만 유지하고 개인화 온보딩을 다시 요구하며, 새 저장은
 version 2만 사용합니다. 인트로 완료 상태는 sessionStorage에 저장합니다.
 
+UI 숙련도는 별도 `UiExperienceStateV1` localStorage에만 저장합니다.
+추천 성공 횟수로 보조 설명 밀도만 파생하며 서버 사용자 프로필과 결합하지
+않습니다. `POST /api/v1/ui-events`는 사용자가 허용한 뒤 브라우저가 보내는
+strict enum payload만 204로 집계합니다. 검색어·좌표·장소/노선 ID·
+신체정보·사용자/세션 ID·정확한 시간값은 스키마에 없고, 서버는 본문이나
+IP를 분석 로그에 기록하지 않습니다.
+
 ## 6. 캐시와 동시성
 
 | 항목 | TTL |
@@ -179,6 +231,8 @@ version 2만 사용합니다. 인트로 완료 상태는 sessionStorage에 저�
 
 같은 key의 진행 중 요청은 하나의 Promise를 공유합니다. 캐시와 IP rate
 limit은 프로세스 로컬이므로 현재 API는 단일 인스턴스로 운영합니다.
+기본 rate limit은 장소 60회/분, 추천 10회/분, 익명 UI 이벤트 120회/분이며
+각각 IP 단위입니다.
 
 ## 7. 장애 모델
 
@@ -217,8 +271,8 @@ PostgreSQL pool을 닫습니다.
 - 일일 교통 갱신은 KAIST 1.2km와 대전역 500m의 실제 노선·정류장 순서를
   다시 받고 원자적 상태 파일에 성공 시각과 실패 노선을 기록합니다.
 - Prometheus는 HTTP 상태·처리시간, 검색 전략·0건·보완, 추천 결과, 안전한
-  오류 분류, DB pool, 정적 교통 row, 공급자 설정, 백업·동기화와 알림 전달
-  상태를 수집합니다.
+  오류 분류, 동의 기반 UI enum, DB pool, 정적 교통 row, 공급자 설정,
+  백업·동기화와 알림 전달 상태를 수집합니다.
 - label에는 검색어, 좌표, 차량번호, node/route ID, 키와 원문을 넣지
   않습니다.
 - 20개 경보 규칙은 availability, API 품질, 백업, 교통 동기화와 알림 전달

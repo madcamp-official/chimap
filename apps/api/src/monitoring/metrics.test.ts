@@ -74,6 +74,14 @@ describe("운영 metrics", () => {
       durationSeconds: 0.25,
     });
     metrics.observePlace("resolve", placeResult);
+    metrics.observeUiEvent({
+      version: "route-pulse-v1",
+      event: "recommendation_succeeded",
+      uiState: "results",
+      experienceMode: "guided",
+      outcome: "success",
+      durationBucket: "1to3s",
+    });
     const output = await metrics.metrics();
 
     expect(output).toContain(
@@ -89,6 +97,9 @@ describe("운영 metrics", () => {
     );
     expect(output).not.toContain("query=");
     expect(output).not.toContain("naver-secret");
+    expect(output).toContain(
+      'chimap_ui_events_total{event="recommendation_succeeded",ui_state="results",experience_mode="guided",outcome="success",duration_bucket="1to3s",service="chimap-api"} 1',
+    );
   });
 
   it("최근 교통 동기화 성공 시각과 실패 노선 수를 운영 지표로 노출한다", async () => {

@@ -113,3 +113,64 @@ describe("현재 위치 출발지 UX", () => {
     expect(useTripStore.getState().origin).toBeUndefined();
   });
 });
+
+describe("Route Pulse 화면 설정과 동의 경계", () => {
+  it("동의 전과 거부 상태에서는 익명 UI 이벤트 요청을 만들지 않는다", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />, { wrapper: createWrapper() });
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute(
+      "data-ui-state",
+      "idle",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "괜찮아요" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("명시적으로 허용한 뒤에만 제한된 planner 이벤트를 보낸다", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />, { wrapper: createWrapper() });
+
+    fireEvent.click(screen.getByRole("button", { name: "허용" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(request.body))).toEqual({
+      version: "route-pulse-v1",
+      event: "planner_viewed",
+      uiState: "idle",
+      experienceMode: "guided",
+    });
+    expect(String(request.body)).not.toContain("coordinate");
+    expect(String(request.body)).not.toContain("query");
+  });
+
+  it("화면 설정에서 동작 줄이기와 간결한 안내를 직접 선택할 수 있다", () => {
+    render(<App />, { wrapper: createWrapper() });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "화면 사용 설정 열기" }),
+    );
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: "간결하게 핵심 정보만 표시",
+      }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "동작 줄이기" }));
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute(
+      "data-experience-mode",
+      "compact",
+    );
+    expect(document.documentElement).toHaveAttribute(
+      "data-chimap-reduced-motion",
+      "true",
+    );
+  });
+});

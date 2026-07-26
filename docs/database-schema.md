@@ -1,9 +1,9 @@
-# CHIMap 데이터베이스 및 공개 계약
+# 데이터베이스 스키마와 저장 계약
 
-기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 01:26 KST
+기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 09:40 KST
 운영 DB에서 정류장 227,223개, TAGO 연결 정류장 2,797개, 노선 134개,
 노선-정류장 관계 5,638개를 확인했습니다. 운영 수치는
-[구현·운영 현황](./docs/current-state.md)에서 갱신합니다.
+[구현·운영 현황](./current-state.md)에서 갱신합니다.
 
 ## 1. 경계와 원칙
 
@@ -70,6 +70,13 @@ migration 실행기는 다음 순서를 보장합니다.
 migration 2는 CSV `source_stop_no`와 기존 TAGO `node_id`가 정확히 같은
 정류장 1,173쌍의 노선 관계를 CSV row로 옮긴 뒤 별도 TAGO row를 제거하고
 식별자를 연결했습니다. 운영 적용 후 같은 정확 중복 조합은 0건입니다.
+
+실행 시점의 migration 원본은 `apps/api/src/transit/migrations.ts`입니다.
+여기에 version 1과 2의 SQL·이름이 있고 API와 CLI가 checksum을 계산합니다.
+`apps/api/migrations/001_transit.sql`은 version 1 DDL을 사람이 확인하거나
+초기 환경에서 참고하기 위한 mirror이며, 최신 migration 전체의 실행 원본이
+아닙니다. 새 변경은 TypeScript migration에 새 version으로 추가하고 기존
+version의 SQL을 수정하지 않습니다.
 
 ## 4. 물리 스키마
 
@@ -372,7 +379,43 @@ type RecommendationResponse = {
 공급자 원문 모델은 API 밖으로 노출하지 않으며 모든 경로 좌표는 WGS84
 `{lng,lat}`로 정규화합니다.
 
-### 8.6 브라우저 개인화 저장 계약
+### 8.6 익명 UI 이벤트
+
+```ts
+type UiEventPayload = {
+  version: "route-pulse-v1";
+  event:
+    | "planner_viewed"
+    | "place_search_started"
+    | "place_selected"
+    | "recommendation_started"
+    | "recommendation_succeeded"
+    | "recommendation_failed"
+    | "route_selected"
+    | "route_details_opened"
+    | "experience_mode_changed";
+  uiState:
+    | "idle"
+    | "editing-place"
+    | "ready"
+    | "calculating"
+    | "results"
+    | "route-selected"
+    | "error";
+  experienceMode: "guided" | "compact";
+  outcome?: "success" | "empty" | "error" | "cancelled";
+  durationBucket?: "lt1s" | "1to3s" | "3to8s" | "gt8s";
+};
+```
+
+사용자가 동의한 경우에만 이 strict payload를
+`POST /api/v1/ui-events`로 보내며 성공 응답은 `204 No Content`입니다.
+서버는 PostgreSQL row나 개별 사용자 이력을 만들지 않고 허용된 enum label의
+Prometheus `chimap_ui_events_total`만 증가시킵니다. 요청 본문과 IP는 분석
+로그에 남기지 않습니다. 검색어, 좌표, 장소·노선 ID, 신체정보,
+사용자·세션 ID와 정확한 시간값은 계약에 없으므로 추가하면 거절됩니다.
+
+### 8.7 브라우저 개인화 저장 계약
 
 ```ts
 type StoredPreferencesV2 = {
@@ -398,6 +441,29 @@ type StoredPreferencesV2 = {
 PostgreSQL에 복제하지 않으며 API 요청에는 연구식으로 계산한
 `walkingMetric`만 포함합니다.
 
+마지막 출발지와 목적지 `Place`는 편의를 위해 이 브라우저 객체에 들어갈 수
+있지만 서버 저장 계약은 아닙니다. 사용자가 입력 문자열을 수정하는 즉시
+선택된 Place를 해제해 화면 문자열과 추천 좌표가 어긋나지 않게 합니다.
+
+### 8.8 브라우저 UI 경험 저장 계약
+
+```ts
+type UiExperienceStateV1 = {
+  version: 1;
+  successfulRecommendationCount: number;
+  densityPreference: "auto" | "guided" | "compact";
+  motionPreference: "system" | "reduced";
+  telemetryConsent: "unknown" | "granted" | "denied";
+};
+```
+
+`chimap:ui-experience-v1` localStorage에만 저장합니다. `auto`는 성공 횟수
+0~2회에 `guided`, 3회부터 `compact`를 파생합니다. 이 횟수는 추천 점수나
+API 응답을 바꾸지 않고 보조 설명의 밀도에만 영향을 줍니다. 학습 초기화는
+동의 상태를 보존한 채 나머지 값을 기본값으로 되돌립니다. OS의
+`prefers-reduced-motion`과 `motionPreference=reduced` 중 하나라도 참이면
+최종 동작 축소 상태가 됩니다.
+
 ## 9. 백업과 복구
 
 systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합니다.
@@ -419,7 +485,7 @@ systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합
 - volume 장애 시 최신 검증 백업으로 새 volume을 만든 뒤 readiness 확인
 
 최초 실제 데이터 백업의 파일명·크기·checksum과 restore 결과는
-[구현·운영 현황](./docs/current-state.md)에 기록합니다.
+[구현·운영 현황](./current-state.md)에 기록합니다.
 
 ## 10. 보존과 개인정보
 
@@ -429,3 +495,5 @@ systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합
 - 실시간 도착·차량 cache: 초 단위 TTL 후 제거
 - 애플리케이션 로그: provider, strategy, count, duration, HTTP status만 기록
 - 검색어·좌표·키·원문 응답은 로그와 DB에 기록하지 않음
+- 동의 기반 UI 이벤트: 허용 enum별 Prometheus counter만 기록하고 요청
+  본문·IP·개별 사용자 이력은 저장하지 않음
