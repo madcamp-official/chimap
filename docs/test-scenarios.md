@@ -45,14 +45,14 @@ git diff --check
 
 현재 일반 test 구성:
 
-- contracts: 8개
+- contracts: 9개
 - alert-relay: 3개
-- API: 47개
-- web: 39개
-- 합계: 97개
+- API: 58개
+- web: 43개
+- 합계: 113개
 
 PostgreSQL 전용 5개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
-건너뜁니다.
+건너뜁니다. 격리 PostGIS까지 포함한 전체는 118개입니다.
 
 ## 3. 공급자 테스트
 
@@ -66,6 +66,15 @@ PostgreSQL 전용 5개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
 - 401/403 fail-fast
 - 복구 가능한 5xx에서 NAVER 보완
 - timeout·AbortSignal mapping
+
+### Kakao Login
+
+- OAuth `state` 서명·불일치·만료와 카카오 호출 전 거절
+- 인가 코드 교환 시 Client Secret 전달
+- JavaScript 안전 정수를 넘는 카카오 회원번호 문자열 보존
+- 카카오 token 대신 hash된 CHIMap session만 저장
+- 익명 session, login redirect, callback cookie, logout HTTP 흐름
+- 웹의 비회원 이용, 로그인 사용자 표시, 취소·로그아웃 UX
 
 ### NAVER
 
@@ -272,7 +281,7 @@ UI 전체 흐름:
 
 - 백업 파일 비어 있지 않음, `pg_restore --list`, SHA-256 일치
 - 최신 백업을 `template0` 기반 별도 PostGIS 18 DB에 전부 복원
-- restore 후 PostGIS, migration과 `227184/2659/131/5411` 확인
+- restore 후 PostGIS, 현재 migration과 readiness 교통 통계 일치 확인
 - backup·restore·교통 동기화 systemd unit 문법과 timer active 확인
 - Prometheus 설정과 20개 rule을 `promtool`로 검증
 - API metrics 9091 host 미노출, Prometheus 9090 loopback 전용
@@ -295,27 +304,32 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 
 ## 14. 현재 검증 기록
 
-2026-07-26 15:03 KST 현재 작업 트리 검증:
+2026-07-26 현재 작업 트리 검증:
 
 - typecheck 통과
-- 결정적 테스트 97개 통과: contracts 8, alert-relay 3, API 47, web 39
-- production build 통과(Vite 단일 JS chunk 약 620KB 경고만 존재)
+- 결정적 테스트 118개 통과: contracts 9, alert-relay 3, API 63, web 43
+- production build 통과(Vite JS 약 379KB)
 - format check와 `git diff --check` 통과
 - 로컬 production build를 Chromium에서 1440·768·390·320px로 열어 헤더
   충돌·검색 폼 표시·가로 overflow 없음 확인
-- `DATABASE_TEST_URL` 미지정으로 이 일반 실행에서는 PostGIS 5개 skip
-- 공개 asset `index-z-oJH86J.js` 배포와 1440·768·390·320px Chromium smoke 통과
+- 격리 PostGIS에서 migration 3 적용·재적용을 포함한 5개 통과
+- 공개 asset `index-8c6yxSUg.js`, `index-BsaRoatc.css` 배포 확인
+- 선택형 로그인 포함 1440·768·390·320px Chromium smoke 통과
+- 공개 인증 session/start/state cookie/Kakao authorize smoke 통과
+- 공개 실제 추천·NAVER 지도 main E2E 통과
+- 공급자 회귀는 전체 실행 중 20초 timeout 뒤 단독 재실행 5.5초 통과
 
-2026-07-26 01:26 KST 전체 공개·운영 스냅샷:
+2026-07-26 17:15 KST 전체 공개·운영 스냅샷:
 
 - PostgreSQL/PostGIS 통합 테스트 5개 통과
-- 공개 strict 지도 E2E 2개 통과
+- 공개 실제 추천·NAVER 지도 main E2E 통과
+- 공급자 회귀 시나리오는 전체 실행 timeout 뒤 단독 재실행 5.5초 통과
 - KAIST→대전역 8,000보 요청에서 조기 하차 7,995보, 목표 오차 -5보 확인
 - KAIST 본원 중심→대전 갤러리아 HTTP 200, 추천 3건
 - NAVER geocode/reverse HTTP 200
-- readiness `227223/2797/134/5638`
-- 백업 restore 스냅샷 `227184/2659/131/5411`
-- 공개 bundle 서버 비밀값 미검출
+- readiness `227223/2804/134/5638`
+- 백업 restore 스냅샷 `PostGIS=1/migration=3/227223/2804/134/5638`
+- 공개 bundle NAVER·Kakao OAuth·session 비밀값 미검출
 - 백업 restore 통과
 - Prometheus 3개 target `up`, 20개 rule healthy
 - 교통 동기화 45개 성공·0개 실패와 상태 지표 확인
@@ -323,8 +337,9 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - 외부 운영 채널은 webhook 입력 전이며 구성 필요 경보 확인
 - 구현 commit `b294a4d`의 GitHub CI run `30165571376` 품질·PostGIS 두 job 성공
 
-2026-07-26 15:12 KST에 공개 health `ok`, readiness `ready`와 새 웹 asset을
-확인했고 15:21 KST에 새 UI 전체 공개 E2E 2개가 통과했습니다. 자동 건강 경로
-UX commit은 push 뒤 생성되는 CI 기록을 별도로 확인해야 합니다.
+2026-07-26 17:13 KST에 선택형 카카오 로그인과 태블릿 헤더 보정 이미지를
+승격했고 17:15 KST에 공개 health `ok`, readiness `ready`, 새 asset과 인증
+smoke를 확인했습니다. 실제 카카오 계정 동의→callback→logout E2E와 이
+commit의 CI 결과는 별도로 확인합니다.
 
 새 배포 후 이 절을 갱신하거나 별도 release 기록으로 이동합니다.

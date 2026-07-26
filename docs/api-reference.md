@@ -4,7 +4,7 @@
 성공·오류 응답은 `@chimap/contracts`의 Zod schema로 검증합니다. 익명 UI
 이벤트 성공만 본문 없는 `204 No Content`를 반환합니다.
 
-계약은 현재 `feat/tago-transit` 구현과 2026-07-26 15:12 KST 공개 배포를
+계약은 현재 `feat/tago-transit` 구현과 2026-07-26 17:15 KST 공개 배포를
 기준으로 합니다. 배포 시점과 운영 통계는
 [구현·운영 현황](./current-state.md)에서 관리합니다.
 
@@ -17,7 +17,8 @@
 - 장소 조회 rate limit: IP당 기본 60회/분
 - 추천 rate limit: IP당 기본 10회/분
 - 익명 UI 이벤트 rate limit: IP당 기본 120회/분
-- CORS: `WEB_ORIGIN`과 origin이 없는 서버 요청만 허용
+- 인증 API rate limit: IP당 기본 20회/분
+- CORS: `WEB_ORIGIN`과 origin이 없는 서버 요청만 허용, credential cookie 허용
 
 오류 응답:
 
@@ -77,7 +78,7 @@ DB를 조회하지 않습니다.
 }
 ```
 
-위 응답은 2026-07-26 15:12 KST 공개 재확인 예시이며 실제 데이터 동기화에
+위 응답은 2026-07-26 17:15 KST 공개 재확인 예시이며 실제 데이터 동기화에
 따라 시각과 통계가 달라질 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
@@ -90,7 +91,76 @@ DB를 조회하지 않습니다.
 
 하나라도 실패하면 HTTP 503과 `not_ready`입니다.
 
-## 3. 장소 검색
+## 3. 선택형 카카오 로그인
+
+웹은 로그인하지 않아도 검색·추천을 모두 사용할 수 있습니다. 카카오 로그인은
+향후 모바일 계정과 웹 편의정보를 연결하기 위한 선택 기능입니다. 카카오
+access/refresh token은 사용자 정보 확인 직후 폐기하며 서버 DB에는 저장하지
+않습니다.
+
+### `GET /api/v1/auth/session`
+
+현재 CHIMap HttpOnly cookie를 확인합니다. 응답은 `Cache-Control: no-store`입니다.
+
+```json
+{
+  "authenticated": false,
+  "kakaoLoginAvailable": true,
+  "user": null
+}
+```
+
+로그인한 경우:
+
+```json
+{
+  "authenticated": true,
+  "kakaoLoginAvailable": true,
+  "user": {
+    "id": "00000000-0000-4000-8000-000000000000",
+    "provider": "KAKAO",
+    "displayName": "춘식이",
+    "profileImageUrl": null
+  }
+}
+```
+
+### `GET /api/v1/auth/kakao/start`
+
+브라우저가 직접 이동하는 endpoint입니다. 10분 유효한 고유 `state`를 생성해
+서명된 `chimap_kakao_state` HttpOnly·SameSite=Lax cookie로 저장하고 카카오
+인가 화면으로 `302` 이동합니다. 카카오 로그인이 설정되지 않은 환경은
+`AUTH_NOT_CONFIGURED` 503을 반환합니다.
+
+### `GET /api/v1/auth/kakao/callback`
+
+Kakao Developers에 등록할 Redirect URI입니다. `code`와 `state`를 받고 서명된
+cookie의 state와 constant-time 비교한 뒤 서버에서 인가 코드를 교환합니다.
+성공하면 30일 기본 만료의 `chimap_session` HttpOnly·SameSite=Lax cookie를
+발급하고 웹의 `/?auth=kakao-success`로 이동합니다. 운영 cookie에는 Secure도
+적용합니다. 취소와 안전한 실패 결과만 웹 query에 전달하며 카카오 원문 오류나
+토큰은 브라우저에 노출하지 않습니다.
+
+### `POST /api/v1/auth/logout`
+
+CHIMap 세션 hash row를 삭제하고 cookie를 만료시킵니다. 카카오계정 전체
+로그아웃이나 앱 연결 해제는 수행하지 않습니다. 성공은 본문 없는 204입니다.
+
+필수 서버 설정:
+
+```dotenv
+KAKAO_REST_API_KEY=
+KAKAO_OAUTH_CLIENT_SECRET=
+KAKAO_OAUTH_REDIRECT_URI=https://chimap.madcamp-kaist.org/api/v1/auth/kakao/callback
+AUTH_SESSION_SECRET=
+AUTH_SESSION_TTL_DAYS=30
+```
+
+Kakao Developers에서 카카오 로그인을 활성화하고 위 Redirect URI를 정확히
+등록해야 합니다. Client Secret이 활성화된 앱이므로 토큰 요청에도 같은 값을
+사용합니다.
+
+## 4. 장소 검색
 
 ### `GET /api/v1/places`
 
@@ -147,7 +217,7 @@ ID 접두사:
 `degraded=true`는 일부 Kakao 호출이 실패했으나 다른 실제 결과를 반환했다는
 뜻입니다.
 
-## 4. 역지오코딩
+## 5. 역지오코딩
 
 ### `GET /api/v1/places/reverse`
 
@@ -174,7 +244,7 @@ type ReverseGeocodeResponse = {
 두 공급자가 정상적으로 주소를 찾지 못하면 `place: null`입니다. UI는 이때
 원래 GPS 좌표를 `현재 위치`로 사용할 수 있습니다.
 
-## 5. 추천
+## 6. 추천
 
 ### `POST /api/v1/recommendations`
 
@@ -294,7 +364,7 @@ Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이�
 | `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS` | 기존 시간 제약 요청에서 목표 ±5% 경로가 없어 최접근 경로 제공 |
 | `LIMITED_ROUTE_VARIETY` | 충분히 다른 경로가 3개 미만 |
 
-## 6. 익명 UI 이벤트
+## 7. 익명 UI 이벤트
 
 ### `POST /api/v1/ui-events`
 
@@ -334,7 +404,7 @@ strict schema이므로 검색어, 좌표, 장소·노선 ID, 신체정보, 사�
 서버는 허용된 enum 조합을 `chimap_ui_events_total` Prometheus counter로만
 집계하며 요청 본문을 PostgreSQL이나 분석 로그에 저장하지 않습니다.
 
-## 7. 교통 조회
+## 8. 교통 조회
 
 권장 prefix는 `/api/v1/transit`입니다.
 
@@ -352,7 +422,7 @@ strict schema이므로 검색어, 좌표, 장소·노선 ID, 신체정보, 사�
 `/api/transit` prefix도 현재 같은 router에 연결되어 있지만 신규 코드는
 versioned prefix를 사용합니다.
 
-## 8. 오류 코드
+## 9. 오류 코드
 
 | code | 일반 상태 | 의미 |
 | --- | --- | --- |

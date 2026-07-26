@@ -1,4 +1,5 @@
 import {
+  authSessionResponseSchema,
   busRouteStopsResponseSchema,
   busVehiclesResponseSchema,
   errorResponseSchema,
@@ -17,6 +18,7 @@ import {
   type RecommendationResponse,
   type ReverseGeocodeResponse,
   type UiEventPayload,
+  type AuthSessionResponse,
 } from "@chimap/contracts";
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -56,6 +58,7 @@ async function fetchJson(
 ): Promise<unknown> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    credentials: "include",
     headers: {
       Accept: "application/json",
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -83,6 +86,31 @@ async function fetchJson(
     });
   }
   return data;
+}
+
+export function getKakaoLoginUrl(): string {
+  return `${API_BASE_URL}/api/v1/auth/kakao/start`;
+}
+
+export async function getAuthSession(
+  signal?: AbortSignal,
+): Promise<AuthSessionResponse> {
+  return authSessionResponseSchema.parse(
+    await fetchJson("/api/v1/auth/session", {
+      ...(signal === undefined ? {} : { signal }),
+    }),
+  );
+}
+
+export async function logout(): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error("로그아웃하지 못했어요. 다시 시도해 주세요.");
+  }
 }
 
 export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
@@ -156,6 +184,7 @@ export async function sendUiEvent(
     },
     body: JSON.stringify(payload),
     keepalive: true,
+    credentials: "include",
     ...(signal === undefined ? {} : { signal }),
   });
   if (!response.ok) {

@@ -3,14 +3,16 @@
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
 - **현재 구현**: `feat/tago-transit`의 Route Pulse UI·익명 이벤트·자동 건강
-  경로 UX. 2026-07-26 15:03 KST에 typecheck, 결정적 테스트 97개와
-  production build를 통과했습니다.
-- **현재 공개 배포**: 2026-07-26 15:12 KST에 새 이미지
-  `sha256:eb4a2462…`로 API/웹 컨테이너를 교체했습니다. 공개 asset
-  `index-z-oJH86J.js`와 health/readiness, 1440·768·390·320px Chromium
-  레이아웃 smoke를 확인했습니다.
-- **마지막 전체 운영 점검**: 2026-07-26 01:26 KST에 컨테이너, PostgreSQL,
-  timer, 모니터링, 공개 E2E와 GitHub Actions를 대조했습니다.
+  경로 UX와 선택형 카카오 웹 로그인. 2026-07-26에 계약·API·웹·알림 릴레이와
+  격리 PostGIS 결정적 테스트 118개 및 production build를 통과했습니다.
+  실제 카카오 계정으로 동의→callback→logout을 완료하는 사용자 E2E만
+  별도로 남았습니다.
+- **현재 공개 배포**: 2026-07-26 17:13 KST에 이미지
+  `sha256:67d47b65…`로 API/웹 컨테이너를 교체했습니다. 공개 asset
+  `index-8c6yxSUg.js`, `index-BsaRoatc.css`와 선택형 로그인, 익명 이용,
+  health/readiness 및 1440·768·390·320px Chromium 레이아웃을 확인했습니다.
+- **마지막 전체 운영 점검**: 2026-07-26 17:15 KST에 컨테이너, PostgreSQL,
+  migration 3, 백업·복원, 모니터링, 공개 E2E와 인증 smoke를 대조했습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -41,6 +43,8 @@
 - 추천 성공 3회부터 보조 설명만 줄이는 guided/compact 숙련도 적용
 - 자동/자세히/간결하게, 시스템 모션/동작 줄이기, 학습 초기화 설정 추가
 - 명시적 동의 뒤 strict enum만 204로 집계하는 익명 UI 이벤트 추가
+- 헤더의 선택형 카카오 로그인, 로그인 사용자 표시, 로그아웃과 실패·취소
+  안내를 추가하고 비회원 핵심 흐름은 그대로 유지
 
 ### 실제 검색·교통
 
@@ -71,6 +75,7 @@
 - 일일 DB 백업·월간 restore·일일 TAGO 동기화 systemd timer 설치
 - DB custom-format 백업과 별도 restore 시험 완료
 - CSV 정류장번호와 TAGO node ID가 같은 1,173쌍을 migration으로 병합
+- migration 3으로 `app_users`, `oauth_accounts`, `auth_sessions`를 추가
 - KAIST 1.2km 3개·대전역 500m 42개 노선 정기 동기화 성공
 
 ### 보안·계약
@@ -81,13 +86,15 @@
 - 공개 health와 추천 계약에서 폐기된 실행 형태 필드 제거
 - 내장 대체 경로와 외부 실패 시 임의 데이터 전환 제거
 - 공개 bundle 서버 비밀값 검사 추가
+- OAuth state HMAC, HttpOnly·Secure·SameSite=Lax cookie, hash session 저장
+- 카카오 access/refresh token 비저장 경계 적용
 
 ## 2. 현재 결론
 
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data`, 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:67d47b65…`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
@@ -100,13 +107,14 @@
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
 | 구현 브랜치 | `feat/tago-transit` |
 | 마지막 CI 검증 구현 | `b294a4d`, run `30165571376` 두 job 성공 |
-| 자동 건강 경로 UX 공개 상태 | asset `index-z-oJH86J.js`, 공개 전체 E2E 통과 |
+| 공개 웹 asset | `index-8c6yxSUg.js`, `index-BsaRoatc.css` |
+| 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 기본 브랜치 | `main`은 아직 초기 commit, 병합·보호 규칙 사용자 작업 |
-| 공개 번들 비밀값 검사 | NAVER 서버 Client Secret 미검출 |
+| 공개 번들 비밀값 검사 | NAVER·Kakao OAuth·CHIMap session 비밀값 미검출 |
 
 ## 3. readiness 스냅샷
 
-2026-07-26 15:12 KST 공개 재확인 결과:
+2026-07-26 17:15 KST 공개 재확인 결과:
 
 ```json
 {
@@ -130,9 +138,8 @@
 }
 ```
 
-health timestamp는 `2026-07-26T06:12:02.231Z`, readiness timestamp는
-`2026-07-26T06:12:10.817Z`였습니다. 위 JSON에서는 가독성을 위해
-timestamp를 생략했습니다. 네 교통 통계가 모두 0보다 크고
+readiness timestamp는 `2026-07-26T08:15:16.902Z`였습니다. 위 JSON에서는
+가독성을 위해 timestamp를 생략했습니다. 네 교통 통계가 모두 0보다 크고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
 노선을 저장하므로 이 수치는 백업 시점보다 증가할 수 있습니다.
@@ -203,6 +210,16 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 노선 정류장 전체 교체 transaction과 deadlock 제한 재시도
 - graceful shutdown 시 HTTP 종료 후 `pool.end()`
 
+### 선택형 카카오 로그인
+
+- 익명 사용자는 로그인 장애와 무관하게 검색·추천·지도를 계속 이용
+- 서버 인가 코드 교환과 `/v2/user/me` 사용자 확인
+- 10분 만료 고유 state와 HMAC 서명, constant-time 비교
+- 256-bit CHIMap session 원문은 HttpOnly cookie, DB에는 SHA-256 hash만 저장
+- 운영 cookie `Secure`, `SameSite=Lax`; 인증 응답 `Cache-Control: no-store`
+- 카카오 token·email·전화번호·검색·위치·건강정보 비저장
+- 현재 운영 DB의 계정·OAuth·session row는 실제 계정 E2E 전이라 각각 0건
+
 ### 운영
 
 - PostgreSQL host port 미노출
@@ -220,19 +237,21 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 
 ## 5. 검증 기록
 
-로컬 검증은 2026-07-26 15:03 KST 구현을, 공개 검증은 15:12~15:21 KST에
-배포된 같은 웹/API 이미지를 대상으로 합니다.
+로컬 검증은 2026-07-26 구현을, 최신 공개 검증은 17:13~17:15 KST에 배포된
+같은 웹/API 이미지를 대상으로 합니다.
 
 | 검증 | 결과 |
 | --- | --- |
 | 현재 작업 트리 TypeScript typecheck | 통과 |
-| 현재 작업 트리 production build | 통과, Vite 단일 JS chunk 약 620KB 경고만 존재 |
-| 현재 작업 트리 계약·API·웹·알림 릴레이 테스트 | 97개 통과(8+47+39+3) |
+| 현재 작업 트리 production build | 통과, Vite JS 약 379KB |
+| 현재 작업 트리 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 현재 작업 트리 format check | 통과 |
 | 현재 작업 트리 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| PostgreSQL/PostGIS 통합 테스트 | 마지막 전체 운영 점검에서 5개 통과 |
-| 공개 strict 지도 E2E | 2026-07-26 15:21 KST 새 UI 전체 흐름 2개 통과 |
-| 공개 반응형 Chromium smoke | 1440/768/390/320px 1개 통과 |
+| PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 migration 3 적용·재적용 포함 5개 통과 |
+| 공개 strict 지도 E2E | 실제 추천·NAVER 지도 흐름 통과 |
+| 공개 반응형 Chromium smoke | 로그인 포함 1440/768/390/320px 통과; 768px 겹침 수정 후 재검증 |
+| 공개 공급자 회귀 | 전체 실행 중 20초 timeout 후 같은 시나리오 단독 재실행 5.5초 통과 |
+| 공개 카카오 인증 smoke | session available, start 302, state cookie 보안 속성, Kakao authorize 302 통과 |
 | GitHub Actions | 구현 commit `b294a4d`, run `30165571376`, 품질·PostGIS 두 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
@@ -248,25 +267,24 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | 정류장 병합 migration | 1,173쌍→0쌍, 관계 유지, migration 2 적용 |
 | 알림 릴레이 형식 | 격리 HTTP 수신처에 Slack 형식 긴급 메시지·상태 버튼 전달 |
 | 외부 운영 채널 | webhook 미입력, 구성 지표 `0`과 설정 필요 경보 발생 확인 |
-| 공개 번들 서버 비밀값 검사 | 미검출 |
+| 공개 번들 서버 비밀값 검사 | NAVER·Kakao OAuth·session 비밀값 미검출 |
 | 폐기 대상 용어·설정 내용 검색 | 0건 |
 | `git diff --check` | 2026-07-26 최종 문서 점검 통과 |
 
 ## 6. 백업·복구 기록
 
-2026-07-25 자동화 스크립트로 실제 운영 DB의 custom-format 백업을 생성하고
-checksum을 확인했습니다.
+2026-07-26 17:15 KST 배포 후 실제 운영 DB의 custom-format 백업을 생성하고
+checksum과 전체 복원을 확인했습니다.
 
 ```text
-파일: /var/backups/chimap/chimap-daily-20260725T141917Z.dump
-크기: 17,337,137 bytes
-SHA-256: e064e44f483960240596a0e4461829baba7e6c9d920ed3130ea322259a8c6b81
+파일: /var/backups/chimap/chimap-daily-20260726T081515Z.dump
+크기: 17,345,494 bytes
+SHA-256: fbd1e2cf4b927e270804908d00ba4c19d5f98d0b5afe2daeaec693ed29e201ce
 ```
 
 별도 PostgreSQL/PostGIS 18 컨테이너의 `template0` 기반 빈 DB로 restore한
-뒤 `PostGIS=1`, `migration=2`, `227184/2659/131/5411` 통계를 다시
-확인했습니다. 이는 14:19 UTC 백업 시점의 고정 통계이며, 01:26 KST 최신
-readiness의 `227223/2797/134/5638`과 구분합니다. 성공 상태는
+뒤 `PostGIS=1`, `migration=3`, `227223/2804/134/5638` 통계를 다시
+확인했습니다. 계정 관련 세 테이블도 migration 3에 포함됩니다. 성공 상태는
 `/var/backups/chimap/latest.json`과 `restore-latest.json`에 기록합니다.
 
 설치된 timer:
@@ -292,7 +310,9 @@ handshake가 timeout 됐습니다. MTU 1400의 별도 bridge에서는 즉시 연
 Playwright 브라우저 컨테이너의 기본 Docker bridge에서는 별도로 NAVER Web
 SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치했고 host
 직접 요청은 HTTP 200이었습니다. 같은 strict E2E를 `--network host`로
-실행해 NAVER 지도까지 포함한 2개 시나리오가 모두 통과했습니다.
+실행해 실제 추천·NAVER 지도 main 흐름이 통과했습니다. 공급자 회귀
+시나리오는 전체 실행에서 외부 응답이 20초 timeout된 뒤 단독 재실행에서
+5.5초 만에 통과했습니다.
 
 ## 8. Git release 상태
 
@@ -310,14 +330,14 @@ push했습니다. GitHub CI run `30165571376`에서 다음 두 job이 모두
 - `Typecheck, tests, build, config`
 - `PostgreSQL and PostGIS integration`
 
-이후 문서 갱신 `6002541`과 release 검증 기록 `640a5a4` 위에서 Route Pulse
-UI, 익명 이벤트와 자동 건강 경로 UX를 구현했습니다. 이 변경은 운영 이미지
-승격과 공개 E2E를 완료했지만 `b294a4d`의 CI 성공을 새 변경의 CI 결과로
-간주하지 않으며, push 뒤 생성되는 CI를 별도로 확인해야 합니다.
+이후 문서 갱신 `6002541`, release 검증 `640a5a4`, Route Pulse·자동 건강
+경로 `91dad7e`를 같은 브랜치에 반영했습니다. 선택형 카카오 로그인과
+태블릿 헤더 보정도 `feat/tago-transit`에서 운영 배포·공개 검증 후 push하며,
+정확한 최신 commit은 이 문서가 포함된 Git history를 기준으로 합니다.
+`b294a4d`의 과거 CI 성공을 새 변경의 결과로 간주하지 않고 push 뒤 생성되는
+CI를 별도로 확인합니다.
 
-`b294a4d`까지의 개인화 추천 구현은 운영 배포·검증과 기능 브랜치 push까지
-완료했습니다. 기본
-브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
+기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
 있습니다. 병합, 병합 후 수동 `Public live E2E`, 필수 check 지정은
 [사용자 작업](../needs.md)에 기록했습니다.
 

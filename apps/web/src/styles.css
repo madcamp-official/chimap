@@ -606,6 +606,123 @@ summary:focus-visible,
   gap: 7px;
 }
 
+.auth-control,
+.auth-user,
+.kakao-login-button,
+.auth-logout-button {
+  display: inline-flex;
+  align-items: center;
+}
+
+.auth-control {
+  position: relative;
+  gap: 6px;
+}
+
+.auth-control > small {
+  max-width: 72px;
+  color: rgb(255 255 255 / 62%);
+  font-size: 8px;
+  line-height: 1.25;
+}
+
+.kakao-login-button,
+.auth-logout-button {
+  min-height: 36px;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 11px;
+  font-size: 10px;
+  font-weight: 900;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.kakao-login-button {
+  padding: 0 11px;
+  border: 1px solid #fee500;
+  color: #191919;
+  background: #fee500;
+}
+
+.kakao-login-button:hover {
+  background: #ffeb3b;
+}
+
+.kakao-login-button:disabled {
+  border-color: rgb(255 255 255 / 16%);
+  color: rgb(255 255 255 / 55%);
+  background: rgb(255 255 255 / 8%);
+  cursor: default;
+}
+
+.kakao-symbol {
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fee500;
+  background: #191919;
+  font-size: 8px;
+}
+
+.auth-user {
+  min-width: 0;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.auth-user > span:last-child {
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 50%;
+  color: var(--navy-strong);
+  background: #fee500;
+  object-fit: cover;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.auth-logout-button {
+  padding: 0 8px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  color: rgb(255 255 255 / 80%);
+  background: rgb(255 255 255 / 8%);
+}
+
+.auth-logout-button svg {
+  width: 14px;
+}
+
+.auth-message {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 7px 9px;
+  border-radius: 9px;
+  color: var(--navy-strong);
+  background: white;
+  box-shadow: 0 8px 24px rgb(8 45 55 / 18%);
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .header-settings-button {
   min-height: 38px;
   display: inline-flex;
@@ -3029,6 +3146,20 @@ summary:focus-visible,
     display: none;
   }
 
+  .auth-control > small,
+  .auth-user > span:last-child,
+  .auth-logout-button svg {
+    display: none;
+  }
+
+  .kakao-login-button {
+    padding: 0 8px;
+  }
+
+  .auth-logout-button {
+    padding: 0 7px;
+  }
+
   .app-header {
     padding: 0 13px 8px;
   }
@@ -3153,6 +3284,25 @@ summary:focus-visible,
     bottom: 18px;
     left: auto;
     width: min(520px, calc(100vw - 36px));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1179px) {
+  .brand small,
+  .auth-control > small,
+  .departure-badge,
+  .header-settings-button span {
+    display: none;
+  }
+
+  .header-settings-button {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .kakao-login-button {
+    padding: 0 8px;
   }
 }
 

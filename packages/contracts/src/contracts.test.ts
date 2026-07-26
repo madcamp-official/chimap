@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  authSessionResponseSchema,
   coordinateSchema,
   estimatePersonalizedStepLengthMeters,
   haversineDistanceMeters,
@@ -13,6 +14,35 @@ import {
 } from "./index.js";
 
 describe("공유 계약", () => {
+  it("선택형 카카오 로그인 세션의 익명·로그인 상태를 구분한다", () => {
+    expect(
+      authSessionResponseSchema.safeParse({
+        authenticated: false,
+        kakaoLoginAvailable: true,
+        user: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      authSessionResponseSchema.safeParse({
+        authenticated: true,
+        kakaoLoginAvailable: true,
+        user: {
+          id: "00000000-0000-4000-8000-000000000000",
+          provider: "KAKAO",
+          displayName: "춘식이",
+          profileImageUrl: null,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      authSessionResponseSchema.safeParse({
+        authenticated: true,
+        kakaoLoginAvailable: true,
+        user: null,
+      }).success,
+    ).toBe(false);
+  });
+
   it("유효한 좌표를 허용하고 범위 밖 좌표를 거절한다", () => {
     expect(
       coordinateSchema.parse({ lng: 127.3604, lat: 36.3723 }),

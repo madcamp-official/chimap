@@ -118,4 +118,42 @@ export const TRANSIT_MIGRATIONS: ReadonlyArray<{
       WHERE stop.id = merge.keep_id;
     `,
   },
+  {
+    version: 3,
+    name: "kakao_users_and_sessions",
+    sql: `
+      CREATE TABLE IF NOT EXISTS app_users (
+        id uuid PRIMARY KEY,
+        display_name varchar(100),
+        profile_image_url text,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        last_login_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_accounts (
+        provider varchar(20) NOT NULL CHECK (provider IN ('KAKAO')),
+        provider_user_id varchar(100) NOT NULL,
+        user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY(provider, provider_user_id),
+        UNIQUE(provider, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS oauth_accounts_user_index
+        ON oauth_accounts(user_id);
+
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        token_hash char(64) PRIMARY KEY,
+        user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        last_seen_at timestamptz NOT NULL DEFAULT now(),
+        expires_at timestamptz NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS auth_sessions_user_index
+        ON auth_sessions(user_id);
+      CREATE INDEX IF NOT EXISTS auth_sessions_expiry_index
+        ON auth_sessions(expires_at);
+    `,
+  },
 ];

@@ -29,6 +29,7 @@ import {
 } from "react";
 
 import { ExperienceSettingsDialog } from "./components/ExperienceSettingsDialog.js";
+import { AuthControl } from "./components/AuthControl.js";
 import { HeaderStepSummary } from "./components/HeaderStepSummary.js";
 import {
   IntroSequence,
@@ -122,17 +123,24 @@ function ResultsNotice({
 
 type AppProps = {
   reverseAddress?: typeof reverseGeocode;
+  authEnabled?: boolean;
 };
 
-export function App({ reverseAddress = reverseGeocode }: AppProps = {}) {
+export function App({
+  reverseAddress = reverseGeocode,
+  authEnabled = true,
+}: AppProps = {}) {
   return (
     <UiExperienceProvider>
-      <PlannerApp reverseAddress={reverseAddress} />
+      <PlannerApp
+        reverseAddress={reverseAddress}
+        authEnabled={authEnabled}
+      />
     </UiExperienceProvider>
   );
 }
 
-function PlannerApp({ reverseAddress }: Required<AppProps>) {
+function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
   const {
     state: experienceState,
     mode: experienceMode,
@@ -672,6 +680,7 @@ function PlannerApp({ reverseAddress }: Required<AppProps>) {
             onEditProfile={() => setProfileEditorOpen(true)}
           />
           <div className="header-status">
+            {authEnabled ? <AuthControl /> : null}
             <span className="departure-badge">
               <span className="live-dot" />
               지금 출발 기준

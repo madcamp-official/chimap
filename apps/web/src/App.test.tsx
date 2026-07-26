@@ -79,7 +79,7 @@ describe("현재 위치 출발지 UX", () => {
         degraded: true,
       },
     });
-    render(<App reverseAddress={reverseAddress} />, {
+    render(<App reverseAddress={reverseAddress} authEnabled={false} />, {
       wrapper: createWrapper(),
     });
 
@@ -116,7 +116,7 @@ describe("현재 위치 출발지 UX", () => {
     vi.stubGlobal("navigator", {
       geolocation: { getCurrentPosition },
     });
-    render(<App />, { wrapper: createWrapper() });
+    render(<App authEnabled={false} />, { wrapper: createWrapper() });
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -139,7 +139,7 @@ describe("Route Pulse 화면 설정과 동의 경계", () => {
   it("동의 전과 거부 상태에서는 익명 UI 이벤트 요청을 만들지 않는다", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    render(<App />, { wrapper: createWrapper() });
+    render(<App authEnabled={false} />, { wrapper: createWrapper() });
 
     expect(document.querySelector(".app-shell")).toHaveAttribute(
       "data-ui-state",
@@ -156,7 +156,7 @@ describe("Route Pulse 화면 설정과 동의 경계", () => {
       status: 204,
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<App />, { wrapper: createWrapper() });
+    render(<App authEnabled={false} />, { wrapper: createWrapper() });
 
     fireEvent.click(screen.getByRole("button", { name: "허용" }));
 
@@ -173,7 +173,7 @@ describe("Route Pulse 화면 설정과 동의 경계", () => {
   });
 
   it("화면 설정에서 동작 줄이기와 간결한 안내를 직접 선택할 수 있다", () => {
-    render(<App />, { wrapper: createWrapper() });
+    render(<App authEnabled={false} />, { wrapper: createWrapper() });
 
     fireEvent.click(
       screen.getByRole("button", { name: "화면 사용 설정 열기" }),
@@ -202,7 +202,7 @@ describe("자동 건강 경로 입력", () => {
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />, { wrapper: createWrapper() });
+    render(<App authEnabled={false} />, { wrapper: createWrapper() });
 
     expect(document.querySelector(".map-column .route-search-form")).toBeNull();
     expect(

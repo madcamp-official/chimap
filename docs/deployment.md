@@ -4,8 +4,9 @@
 origin은 `http://127.0.0.1:3000`입니다. 명령은 저장소 루트에서
 실행합니다.
 
-자동 건강 경로 UX와 Route Pulse UI는 2026-07-26 15:12 KST 공개 배포됐습니다.
-아래 UI smoke와 asset 확인은 이후 모든 이미지 승격에서도 반복합니다.
+자동 건강 경로 UX, Route Pulse UI와 선택형 카카오 로그인은 2026-07-26
+17:13 KST 공개 배포됐고 17:15 KST 운영 점검을 마쳤습니다. 아래 UI smoke와
+asset·인증 확인은 이후 모든 이미지 승격에서도 반복합니다.
 
 ## 1. 사전 조건
 
@@ -64,7 +65,7 @@ node --env-file=.env --input-type=module -e '
 
 ### Kakao
 
-다음 네 호출을 운영 서버의 실제 outbound IP에서 HTTP 200으로 확인합니다.
+다음 다섯 호출을 운영 서버의 실제 outbound IP에서 HTTP 200으로 확인합니다.
 
 - keyword
 - address
@@ -74,6 +75,20 @@ node --env-file=.env --input-type=module -e '
 
 Kakao Map 상태, REST 키 설정과 쿼터는
 [Kakao 연동 문서](./kakao-api-integration.md)를 따릅니다.
+
+선택형 웹 로그인 활성화 전에는 별도로 다음을 완료합니다.
+
+1. Kakao Developers에서 카카오 로그인을 활성화하고 nickname/profile 동의
+   항목을 검토합니다.
+2. 운영 Redirect URI
+   `https://chimap.madcamp-kaist.org/api/v1/auth/kakao/callback`을 등록합니다.
+3. Client Secret을 활성화한 뒤 `KAKAO_OAUTH_CLIENT_SECRET`,
+   `KAKAO_OAUTH_REDIRECT_URI`, 32자 이상 `AUTH_SESSION_SECRET`을 runtime에만
+   주입합니다.
+4. DB backup 뒤 migration 3을 적용하고 `app_users`, `oauth_accounts`,
+   `auth_sessions` 생성을 확인합니다.
+5. staging에서 login/cancel/relogin/logout과 비회원 추천 회귀를 확인합니다.
+6. DB·log·browser storage에 카카오 token 원문이 남지 않는지 검사합니다.
 
 ### NAVER
 
@@ -259,17 +274,23 @@ docker run --rm -d \
   --env-file .env \
   -e NODE_ENV=production \
   -e PORT=3000 \
-  -e WEB_ORIGIN=https://chimap.madcamp-kaist.org \
+  -e WEB_ORIGIN=http://127.0.0.1:3001 \
   -e WEB_DIST_PATH=/app/web \
   -p 127.0.0.1:3001:3000 \
-  chimap:actual-data
+  --entrypoint sh \
+  chimap:actual-data \
+  -lc 'export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"; exec node dist/server.js'
 
 curl -fsS http://127.0.0.1:3001/api/v1/health
 curl -fsS http://127.0.0.1:3001/api/v1/readiness
+curl -fsS http://127.0.0.1:3001/api/v1/auth/session
 ```
 
 검증 후 정확한 `chimap-api-candidate` 컨테이너만 중지합니다. 같은 이름의
-기존 컨테이너가 없는지 먼저 확인합니다.
+기존 컨테이너가 없는지 먼저 확인합니다. 후보는 `.env`의 오래된
+`DATABASE_URL`을 그대로 믿지 않고 Compose와 같은 `POSTGRES_*` 값으로 내부
+주소를 만듭니다. 후보의 `WEB_ORIGIN`은 loopback이므로 정적 asset과 로컬 UI를
+검증할 수 있지만 운영 OAuth callback 검증은 공개 승격 뒤 수행합니다.
 
 ## 11. API·모니터링 승격
 
@@ -316,6 +337,14 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 21. 익명 정보 동의 전·거부·철회 시 UI 이벤트 요청이 0건인지 확인
 22. 동의 후 허용 이벤트가 `204 No Content`이고 Prometheus
     `chimap_ui_events_total`이 증가하는지 확인
+23. 비로그인 상태에서 `/api/v1/auth/session`이 `authenticated=false`,
+    `kakaoLoginAvailable=true`인지 확인
+24. `/api/v1/auth/kakao/start`가 Kakao authorize로 302 이동하고 state cookie가
+    HttpOnly·Secure·SameSite=Lax인지 확인
+25. 로그인하지 않아도 검색·추천·지도 전체 흐름이 계속 동작하는지 확인
+26. 실제 계정으로 login→callback→사용자 표시→logout을 확인
+27. 공개 bundle에서 NAVER server, Kakao OAuth, session 비밀값이 모두
+    미검출인지 확인
 
 자동 E2E:
 

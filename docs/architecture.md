@@ -10,6 +10,7 @@
 Browser
   ├─ NAVER Web Dynamic Map SDK
   ├─ localStorage/sessionStorage
+  ├─ 선택형 Kakao Login / HttpOnly CHIMap session
   └─ HTTPS /api/v1
        ↓
 Cloudflare Tunnel
@@ -52,6 +53,8 @@ React Web
   │    필수 만 나이/신장/체중/생물학적 성별/하루 목표
   ├─ HeaderStepSummary
   │    현재 걸음 수정/목표/개인화 한 걸음
+  ├─ AuthControl
+  │    익명 이용/카카오 로그인/사용자 표시/로그아웃
   ├─ PlaceCombobox                │
   │    캠퍼스 중심/주소/출입구    │
   ├─ RecommendationCard          │ HTTPS
@@ -59,6 +62,11 @@ React Web
   └─ MapView                     │
                                   ↓
 Express API
+  ├─ AuthService
+  │    ├─ OAuth state HMAC
+  │    ├─ Kakao code exchange + user identity
+  │    └─ hash 기반 CHIMap session
+  │
   ├─ PlaceLookupService
   │    ├─ KakaoLocalClient
   │    ├─ NaverGeocodingClient
@@ -122,6 +130,24 @@ counter로 집계하며 PostgreSQL이나 사용자별 분석 저장소를 만들
 `UiExperienceProvider`가 추천 성공 횟수와 사용자 설정을 localStorage에서
 읽어 안내 밀도와 모션을 파생합니다. UI 이벤트 전송이 실패해도 추천 흐름은
 계속됩니다.
+
+### 선택형 웹 인증
+
+```text
+익명 진입
+  → GET /api/v1/auth/session
+  → 검색·추천·지도 계속 이용
+  → 사용자가 카카오 로그인 선택
+  → GET /api/v1/auth/kakao/start
+  → Kakao authorize
+  → GET /api/v1/auth/kakao/callback
+  → app_users/oauth_accounts upsert
+  → hash만 저장한 CHIMap session cookie
+```
+
+Kakao access/refresh token은 사용자 정보 확인 중에만 사용하고 저장하지
+않습니다. 웹 세션은 HttpOnly·Secure·SameSite=Lax cookie이며 로그인 API가
+실패해도 익명 추천 API에는 영향을 주지 않습니다.
 
 ## 3. 검색 시퀀스
 
@@ -191,6 +217,8 @@ RecommendationRequest
 - TAGO 노선 기본정보
 - 노선별 정류장 순서
 - migration version/name/checksum
+- 선택 로그인 사용자의 CHIMap UUID, 카카오 회원번호, 선택 nickname/profile
+- SHA-256 hash만 보관한 CHIMap session과 만료 시각
 
 ### PostgreSQL에 저장하지 않음
 
@@ -201,6 +229,7 @@ RecommendationRequest
 - 추천 요청·응답
 - 실시간 버스 도착과 차량 위치
 - 공급자 원문과 API 키
+- 카카오 access/refresh token과 CHIMap session 원문
 
 검색·경로·실시간 자료는 프로세스 메모리 TTL 후 제거합니다. 개인화 걸음
 프로필과 사용자 환경설정은 브라우저 localStorage version 3 계약으로만

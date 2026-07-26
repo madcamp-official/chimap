@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import {
+  authSessionResponseSchema,
   busArrivalsResponseSchema,
   busRouteSchema,
   busRoutesResponseSchema,
@@ -33,6 +34,12 @@ import type { Logger } from "pino";
 import { z, ZodError } from "zod";
 
 import type { AppConfig } from "./config.js";
+import { AuthRepository } from "./auth/auth-repository.js";
+import {
+  AuthFlowError,
+  AuthService,
+  type AuthServiceLike,
+} from "./auth/auth-service.js";
 import {
   AppError,
   mapProviderError,
@@ -56,6 +63,7 @@ type RateLimitOptions = {
   placesMax?: number;
   recommendationsMax?: number;
   uiEventsMax?: number;
+  authMax?: number;
 };
 
 export type CreateAppOptions = {
@@ -64,8 +72,45 @@ export type CreateAppOptions = {
   clock?: Clock;
   transitService?: TransitService;
   metrics?: AppMetrics;
+  authService?: AuthServiceLike;
   rateLimits?: RateLimitOptions;
 };
+
+const AUTH_SESSION_COOKIE = "chimap_session";
+const KAKAO_STATE_COOKIE = "chimap_kakao_state";
+
+function cookieValue(request: Request, name: string): string | undefined {
+  const header = request.headers.cookie;
+  if (header === undefined) {
+    return undefined;
+  }
+  for (const part of header.split(";")) {
+    const [key, ...valueParts] = part.trim().split("=");
+    if (key === name) {
+      try {
+        return decodeURIComponent(valueParts.join("="));
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+function authRedirect(webOrigin: string, outcome: string): string {
+  const url = new URL("/", webOrigin);
+  url.searchParams.set("auth", outcome);
+  return url.toString();
+}
+
+function mapAuthError(error: AuthFlowError): AppError {
+  return new AppError({
+    code: error.code,
+    message: error.message,
+    status: error.code === "AUTH_NOT_CONFIGURED" ? 503 : 401,
+    cause: error,
+  });
+}
 
 function requestId(response: Response): string {
   return response.locals.requestId as string;
@@ -264,6 +309,13 @@ export function createApp(options: CreateAppOptions): Express {
       repository: transitService.repository,
     });
   app.locals.metrics = metrics;
+  const authService =
+    options.authService ??
+    new AuthService(
+      options.config,
+      new AuthRepository(transitService.repository.pool),
+    );
+  app.locals.authService = authService;
   const providers = createProviders(options.config, transitService);
   const provider = providers.mobility;
   const placeLookup = providers.places;
@@ -322,6 +374,7 @@ export function createApp(options: CreateAppOptions): Express {
       },
       methods: ["GET", "POST", "OPTIONS"],
       allowedHeaders: ["Content-Type"],
+      credentials: true,
     }),
   );
   app.use(compression());
@@ -335,6 +388,138 @@ export function createApp(options: CreateAppOptions): Express {
       }),
     );
   });
+
+  app.get("/api/v1/auth/session", async (request, response) => {
+    const user = await authService.getSessionUser(
+      cookieValue(request, AUTH_SESSION_COOKIE),
+    );
+    response.setHeader("Cache-Control", "no-store");
+    response.json(
+      authSessionResponseSchema.parse({
+        authenticated: user !== null,
+        kakaoLoginAvailable: authService.enabled,
+        user,
+      }),
+    );
+  });
+
+  app.get(
+    "/api/v1/auth/kakao/start",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    (_request, response) => {
+      try {
+        const login = authService.beginWebLogin();
+        response.cookie(KAKAO_STATE_COOKIE, login.stateCookie, {
+          httpOnly: true,
+          secure: options.config.nodeEnv === "production",
+          sameSite: "lax",
+          maxAge: 10 * 60 * 1000,
+          path: "/api/v1/auth/kakao/callback",
+        });
+        response.setHeader("Cache-Control", "no-store");
+        response.redirect(302, login.authorizeUrl);
+      } catch (error) {
+        if (error instanceof AuthFlowError) {
+          throw mapAuthError(error);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/auth/kakao/callback",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      const query = z
+        .object({
+          code: z.string().min(1).optional(),
+          state: z.string().min(1).optional(),
+          error: z.string().min(1).optional(),
+          error_description: z.string().optional(),
+        })
+        .passthrough()
+        .parse(request.query);
+      const stateCookie = cookieValue(request, KAKAO_STATE_COOKIE);
+      response.clearCookie(KAKAO_STATE_COOKIE, {
+        httpOnly: true,
+        secure: options.config.nodeEnv === "production",
+        sameSite: "lax",
+        path: "/api/v1/auth/kakao/callback",
+      });
+      response.setHeader("Cache-Control", "no-store");
+      if (query.error !== undefined) {
+        logger.info({
+          event: "auth.kakao.cancelled",
+          requestId: requestId(response),
+        });
+        response.redirect(
+          302,
+          authRedirect(options.config.webOrigin, "kakao-cancelled"),
+        );
+        return;
+      }
+      if (query.code === undefined || query.state === undefined) {
+        response.redirect(
+          302,
+          authRedirect(options.config.webOrigin, "kakao-error"),
+        );
+        return;
+      }
+      try {
+        const result = await authService.completeWebLogin({
+          code: query.code,
+          returnedState: query.state,
+          stateCookie,
+        });
+        response.cookie(AUTH_SESSION_COOKIE, result.sessionToken, {
+          httpOnly: true,
+          secure: options.config.nodeEnv === "production",
+          sameSite: "lax",
+          maxAge: authService.sessionTtlMilliseconds,
+          path: "/",
+        });
+        logger.info({
+          event: "auth.kakao.succeeded",
+          requestId: requestId(response),
+        });
+        response.redirect(
+          302,
+          authRedirect(options.config.webOrigin, "kakao-success"),
+        );
+      } catch (error) {
+        if (error instanceof AuthFlowError) {
+          logger.warn({
+            event: "auth.kakao.failed",
+            requestId: requestId(response),
+            errorCode: error.code,
+          });
+          response.redirect(
+            302,
+            authRedirect(options.config.webOrigin, "kakao-error"),
+          );
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/auth/logout",
+    rateLimiter(options.rateLimits?.authMax ?? 20, rateLimitWindow),
+    async (request, response) => {
+      await authService.logout(cookieValue(request, AUTH_SESSION_COOKIE));
+      response.clearCookie(AUTH_SESSION_COOKIE, {
+        httpOnly: true,
+        secure: options.config.nodeEnv === "production",
+        sameSite: "lax",
+        path: "/",
+      });
+      response.setHeader("Cache-Control", "no-store");
+      response.status(204).end();
+    },
+  );
 
   app.get("/api/v1/readiness", async (_request, response) => {
     const [database, transit] = await Promise.all([

@@ -8,12 +8,32 @@ const optionalSecret = z.preprocess(
   z.string().trim().min(1).optional(),
 );
 
+const optionalUrl = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim().length === 0
+      ? undefined
+      : value,
+  z.url().optional(),
+);
+
+const optionalSessionSecret = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim().length === 0
+      ? undefined
+      : value,
+  z.string().min(32).optional(),
+);
+
 const environmentSchema = z
   .object({
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
     KAKAO_REST_API_KEY: optionalSecret,
+    KAKAO_OAUTH_CLIENT_SECRET: optionalSecret,
+    KAKAO_OAUTH_REDIRECT_URI: optionalUrl,
+    AUTH_SESSION_SECRET: optionalSessionSecret,
+    AUTH_SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     NAVER_MAP_NCP_KEY_ID: optionalSecret,
     NAVER_MAP_NCP_KEY: optionalSecret,
     VITE_NAVER_MAP_NCP_KEY_ID: optionalSecret,
@@ -127,6 +147,23 @@ const environmentSchema = z
     LIVE_API_TEST: z.enum(["0", "1"]).default("0"),
   })
   .superRefine((environment, context) => {
+    const authSpecificValues = [
+      environment.KAKAO_OAUTH_CLIENT_SECRET,
+      environment.KAKAO_OAUTH_REDIRECT_URI,
+      environment.AUTH_SESSION_SECRET,
+    ];
+    if (
+      authSpecificValues.some((value) => value !== undefined) &&
+      (authSpecificValues.some((value) => value === undefined) ||
+        environment.KAKAO_REST_API_KEY === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["KAKAO_OAUTH_CLIENT_SECRET"],
+        message:
+          "카카오 로그인을 사용하려면 REST API 키, OAuth Client Secret, Redirect URI, 세션 비밀값을 모두 설정해야 합니다.",
+      });
+    }
     if (
       environment.NODE_ENV === "production" &&
       environment.KAKAO_REST_API_KEY === undefined
@@ -166,6 +203,13 @@ export type TagoServiceKind = "stop" | "route" | "arrival" | "location";
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
   kakaoRestApiKey?: string;
+  kakaoAuth?: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    sessionSecret: string;
+    sessionTtlDays: number;
+  };
   naverMapNcpKeyId?: string;
   naverMapNcpKey?: string;
   database: {
@@ -241,6 +285,20 @@ export function loadConfig(
     ...(parsed.KAKAO_REST_API_KEY === undefined
       ? {}
       : { kakaoRestApiKey: parsed.KAKAO_REST_API_KEY }),
+    ...(parsed.KAKAO_REST_API_KEY === undefined ||
+    parsed.KAKAO_OAUTH_CLIENT_SECRET === undefined ||
+    parsed.KAKAO_OAUTH_REDIRECT_URI === undefined ||
+    parsed.AUTH_SESSION_SECRET === undefined
+      ? {}
+      : {
+          kakaoAuth: {
+            clientId: parsed.KAKAO_REST_API_KEY,
+            clientSecret: parsed.KAKAO_OAUTH_CLIENT_SECRET,
+            redirectUri: parsed.KAKAO_OAUTH_REDIRECT_URI,
+            sessionSecret: parsed.AUTH_SESSION_SECRET,
+            sessionTtlDays: parsed.AUTH_SESSION_TTL_DAYS,
+          },
+        }),
     ...(parsed.NAVER_MAP_NCP_KEY_ID === undefined
       ? {}
       : { naverMapNcpKeyId: parsed.NAVER_MAP_NCP_KEY_ID }),

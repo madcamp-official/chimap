@@ -111,6 +111,34 @@ Kakao 결과가 하나라도 있으면 NAVER 결과와 섞지 않습니다. NAVE
    호출합니다.
 8. 앱 정보의 `카카오맵 무료 쿼터` 배지와 쿼터 사용량을 확인합니다.
 
+### 선택형 웹 로그인 추가 설정
+
+같은 Kakao 앱의 REST API 키를 OAuth client ID로 사용하되 Client Secret과
+Redirect URI를 추가로 설정합니다.
+
+1. 카카오 로그인을 활성화합니다.
+2. nickname/profile image 동의 항목만 검토하고 email·전화번호 등은 로그인
+   목적으로 요청하지 않습니다.
+3. 개발·staging·운영 Redirect URI를 실제 callback URL과 한 글자도 다르지
+   않게 등록합니다.
+4. Client Secret을 활성화하고 서버 token 교환 요청에만 사용합니다.
+5. 서버에는 `KAKAO_OAUTH_CLIENT_SECRET`, `KAKAO_OAUTH_REDIRECT_URI`,
+   `AUTH_SESSION_SECRET`, `AUTH_SESSION_TTL_DAYS`를 설정합니다.
+6. 로그인 시작→동의→callback→CHIMap session→logout을 실제 계정으로
+   검증합니다.
+
+웹은 로그인 없이도 계속 이용할 수 있어야 합니다. 카카오 access/refresh
+token은 사용자 정보 확인 중에만 메모리에서 사용하고 저장하지 않으며,
+서비스 cookie에는 카카오 token이 아닌 별도 256-bit CHIMap session을
+사용합니다. 상세 HTTP 계약은 [API 레퍼런스](./api-reference.md)를 따릅니다.
+[Kakao Login REST API](https://developers.kakao.com/docs/ko/kakaologin/rest-api)
+
+2026-07-26 17:15 KST 운영 검증에서 익명 session은
+`kakaoLoginAvailable=true`, 로그인 시작은 HTTP 302, state cookie는
+HttpOnly·Secure·SameSite=Lax였고 Kakao authorize endpoint도 302를
+반환했습니다. 실제 계정 동의→callback→logout은 사용자가 브라우저에서
+완료해야 하는 최종 확인 항목입니다.
+
 무료 쿼터 적용 범위, 초과 과금과 비즈월렛 필요 여부는 앱·계정 상태에 따라
 달라질 수 있습니다. 저장소 문서의 고정 날짜나 추정 정책으로 판단하지 말고
 배포 직전에 Kakao Developers 앱 화면의 `카카오맵 무료 쿼터` 배지, 사용량과

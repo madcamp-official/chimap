@@ -579,6 +579,41 @@ export const uiEventPayloadSchema = z
 
 export type UiEventPayload = z.infer<typeof uiEventPayloadSchema>;
 
+export const authProviderSchema = z.literal("KAKAO");
+export type AuthProvider = z.infer<typeof authProviderSchema>;
+
+export const authUserSchema = z
+  .object({
+    id: z.uuid(),
+    provider: authProviderSchema,
+    displayName: z.string().trim().min(1).max(100).nullable(),
+    profileImageUrl: z.url().max(2048).nullable(),
+  })
+  .strict();
+
+export type AuthUser = z.infer<typeof authUserSchema>;
+
+export const authSessionResponseSchema = z
+  .object({
+    authenticated: z.boolean(),
+    kakaoLoginAvailable: z.boolean(),
+    user: authUserSchema.nullable(),
+  })
+  .strict()
+  .superRefine((session, context) => {
+    if (session.authenticated !== (session.user !== null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["user"],
+        message: "인증 상태와 사용자 정보가 일치해야 합니다.",
+      });
+    }
+  });
+
+export type AuthSessionResponse = z.infer<
+  typeof authSessionResponseSchema
+>;
+
 export const healthResponseSchema = z
   .object({
     status: z.literal("ok"),
@@ -633,6 +668,9 @@ export const errorCodeSchema = z.enum([
   "TRANSIT_NOT_CONFIGURED",
   "UNSUPPORTED_CITY",
   "SERVICE_NOT_READY",
+  "AUTH_NOT_CONFIGURED",
+  "AUTH_STATE_INVALID",
+  "AUTH_PROVIDER_ERROR",
   "RATE_LIMITED",
   "INTERNAL_ERROR",
 ]);

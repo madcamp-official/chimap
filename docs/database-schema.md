@@ -1,6 +1,6 @@
 # 데이터베이스 스키마와 저장 계약
 
-기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 15:12 KST
+기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-26 17:15 KST
 운영 DB에서 정류장 227,223개, TAGO 연결 정류장 2,804개, 노선 134개,
 노선-정류장 관계 5,638개를 확인했습니다. 운영 수치는
 [구현·운영 현황](./current-state.md)에서 갱신합니다.
@@ -8,8 +8,8 @@
 ## 1. 경계와 원칙
 
 CHIMap은 PostgreSQL 18과 PostGIS를 사용합니다. DB에는 전국 버스 정류장,
-TAGO 식별자, 노선과 노선-정류장 순서처럼 재사용 가능한 정적 교통 데이터만
-저장합니다.
+TAGO 식별자, 노선과 노선-정류장 순서 같은 정적 교통 데이터와, 사용자가
+선택적으로 카카오 로그인한 경우의 최소 계정·세션 데이터만 저장합니다.
 
 다음 정보는 영구 저장하지 않습니다.
 
@@ -20,6 +20,8 @@ TAGO 식별자, 노선과 노선-정류장 순서처럼 재사용 가능한 정�
 - TAGO 도착·차량의 실시간 응답
 - Kakao·NAVER·TAGO 원문 응답
 - API 자격 증명
+- 카카오 access token과 refresh token
+- CHIMap session token 원문
 
 장소·주소·경로·실시간 교통 정보는 메모리 캐시의 TTL이 끝나면 제거됩니다.
 브라우저의 사용자 환경설정과 개인화 걸음 프로필은 versioned localStorage
@@ -71,8 +73,13 @@ migration 2는 CSV `source_stop_no`와 기존 TAGO `node_id`가 정확히 같은
 정류장 1,173쌍의 노선 관계를 CSV row로 옮긴 뒤 별도 TAGO row를 제거하고
 식별자를 연결했습니다. 운영 적용 후 같은 정확 중복 조합은 0건입니다.
 
+migration 3은 선택형 카카오 로그인에 필요한 `app_users`, `oauth_accounts`,
+`auth_sessions`를 추가합니다. 기존 교통 테이블이나 익명 웹 사용자의 브라우저
+저장 데이터는 변경하지 않습니다. 운영 DB 적용과 별도 PostGIS 복원을
+완료했으며 실제 계정 E2E 전 계정·OAuth·session row는 각각 0건입니다.
+
 실행 시점의 migration 원본은 `apps/api/src/transit/migrations.ts`입니다.
-여기에 version 1과 2의 SQL·이름이 있고 API와 CLI가 checksum을 계산합니다.
+여기에 version 1~3의 SQL·이름이 있고 API와 CLI가 checksum을 계산합니다.
 `apps/api/migrations/001_transit.sql`은 version 1 DDL을 사람이 확인하거나
 초기 환경에서 참고하기 위한 mirror이며, 최신 migration 전체의 실행 원본이
 아닙니다. 새 변경은 TypeScript migration에 새 version으로 추가하고 기존
@@ -176,6 +183,42 @@ CREATE INDEX bus_route_stops_stop_index
 겹치는 노선을 동시에 갱신할 때 PostgreSQL deadlock `40P01`이 발생하면 해당
 transaction 전체만 최대 두 번 다시 실행합니다. 다른 DB 오류는 재시도하지
 않습니다.
+
+### 4.4 사용자와 로그인 세션
+
+```sql
+CREATE TABLE app_users (
+  id uuid PRIMARY KEY,
+  display_name varchar(100),
+  profile_image_url text,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
+  last_login_at timestamptz NOT NULL
+);
+
+CREATE TABLE oauth_accounts (
+  provider varchar(20) NOT NULL CHECK (provider IN ('KAKAO')),
+  provider_user_id varchar(100) NOT NULL,
+  user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
+  PRIMARY KEY(provider, provider_user_id),
+  UNIQUE(provider, user_id)
+);
+
+CREATE TABLE auth_sessions (
+  token_hash char(64) PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL,
+  last_seen_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+```
+
+카카오 회원번호는 JavaScript 안전 정수 범위를 넘을 수 있으므로 숫자가 아닌
+문자열로 보존합니다. 외부 카카오 토큰은 DB에 저장하지 않습니다. CHIMap
+session은 256-bit 난수 원문을 HttpOnly cookie로 전달하되 DB에는 SHA-256
+hash만 저장합니다. 만료 session은 조회·생성 과정에서 정리합니다.
 
 ## 5. 공간 질의
 

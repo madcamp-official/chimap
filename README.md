@@ -4,12 +4,12 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 웹 애플리케이션입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 공개 health/readiness 재확인: 2026-07-26 15:12 KST
-- 전체 운영 검증 스냅샷: 2026-07-26 01:26 KST
+- 공개 health/readiness 재확인: 2026-07-26 17:15 KST
+- 전체 운영 검증 스냅샷: 2026-07-26 17:15 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
 - 구현 브랜치: `feat/tago-transit`
-- 자동 건강 경로 UX 운영 배포: 2026-07-26 15:12 KST
+- 선택형 카카오 로그인·태블릿 헤더 보정 운영 배포: 2026-07-26 17:13 KST
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
@@ -17,10 +17,16 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 노선 134개, 노선-정류장 관계 5,638개입니다. 추천 요청이 새 지역의 실제
 노선을 동기화하면 이 수치는 증가할 수 있습니다.
 
-Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 이벤트와 자동
-건강 경로 UX가 공개 JavaScript asset에 반영되어 있습니다.
+Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 이벤트, 자동
+건강 경로 UX와 선택형 카카오 로그인이 공개 asset에 반영되어 있습니다.
 
 ## 핵심 사용자 흐름
+
+웹에서는 카카오 로그인 없이 모든 경로 검색 기능을 사용할 수 있습니다. 원하면
+헤더에서 카카오 로그인해 같은 CHIMap 계정 기반의 향후 모바일·웹 연동을
+준비할 수 있습니다. 앱에서는 카카오 로그인을 필수 진입 단계로 사용할
+계획이며 전체 순서는 [cross platform 계획](./cross_flatform_plan.md)에
+기록합니다.
 
 1. 출발지와 목적지를 300ms 자동완성 또는 Enter/검색 버튼으로 조회합니다.
 2. 캠퍼스 중심·도로명 주소·출입구 표시를 확인하고 검색 결과를 직접
@@ -68,18 +74,22 @@ Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 
 | 버스 | 국토교통부 TAGO | 정류장·노선·도착·차량 |
 | 정적 교통 데이터 | PostgreSQL 18 + PostGIS | 전국 정류장, TAGO 연결, 노선 순서 |
 
-서비스는 외부 공급자 응답과 전국 공개 정류장 자료만 사용합니다. 지도 SDK가
+경로 추천은 외부 공급자 응답과 전국 공개 정류장 자료만 사용합니다. 지도 SDK가
 준비되지 않으면 같은 추천 응답의 실제 좌표를 SVG로 표시합니다.
 
 사용자 검색어, GPS 좌표, 추천 요청, 실시간 도착·차량 원문은 PostgreSQL에
 저장하지 않습니다. 익명 UI 이벤트도 명시적 동의 뒤 허용된 enum만
 Prometheus counter로 집계하며 본문을 PostgreSQL에 저장하지 않습니다.
+카카오 로그인 사용자는 카카오 회원번호와 선택 동의한 닉네임·프로필 사진,
+CHIMap 사용자 ID를 저장합니다. 카카오 access/refresh token은 저장하지 않고,
+CHIMap 세션도 원문 대신 SHA-256 hash만 저장합니다.
 
 ## 시스템 구성
 
 ```text
 Browser
   ├─ NAVER Web Dynamic Map
+  ├─ 선택형 Kakao Login (비회원 이용 가능)
   └─ HTTPS /api/v1
        ↓
 Cloudflare Tunnel
@@ -113,6 +123,7 @@ apps/api/test-data       출처와 checksum이 있는 실제 응답 캡처
 apps/web                 React 검색·지도·추천 UI와 Playwright E2E
 apps/web/test-data       출처와 checksum이 있는 실제 차량 응답 캡처
 packages/contracts       요청·응답·내부 정규화 Zod 계약
+cross_flatform_plan.md   웹 선택 로그인·앱 필수 로그인과 iOS→Android 실행 계획
 docs                     아키텍처, 운영, 공급자, 테스트 문서
 docs/user-experience.md  사용자 흐름, 상태, 반응형·접근성 계약
 docs/database-schema.md  물리 스키마, API·브라우저 저장 계약
@@ -199,6 +210,10 @@ CLI는 DB pool을 최대 2 connections로 제한합니다.
 ```http
 GET  /api/v1/health
 GET  /api/v1/readiness
+GET  /api/v1/auth/session
+GET  /api/v1/auth/kakao/start
+GET  /api/v1/auth/kakao/callback
+POST /api/v1/auth/logout
 GET  /api/v1/places?query=카이스트&scope=suggest&limit=8
 GET  /api/v1/places?query=카이스트&scope=resolve&x=127.36&y=36.37&limit=8
 GET  /api/v1/places/reverse?x=127.36&y=36.37
@@ -223,8 +238,9 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-현재 결정적 테스트는 contracts 8개, alert-relay 3개, API 47개, web
-39개로 총 97개입니다. PostGIS 전용 5개는 별도 DB가 있을 때 실행합니다.
+현재 일반 결정적 테스트는 contracts 9개, alert-relay 3개, API 58개, web
+43개로 총 113개입니다. 별도 PostGIS DB에서 실행하는 5개까지 포함하면
+총 118개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \

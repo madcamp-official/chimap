@@ -3,6 +3,31 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 
 describe("환경변수 보안 경계", () => {
+  it("카카오 로그인 설정은 네 개의 보안 값을 함께 요구한다", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        KAKAO_REST_API_KEY: "rest-key",
+        KAKAO_OAUTH_CLIENT_SECRET: "oauth-secret",
+      }),
+    ).toThrow(/모두 설정해야 합니다/u);
+
+    expect(
+      loadConfig({
+        NODE_ENV: "test",
+        KAKAO_REST_API_KEY: "rest-key",
+        KAKAO_OAUTH_CLIENT_SECRET: "oauth-secret",
+        KAKAO_OAUTH_REDIRECT_URI:
+          "http://localhost:8080/api/v1/auth/kakao/callback",
+        AUTH_SESSION_SECRET: "a-secure-session-secret-with-32-characters",
+      }).kakaoAuth,
+    ).toMatchObject({
+      clientId: "rest-key",
+      redirectUri: "http://localhost:8080/api/v1/auth/kakao/callback",
+      sessionTtlDays: 30,
+    });
+  });
+
   it("NAVER 서버 Client Secret을 브라우저 공개 변수로 사용할 수 없다", () => {
     expect(() =>
       loadConfig({
