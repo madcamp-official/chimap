@@ -335,7 +335,7 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - 교통 동기화 45개 성공·0개 실패와 상태 지표 확인
 - Alertmanager 0.32.1 ready, 격리 수신처 relay HTTP 전달 확인
 - 외부 운영 채널은 webhook 입력 전이며 구성 필요 경보 확인
-- 구현 commit `b294a4d`의 GitHub CI run `30165571376` 품질·PostGIS 두 job 성공
+- 구현 commit `965aa88`의 push CI run `30194446016` 품질·PostGIS 두 job 성공
 
 2026-07-26 17:13 KST에 선택형 카카오 로그인과 태블릿 헤더 보정 이미지를
 승격했고 17:15 KST에 공개 health `ok`, readiness `ready`, 새 asset과 인증

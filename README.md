@@ -264,13 +264,12 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 
 Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
 검증됐습니다. 외부 운영 채널은 `ALERT_WEBHOOK_URL` 입력 전이므로 아직
-활성화되지 않았으며, 필요한 작업은
-[사용자가 완료할 운영 작업](./needs.md)에 기록합니다.
+활성화되지 않았습니다. webhook 설정과 실제 전달 확인 순서는
+[배포·백업·복구 운영서](./docs/deployment.md)의 장애 알림 절차를 따릅니다.
 
 ## 문서
 
 - [구현·운영 현황](./docs/current-state.md)
-- [사용자가 완료할 운영 작업](./needs.md)
 - [사용자 경험과 화면 상호작용](./docs/user-experience.md)
 - [시스템 아키텍처](./docs/architecture.md)
 - [API 레퍼런스](./docs/api-reference.md)

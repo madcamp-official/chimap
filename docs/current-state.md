@@ -106,10 +106,10 @@
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
 | 구현 브랜치 | `feat/tago-transit` |
-| 마지막 CI 검증 구현 | `b294a4d`, run `30165571376` 두 job 성공 |
+| 마지막 CI 검증 구현 | `965aa88`, push run `30194446016` 두 job 성공 |
 | 공개 웹 asset | `index-8c6yxSUg.js`, `index-BsaRoatc.css` |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
-| 기본 브랜치 | `main`은 아직 초기 commit, 병합·보호 규칙 사용자 작업 |
+| 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
 | 공개 번들 비밀값 검사 | NAVER·Kakao OAuth·CHIMap session 비밀값 미검출 |
 
 ## 3. readiness 스냅샷
@@ -252,7 +252,7 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | 공개 반응형 Chromium smoke | 로그인 포함 1440/768/390/320px 통과; 768px 겹침 수정 후 재검증 |
 | 공개 공급자 회귀 | 전체 실행 중 20초 timeout 후 같은 시나리오 단독 재실행 5.5초 통과 |
 | 공개 카카오 인증 smoke | session available, start 302, state cookie 보안 속성, Kakao authorize 302 통과 |
-| GitHub Actions | 구현 commit `b294a4d`, run `30165571376`, 품질·PostGIS 두 job 성공 |
+| GitHub Actions | 구현 commit `965aa88`, push run `30194446016`, 품질·PostGIS 두 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
 | 개인화 8,000보 실제 추천 | 7,995보·목표 오차 -5보·조기 하차 경로를 기본 선택 |
@@ -322,24 +322,17 @@ SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치�
 `bf05003 Fix CI environment preparation`까지 `feat/tago-transit`에
 push했습니다.
 
-개인화 보폭, 조기 하차 우선 추천과 지도 도보 표현은
-`b294a4d Add personalized walking route recommendations`로 같은 브랜치에
-push했습니다. GitHub CI run `30165571376`에서 다음 두 job이 모두
-성공했습니다.
+선택형 카카오 로그인과 태블릿 헤더 보정을 포함한 현재 기능 HEAD는
+`965aa88 Add optional Kakao web login`으로 `feat/tago-transit`에
+push했습니다. GitHub push CI run `30194446016`과 PR 연동 run
+`30194447120`에서 다음 두 job이 모두 성공했습니다.
 
 - `Typecheck, tests, build, config`
 - `PostgreSQL and PostGIS integration`
 
-이후 문서 갱신 `6002541`, release 검증 `640a5a4`, Route Pulse·자동 건강
-경로 `91dad7e`를 같은 브랜치에 반영했습니다. 선택형 카카오 로그인과
-태블릿 헤더 보정도 `feat/tago-transit`에서 운영 배포·공개 검증 후 push하며,
-정확한 최신 commit은 이 문서가 포함된 Git history를 기준으로 합니다.
-`b294a4d`의 과거 CI 성공을 새 변경의 결과로 간주하지 않고 push 뒤 생성되는
-CI를 별도로 확인합니다.
-
 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
-있습니다. 병합, 병합 후 수동 `Public live E2E`, 필수 check 지정은
-[사용자 작업](../needs.md)에 기록했습니다.
+있습니다. `feat/tago-transit`→`main` draft PR #1이 열려 있으며, 검토·병합,
+병합 후 수동 `Public live E2E`, 두 CI job의 필수 check 지정이 남았습니다.
 
 ## 9. 현재 한계와 확장 조건
 
@@ -356,8 +349,8 @@ CI를 별도로 확인합니다.
 - Alertmanager와 relay는 배포됐지만 외부 webhook URL은 아직 비어 있습니다.
   Alertmanager 라우팅 설정과 relay 메시지 형식은 격리 수신처로 검증됐고
   `ChimapAlertDeliveryNotConfigured` 경보가 의도대로 발생 중입니다.
-  [사용자 작업](../needs.md)의 1번을 완료해야 실제 운영 채널 전달이
-  활성화됩니다.
+  [배포 운영서](./deployment.md)의 장애 알림 절차에 따라 webhook을 입력하고
+  실제 점검·복구 알림을 확인해야 운영 채널 전달이 활성화됩니다.
 - 기존 시간 제약 추천 요청은 전환 릴리스 동안만 유지합니다. 사용 현황과
   downstream 전환을 확인한 뒤 `deadline`, `maxExtraMinutes`,
   `safetyBufferMinutes` 계약과 기존 warning을 제거해야 합니다.

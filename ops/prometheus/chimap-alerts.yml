@@ -53,7 +53,7 @@ groups:
           severity: warning
         annotations:
           summary: CHIMap external alert destination is not configured
-          description: Add the operator webhook described in needs.md and recreate alert-relay.
+          description: Set ALERT_NOTIFICATION_PROVIDER and ALERT_WEBHOOK_URL, then recreate alert-relay.
 
       - alert: ChimapAlertDeliveryFailed
         expr: |

@@ -371,10 +371,10 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 
 두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
-수동 실행합니다. 마지막으로 완료된 원격 CI는 구현 commit `b294a4d`의 run
-`30165571376`이며 두 job이 모두 성공했습니다. 자동 건강 경로 UX commit은
-push 뒤 새 CI 결과를 별도로 확인해야 합니다. 기본 브랜치 병합과 보호 규칙은
-[사용자 작업](../needs.md)을 따릅니다.
+수동 실행합니다. 구현 commit `965aa88`의 push run `30194446016`과 PR 연동
+run `30194447120`에서 두 job이 모두 성공했습니다. `feat/tago-transit`에서
+`main`으로 향하는 draft PR #1의 검토·병합, 병합 후 `Public live E2E`, 두
+job의 필수 check 지정은 저장소 관리자가 완료합니다.
 
 ## 12. 공개 번들 비밀값 검사
 
@@ -489,7 +489,7 @@ docker compose up -d --no-build --force-recreate alert-relay
 
 확인 스크립트는 Alertmanager API에 실제 점검 경보를 넣고 relay의 마지막
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
-외부 URL이 아직 없다면 [사용자 작업](../needs.md)을 따릅니다.
+외부 URL이 아직 없다면 아래의 구성 지표 `0`과 설정 필요 경보가 정상입니다.
 
 2026-07-26 01:26 KST 현재 Alertmanager와 relay health, 라우팅 설정과
 격리 수신처 메시지 변환은 정상입니다. 외부 URL은 비어 있어
