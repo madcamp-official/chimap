@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Typecheck, tests, build, config
+    name: API and Web quality
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -35,10 +35,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: |
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+          pnpm --filter @chimap/api typecheck
+          pnpm --filter @chimap/alert-relay typecheck
+          pnpm --filter @chimap/web typecheck
 
       - name: Deterministic tests
-        run: pnpm test
+        run: |
+          pnpm boundaries:check
+          pnpm --filter @chimap/contracts test
+          pnpm --filter @chimap/app-core test
+          pnpm --filter @chimap/api test
+          pnpm --filter @chimap/alert-relay test
+          pnpm --filter @chimap/web test
 
       - name: Production build
         run: pnpm build
@@ -50,6 +62,7 @@ jobs:
             apps packages scripts docs README.md \
             Dockerfile .env.example package.json \
             --exclude-dir=node_modules --exclude-dir=dist \
+            --exclude='*.test.ts' --exclude='*.test.tsx' \
             --exclude='*.tsbuildinfo'; then
             exit 1
           fi
@@ -94,6 +107,136 @@ jobs:
           cp .env.example .env
           docker compose config --quiet
 
+  mobile:
+    name: Expo iOS and Android JavaScript quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: development
+      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
+      NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
+      EXPO_PUBLIC_API_BASE_URL: https://api.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared platform-neutral packages
+        run: |
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+
+      - name: Check native config and TypeScript
+        run: |
+          pnpm --filter @chimap/mobile exec expo config --type public
+          pnpm --filter @chimap/mobile exec expo prebuild --clean --no-install
+          node scripts/verify-mobile-native-config.mjs
+          pnpm --filter @chimap/mobile typecheck
+
+      - name: Test lifecycle and platform adapters
+        run: pnpm --filter @chimap/mobile test
+
+      - name: Bundle iOS and Android JavaScript independently
+        run: pnpm --filter @chimap/mobile build
+
+  ios-native:
+    name: iOS native compile
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      APP_ENV: development
+      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
+      NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
+      EXPO_PUBLIC_API_BASE_URL: https://api.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies and build shared packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+
+      - name: Generate iOS and install CocoaPods
+        run: |
+          pnpm --filter @chimap/mobile exec expo prebuild --clean --platform ios --no-install
+          cd apps/mobile/ios
+          pod install
+
+      - name: Compile unsigned iOS simulator app
+        run: >-
+          xcodebuild
+          -workspace apps/mobile/ios/CHIMapDev.xcworkspace
+          -scheme CHIMapDev
+          -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  android-native:
+    name: Android native compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      APP_ENV: development
+      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
+      NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
+      EXPO_PUBLIC_API_BASE_URL: https://api.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies and build shared packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+
+      - name: Generate and compile Android debug app
+        run: |
+          pnpm --filter @chimap/mobile exec expo prebuild --clean --platform android --no-install
+          cd apps/mobile/android
+          ./gradlew :app:assembleDebug --no-daemon
+
   postgis:
     name: PostgreSQL and PostGIS integration
     runs-on: ubuntu-latest
@@ -136,3 +279,4 @@ jobs:
         run: >-
           pnpm --filter @chimap/api exec vitest run
           src/transit/transit-repository.integration.test.ts
+          src/auth/mobile-auth-repository.integration.test.ts
