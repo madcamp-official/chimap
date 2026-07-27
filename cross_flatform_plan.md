@@ -635,8 +635,10 @@ iOS·Android JavaScript bundle export까지 통과했다. Android는 SDK 36, min
 Kotlin 2.1.20과 arm64-v8a로 `:app:assembleDebug`를 실제 통과하고 v2 서명 APK를
 검증했다. 격리 Docker network에서 국내 Maven TLS가 timeout되어 NAVER/Kakao의
 공식 artifact만 임시 local Maven mirror로 옮겨 compile했고, 최종 CNG 결과에는
-공식 HTTPS repository만 남는 것도 검증했다. macOS Xcode simulator compile와
-Android 전체 ABI compile은 CI 첫 실행 결과를 별도 release gate로 기록한다.
+공식 HTTPS repository만 남는 것도 검증했다. GitHub Actions push run
+`30230011225`에서 macOS Xcode simulator compile와 Android 전체 ABI compile을
+포함한 다섯 독립 job이 모두 성공했다. 실제 iPhone/Android Development Build,
+provider console credential과 store archive는 여전히 별도 release gate다.
 
 Gate: 실제 iPhone에서 guest 추천과 선택 로그인→session 복구→logout→재로그인이
 되고 web session과 같은 `app_users` identity를 사용한다.

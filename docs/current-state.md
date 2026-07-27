@@ -5,14 +5,16 @@
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
   계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
   포함합니다. 2026-07-27에 결정적 테스트 151개, 격리 PostGIS 7개, 전체
-  typecheck/build와 Android arm64 native compile을 통과했습니다. macOS iOS compile,
-  Android 전체 ABI CI와 실제 iPhone/Android E2E는 외부 release gate로 남습니다.
-- **현재 공개 배포**: 2026-07-26 17:13 KST에 이미지
-  `sha256:67d47b65…`로 API/웹 컨테이너를 교체했습니다. 공개 asset
-  `index-8c6yxSUg.js`, `index-BsaRoatc.css`와 선택형 로그인, 익명 이용,
-  health/readiness 및 1440·768·390·320px Chromium 레이아웃을 확인했습니다.
-- **마지막 전체 운영 점검**: 2026-07-26 17:15 KST에 컨테이너, PostgreSQL,
-  migration 3, 백업·복원, 모니터링, 공개 E2E와 인증 smoke를 대조했습니다.
+  typecheck/build, Android arm64 native compile과 GitHub의 iOS simulator·Android
+  전체 ABI compile을 통과했습니다. 실제 iPhone/Android Development Build와
+  store archive는 외부 release gate로 남습니다.
+- **현재 공개 배포**: 2026-07-27 11:01 KST에 commit `f624e9b`, 이미지
+  `sha256:0a2db829…`로 API/웹·alert relay 컨테이너를 교체했습니다. 공개 asset
+  `index-GVl8ucg8.js`, 선택형 웹 로그인, guest mobile config, migration 4~6,
+  health/readiness와 strict E2E를 확인했습니다.
+- **마지막 전체 운영 점검**: 2026-07-27 11:05 KST에 컨테이너, PostgreSQL,
+  migration 6, 배포 후 백업·전체 복원, 모니터링, 공개 E2E와 인증·mobile config
+  smoke를 대조했습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -94,7 +96,7 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:67d47b65…`), 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:0a2db829…`, commit `f624e9b`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
@@ -107,15 +109,16 @@
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
 | 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
 | 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
-| foundation CI | 다섯 독립 job 구성 완료, 현재 branch push 결과 확인 대기 |
-| 공개 웹 asset | `index-8c6yxSUg.js`, `index-BsaRoatc.css` |
+| foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
+| 공개 웹 asset | `index-GVl8ucg8.js`, 380,779 bytes |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
+| 모바일 인증 | `/mobile-config` guest enabled, 운영 Kakao/Apple credential 입력 전이라 두 provider disabled |
 | 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
 | 공개 번들 비밀값 검사 | NAVER·Kakao OAuth·CHIMap session 비밀값 미검출 |
 
 ## 3. readiness 스냅샷
 
-2026-07-26 17:15 KST 공개 재확인 결과:
+2026-07-27 11:01 KST 공개 재확인 결과:
 
 ```json
 {
@@ -131,15 +134,15 @@
     "tago": true
   },
   "transit": {
-    "stops": 227223,
-    "linkedStops": 2804,
+    "stops": 227225,
+    "linkedStops": 2844,
     "routes": 134,
-    "routeStops": 5638
+    "routeStops": 5731
   }
 }
 ```
 
-readiness timestamp는 `2026-07-26T08:15:16.902Z`였습니다. 위 JSON에서는
+readiness timestamp는 `2026-07-27T02:01:44.813Z`였습니다. 위 JSON에서는
 가독성을 위해 timestamp를 생략했습니다. 네 교통 통계가 모두 0보다 크고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
@@ -258,8 +261,8 @@ process eviction과 TestFlight/Play release E2E입니다.
 
 ## 5. 검증 기록
 
-로컬 foundation 검증은 2026-07-27 구현을, 최신 공개 검증은 2026-07-26
-17:13~17:15 KST에 배포된 Web/API 이미지를 대상으로 합니다.
+로컬 foundation 검증과 최신 공개 검증은 2026-07-27 구현과 11:01 KST에
+배포된 Web/API 이미지를 대상으로 합니다.
 
 | 검증 | 결과 |
 | --- | --- |
@@ -271,13 +274,13 @@ process eviction과 TestFlight/Play release E2E입니다.
 | cross-platform foundation 로컬 검사 | 경계·format·typecheck, 결정적 테스트 151개, PostGIS 7개 통과 |
 | cross-platform build | Web production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
-| native compile/실기기 | Android arm64 debug APK 실제 compile·v2 서명 검증 통과. macOS iOS simulator CI, Android 전체 ABI CI와 iPhone/Android Development Build 검증 대기 |
-| PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 migration 3 적용·재적용 포함 5개 통과 |
-| 공개 strict 지도 E2E | 실제 추천·NAVER 지도 흐름 통과 |
+| native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |
+| PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 교통 5개와 migration 4~6·mobile auth 2개 통과 |
+| 공개 strict 지도 E2E | 기본 추천·NAVER 지도·레이아웃 통과. 확장 정류장 1회 upstream 504 후 단독 재실행 통과 |
 | 공개 반응형 Chromium smoke | 로그인 포함 1440/768/390/320px 통과; 768px 겹침 수정 후 재검증 |
 | 공개 공급자 회귀 | 전체 실행 중 20초 timeout 후 같은 시나리오 단독 재실행 5.5초 통과 |
 | 공개 카카오 인증 smoke | session available, start 302, state cookie 보안 속성, Kakao authorize 302 통과 |
-| GitHub Actions | 구현 commit `965aa88`, push run `30194446016`, 품질·PostGIS 두 job 성공 |
+| GitHub Actions | commit `f624e9b`, push run `30230011225`, 다섯 독립 job 성공 |
 | 결과 점진 공개 E2E | 기본 닫힘→자세히→경로 변경 닫힘→접기 통과 |
 | KAIST→대전역 실제 추천 | 최대 3개 카드 반환 확인 |
 | 개인화 8,000보 실제 추천 | 7,995보·목표 오차 -5보·조기 하차 경로를 기본 선택 |
@@ -298,18 +301,19 @@ process eviction과 TestFlight/Play release E2E입니다.
 
 ## 6. 백업·복구 기록
 
-2026-07-26 17:15 KST 배포 후 실제 운영 DB의 custom-format 백업을 생성하고
-checksum과 전체 복원을 확인했습니다.
+2026-07-27 11:04 KST migration 6 배포 후 실제 운영 DB의 custom-format 백업을
+생성하고 checksum과 전체 복원을 확인했습니다.
 
 ```text
-파일: /var/backups/chimap/chimap-daily-20260726T081515Z.dump
-크기: 17,345,494 bytes
-SHA-256: fbd1e2cf4b927e270804908d00ba4c19d5f98d0b5afe2daeaec693ed29e201ce
+파일: /var/backups/chimap/chimap-daily-20260727T020434Z.dump
+크기: 17,350,161 bytes
+SHA-256: 829a8a6911dc5e9f69091c993405035a4f75afbd12faebd5f2382d69686f4d0f
 ```
 
 별도 PostgreSQL/PostGIS 18 컨테이너의 `template0` 기반 빈 DB로 restore한
-뒤 `PostGIS=1`, `migration=3`, `227223/2804/134/5638` 통계를 다시
-확인했습니다. 계정 관련 세 테이블도 migration 3에 포함됩니다. 성공 상태는
+뒤 `PostGIS=1`, `migration=6`, `227225/2844/134/5731` 통계를 다시
+확인했습니다. web 계정, mobile token family와 Apple credential schema까지
+복원됩니다. 성공 상태는
 `/var/backups/chimap/latest.json`과 `restore-latest.json`에 기록합니다.
 
 설치된 timer:
@@ -364,9 +368,10 @@ commit으로 공통 feature, CI와 계획 문서를 분리했습니다.
 
 `82e7eca fix: harden mobile lifecycle and native builds`는 foreground persistence
 정책, Health Connect 빈 records 회귀, Kotlin/Maven/Gradle 안정화와 OS별 verifier를
-추가했습니다. 현재 workflow는 Web/API quality, Mobile JavaScript, iOS native,
-Android native, PostGIS의 다섯 독립 job을 사용합니다. 새 push CI 결과와 공개
-배포 기록은 이 문서에 이어서 갱신합니다.
+추가했습니다. `f624e9b docs: update cross-platform operations`까지 push했고,
+GitHub Actions run `30230011225`에서 Web/API quality, Mobile JavaScript, iOS
+native, Android native, PostGIS의 다섯 독립 job이 모두 성공했습니다. 같은
+commit의 이미지 `sha256:0a2db829…`를 2026-07-27 11:01 KST 공개 승격했습니다.
 
 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
 있습니다. `feat/tago-transit`→`main` draft PR #1이 열려 있으며, 검토·병합,

@@ -4,18 +4,18 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 웹 애플리케이션입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 공개 health/readiness 재확인: 2026-07-26 17:15 KST
-- 전체 운영 검증 스냅샷: 2026-07-26 17:15 KST
+- 공개 health/readiness 재확인: 2026-07-27 11:01 KST
+- 전체 운영 검증 스냅샷: 2026-07-27 11:05 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 운영 Web/API 기준선: `feat/tago-transit`
+- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`f624e9b`)
 - cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
-- 선택형 카카오 로그인·태블릿 헤더 보정 운영 배포: 2026-07-26 17:13 KST
+- cross-platform Web/API·migration 4~6 운영 배포: 2026-07-27 11:01 KST
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
-현재 공개 readiness는 정류장 227,223개, TAGO 연결 정류장 2,804개,
-노선 134개, 노선-정류장 관계 5,638개입니다. 추천 요청이 새 지역의 실제
+현재 공개 readiness는 정류장 227,225개, TAGO 연결 정류장 2,844개,
+노선 134개, 노선-정류장 관계 5,731개입니다. 추천 요청이 새 지역의 실제
 노선을 동기화하면 이 수치는 증가할 수 있습니다.
 
 Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 이벤트, 자동

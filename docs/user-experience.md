@@ -289,9 +289,10 @@ gate입니다.
 
 현재 구현은 로컬 production build를 Chromium의 1440·768·390·
 320px에서 열어 헤더 충돌·검색 폼·가로 overflow를 확인했고, 결정적 웹
-테스트 43개를 포함한 전체 118개 테스트, typecheck와 production build가
-통과했습니다. 2026-07-26 17:15 KST에는 선택형 로그인까지 포함한 공개
-JavaScript asset과 1440·768·390·320px Chromium smoke를 재검증했습니다.
+테스트 43개를 포함한 전체 151개 테스트, typecheck와 production build가
+통과했습니다. 2026-07-27 11:01 KST에는 선택형 로그인과 cross-platform
+backend를 포함한 공개 JavaScript asset `index-GVl8ucg8.js`와
+1440·768·390·320px Chromium smoke를 재검증했습니다.
 768px에서 새 로그인 영역과 걸음 요약이 겹친 문제는 태블릿 폭에서 보조 문구와
 부가 상태만 숨기도록 수정한 뒤 통과했습니다. 최초 설정, 장소 검색, 자동 추천,
 상세 보기, v3 복원과 실제 공급자 회귀도 공개 환경에서 각각 통과했습니다.

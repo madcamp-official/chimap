@@ -148,11 +148,13 @@ native SDK가 받은 Kakao access token은 CHIMap session으로 직접 사용하
 폐기하며 CHIMap refresh token만 SecureStore에 저장합니다. Kakao 인증 장애·취소와
 무관하게 guest 검색·추천·지도는 계속 동작해야 합니다.
 
-2026-07-26 17:15 KST 운영 검증에서 익명 session은
+2026-07-27 11:01 KST 운영 검증에서 익명 web session은
 `kakaoLoginAvailable=true`, 로그인 시작은 HTTP 302, state cookie는
 HttpOnly·Secure·SameSite=Lax였고 Kakao authorize endpoint도 302를
-반환했습니다. 실제 계정 동의→callback→logout은 사용자가 브라우저에서
-완료해야 하는 최종 확인 항목입니다.
+반환했습니다. mobile config는 운영 native credential 입력 전이라 guest만
+활성화되고 Kakao provider는 disabled입니다. 실제 계정 동의→callback→logout과
+native KakaoTalk 복귀는 사용자가 브라우저·기기에서 완료해야 하는 최종 확인
+항목입니다.
 
 무료 쿼터 적용 범위, 초과 과금과 비즈월렛 필요 여부는 앱·계정 상태에 따라
 달라질 수 있습니다. 저장소 문서의 고정 날짜나 추정 정책으로 판단하지 말고

@@ -356,30 +356,36 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - Expo Doctor 21개 중 프로젝트 검사 20개 통과. React Native Directory metadata
   검사는 외부 directory server 오류로 결과를 받지 못함
 - Android SDK 36/minSdk 26/Kotlin 2.1.20 arm64 debug Gradle assemble과 APK v2
-  서명 검증 통과. macOS iOS simulator와 Android 전체 ABI compile은 CI job에
-  구성했으며 첫 push/PR 결과 및 실제 기기 E2E 전에는 release 완료로 간주하지 않음
+  서명 검증 통과. push run `30230011225`에서 macOS iOS simulator와 Android
+  전체 ABI compile을 포함한 다섯 CI job 성공. 실제 기기 E2E와 store archive
+  전에는 mobile release 완료로 간주하지 않음
 
-2026-07-26 17:15 KST 전체 공개·운영 스냅샷:
+2026-07-27 11:01~11:05 KST cross-platform Web/API 공개·운영 스냅샷:
 
-- PostgreSQL/PostGIS 통합 테스트 5개 통과
-- 공개 실제 추천·NAVER 지도 main E2E 통과
-- 공급자 회귀 시나리오는 전체 실행 timeout 뒤 단독 재실행 5.5초 통과
+- PostgreSQL/PostGIS 통합 테스트 7개와 migration 1~6 적용 통과
+- 공개 실제 추천·NAVER 지도 main E2E와 네 화면 폭 layout smoke 통과
+- 확장 정류장 회귀는 전체 실행에서 upstream 504 뒤 단독 재실행 16.9초 통과
 - KAIST→대전역 8,000보 요청에서 조기 하차 7,995보, 목표 오차 -5보 확인
 - KAIST 본원 중심→대전 갤러리아 HTTP 200, 추천 3건
 - NAVER geocode/reverse HTTP 200
-- readiness `227223/2804/134/5638`
-- 백업 restore 스냅샷 `PostGIS=1/migration=3/227223/2804/134/5638`
+- readiness `227225/2844/134/5731`
+- 백업 restore 스냅샷 `PostGIS=1/migration=6/227225/2844/134/5731`
 - 공개 bundle NAVER·Kakao OAuth·session 비밀값 미검출
 - 백업 restore 통과
 - Prometheus 3개 target `up`, 20개 rule healthy
 - 교통 동기화 45개 성공·0개 실패와 상태 지표 확인
 - Alertmanager 0.32.1 ready, 격리 수신처 relay HTTP 전달 확인
 - 외부 운영 채널은 webhook 입력 전이며 구성 필요 경보 확인
-- 구현 commit `965aa88`의 push CI run `30194446016` 품질·PostGIS 두 job 성공
+- 구현·문서 commit `f624e9b`의 push CI run `30230011225` 다섯 job 성공
+- API와 alert relay 이미지 `sha256:0a2db829…`, 공개 asset
+  `index-GVl8ucg8.js` 승격
+- `/api/v1/mobile-config` guest enabled, 운영 mobile Kakao/Apple credential 입력 전
+  provider disabled 확인
+- 배포 후 백업 `chimap-daily-20260727T020434Z.dump`, 17,350,161 bytes,
+  SHA-256 `829a8a6911dc5e9f69091c993405035a4f75afbd12faebd5f2382d69686f4d0f`
 
-2026-07-26 17:13 KST에 선택형 카카오 로그인과 태블릿 헤더 보정 이미지를
-승격했고 17:15 KST에 공개 health `ok`, readiness `ready`, 새 asset과 인증
-smoke를 확인했습니다. 실제 카카오 계정 동의→callback→logout E2E와 이
-commit의 CI 결과는 별도로 확인합니다.
-
-새 배포 후 이 절을 갱신하거나 별도 release 기록으로 이동합니다.
+2026-07-27 11:01 KST에 cross-platform Web/API 이미지를 승격했고 공개 health
+`ok`, readiness `ready`, session/mobile-config, 새 asset과 비밀값 경계를
+확인했습니다. 실제 mobile Kakao/Apple 계정, HealthKit/Health Connect,
+SecureStore 재실행은 provider credential과 실제 기기가 필요한 다음 release
+gate입니다.

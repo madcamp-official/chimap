@@ -4,9 +4,11 @@
 origin은 `http://127.0.0.1:3000`입니다. 명령은 저장소 루트에서
 실행합니다.
 
-자동 건강 경로 UX, Route Pulse UI와 선택형 카카오 로그인은 2026-07-26
-17:13 KST 공개 배포됐고 17:15 KST 운영 점검을 마쳤습니다. 아래 UI smoke와
-asset·인증 확인은 이후 모든 이미지 승격에서도 반복합니다.
+cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그인은
+2026-07-27 11:01 KST 이미지 `sha256:0a2db829...`로 공개 배포했고 11:05 KST
+운영 점검과 migration 6 백업·전체 복원을 마쳤습니다. 아래 UI smoke와
+asset·인증 확인은 이후 모든 이미지 승격에서도 반복합니다. iOS/Android
+스토어 binary 배포는 이 Compose 승격과 별도 release입니다.
 
 ## 1. 사전 조건
 
@@ -299,6 +301,7 @@ docker run --rm -d \
 curl -fsS http://127.0.0.1:3001/api/v1/health
 curl -fsS http://127.0.0.1:3001/api/v1/readiness
 curl -fsS http://127.0.0.1:3001/api/v1/auth/session
+curl -fsS http://127.0.0.1:3001/api/v1/mobile-config
 ```
 
 검증 후 정확한 `chimap-api-candidate` 컨테이너만 중지합니다. 같은 이름의
@@ -315,6 +318,7 @@ docker compose up -d --no-build \
 docker compose ps
 curl -fsS http://127.0.0.1:3000/api/v1/health
 curl -fsS http://127.0.0.1:3000/api/v1/readiness
+curl -fsS http://127.0.0.1:3000/api/v1/mobile-config
 ```
 
 readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
@@ -360,6 +364,10 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 26. 실제 계정으로 login→callback→사용자 표시→logout을 확인
 27. 공개 bundle에서 NAVER server, Kakao OAuth, session 비밀값이 모두
     미검출인지 확인
+28. `/api/v1/mobile-config`의 contract/minimum version/maintenance/region과
+    guest·Kakao·Apple provider flag가 runtime credential 상태와 일치하는지 확인
+29. `schema_migrations`가 1~6 current이고 candidate와 운영 readiness가 모두
+    HTTP 200인지 확인
 
 자동 E2E:
 
@@ -392,9 +400,25 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 수행합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
 수동 실행합니다. 구현 commit `965aa88`의 과거 push/PR run은 당시 Web/API 두
-job이 성공한 기록입니다. cross-platform foundation부터는 위 다섯 job을 모두
-새 release gate로 사용합니다. `feat/tago-transit`에서 `main`으로 향하는 draft
-PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 rebase합니다.
+job이 성공한 기록입니다. cross-platform foundation commit `f624e9b`의 push
+run `30230011225`에서는 위 다섯 job이 모두 성공했습니다. 이후에도 다섯
+job을 release gate로 사용합니다. `feat/tago-transit`에서 `main`으로 향하는
+draft PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 rebase합니다.
+
+### 2026-07-27 승격 기록
+
+- release commit: `f624e9baeda6785d12655bc43f1f5376e5e9264d`
+- GitHub Actions: run `30230011225`, 다섯 job 성공
+- image: `sha256:0a2db829dc0fa72836a3a8393b0f8eb946cd53812e586cb5f783539b017f4483`
+- 공개 asset: `/assets/index-GVl8ucg8.js`, 380,779 bytes
+- DB: migration 1~6 current, readiness `227225/2844/134/5731`
+- mobile config: guest enabled, 운영 mobile Kakao/Apple credential 입력 전이라
+  두 provider disabled
+- strict E2E: main·layout 통과, 확장 정류장 upstream 504 1회 후 단독 재실행 통과
+- 배포 후 backup: `chimap-daily-20260727T020434Z.dump`, 17,350,161 bytes,
+  SHA-256 `829a8a6911dc5e9f69091c993405035a4f75afbd12faebd5f2382d69686f4d0f`
+- restore: `PostGIS=1/migration=6/227225/2844/134/5731`
+- monitoring: Prometheus target 3개 `up`, rule 20개 healthy, Alertmanager ready
 
 ## 12. 공개 번들 비밀값 검사
 
