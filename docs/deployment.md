@@ -36,6 +36,21 @@ VITE_NAVER_MAP_NCP_KEY_ID=  # 브라우저 공개 Client ID
 Client Secret은 `VITE_` 변수에 들어가면 안 됩니다. 현재 API 설정 검증은
 `VITE_NAVER_MAP_NCP_KEY_ID === NAVER_MAP_NCP_KEY`인 기동을 거절합니다.
 
+모바일 build는 server container 배포와 별개이며 다음 공개 식별자를 EAS profile에
+주입합니다. iOS·Android Client ID는 서로 및 Web Client ID와 분리합니다.
+
+```dotenv
+NAVER_MAP_CLIENT_ID_IOS=
+NAVER_MAP_CLIENT_ID_ANDROID=
+KAKAO_NATIVE_APP_KEY=
+APP_ENV=development|staging|production
+EXPO_PUBLIC_API_BASE_URL=https://chimap.madcamp-kaist.org
+```
+
+server `.env`의 Apple private key, NAVER Client Secret, refresh retry 암호화 key는
+mobile binary에 넣지 않습니다. Web/API Compose 승격은 App Store·Play 배포를
+자동으로 의미하지 않으며 각 mobile store artifact를 독립적으로 rollback합니다.
+
 운영 배포 전:
 
 ```bash
@@ -364,17 +379,22 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 ### GitHub release gate
 
 `.github/workflows/ci.yml`은 `main`과 `feat/**` push, Pull Request에서 다음
-두 job을 실행합니다.
+다섯 job을 독립 실행합니다.
 
-- `Typecheck, tests, build, config`
+- `API and Web quality`
+- `Expo iOS and Android JavaScript quality`
+- `iOS native compile`
+- `Android native compile`
 - `PostgreSQL and PostGIS integration`
 
-두 job이 성공한 commit만 병합합니다. `Public live E2E`는 실제 외부
+다섯 job이 성공한 commit만 병합합니다. iOS/Android native job은 각 OS prebuild
+직후 platform 전용 config verifier를 실행하고 unsigned simulator/debug compile을
+수행합니다. `Public live E2E`는 실제 외부
 호출량을 사용하므로 기본 브랜치에 workflow가 반영된 뒤 Actions에서
-수동 실행합니다. 구현 commit `965aa88`의 push run `30194446016`과 PR 연동
-run `30194447120`에서 두 job이 모두 성공했습니다. `feat/tago-transit`에서
-`main`으로 향하는 draft PR #1의 검토·병합, 병합 후 `Public live E2E`, 두
-job의 필수 check 지정은 저장소 관리자가 완료합니다.
+수동 실행합니다. 구현 commit `965aa88`의 과거 push/PR run은 당시 Web/API 두
+job이 성공한 기록입니다. cross-platform foundation부터는 위 다섯 job을 모두
+새 release gate로 사용합니다. `feat/tago-transit`에서 `main`으로 향하는 draft
+PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 rebase합니다.
 
 ## 12. 공개 번들 비밀값 검사
 

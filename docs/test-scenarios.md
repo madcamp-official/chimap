@@ -36,23 +36,26 @@ timeout, HTTP 상태와 오류 매핑은 임의 경로가 아니라 오류 객�
 ## 2. 기본 검증 명령
 
 ```bash
+pnpm boundaries:check
 pnpm typecheck
 pnpm test
-pnpm build
+pnpm build:all
 pnpm format:check
 git diff --check
 ```
 
 현재 일반 test 구성:
 
-- contracts: 9개
+- contracts: 11개
+- app-core: 3개
 - alert-relay: 3개
-- API: 58개
+- API: 77개
 - web: 43개
-- 합계: 113개
+- mobile: 14개
+- 합계: 151개
 
-PostgreSQL 전용 5개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
-건너뜁니다. 격리 PostGIS까지 포함한 전체는 118개입니다.
+PostgreSQL 전용 7개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
+건너뜁니다. 격리 PostGIS까지 포함한 전체는 158개입니다.
 
 ## 3. 공급자 테스트
 
@@ -101,16 +104,21 @@ PostgreSQL 전용 5개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
   pnpm --filter @chimap/api exec vitest run \
-  src/transit/transit-repository.integration.test.ts
+  src/transit/transit-repository.integration.test.ts \
+  src/auth/mobile-auth-repository.integration.test.ts
 ```
 
-현재 5개 통합 시나리오:
+현재 7개 통합 시나리오:
 
 1. migration 반복 적용, CSV COPY/upsert idempotency, 500m 거리 정렬
 2. 공개 정류장과 실제 TAGO 정류장의 30m 연결
 3. 정류장번호가 같은 기존 TAGO row·노선 관계를 CSV row로 병합
 4. 변경된 migration checksum 거절
 5. 실제 108번 노선 정류장 교체 실패 시 transaction rollback
+6. refresh token 동시 rotation 중 한 요청만 새 generation을 만들고 다른 요청은
+   grace 안에서 직전 token pair를 그대로 재생
+7. grace 만료 token 재사용 시 mobile family 전체 폐기, Web session 보존과
+   Apple 계정 삭제 시 암호화 credential·모든 session cascade
 
 추가 확인:
 
@@ -268,7 +276,24 @@ UI 전체 흐름:
 - 응답 `204 No Content`, 분석 로그에는 body와 IP 없음
 - Prometheus label에는 허용된 enum만 존재
 
-## 11. 배포 보안 검사
+## 11. Mobile lifecycle·native·auth
+
+- iOS/Android/Web 및 dev/staging/prod가 서로 다른 storage namespace 사용
+- Zustand RouteStore가 선택 route ID/type과 열린 상세 sheet를 eviction 뒤 복원
+- 성공한 추천 query만 최대 24시간 AsyncStorage에 보존
+- foreground 복귀 시 온라인·활성·같은 한국 날짜·5분 초과 추천만 조용히 refetch
+- fetch 중, 5분 정확한 경계, 전날 요청, offline query는 중복 refetch하지 않음
+- Health Connect가 설치되고 권한이 있지만 `records=[]`이면 Android adapter가 `0` 반환
+- iOS HealthKit은 step read만 요청하고 write/background delivery를 요청하지 않음
+- iOS/Android NAVER Client ID, bundle/package, Kakao scheme가 서로 섞이지 않음
+- Android Kotlin 2.1.20, minSdk 26, NAVER/Kakao Maven group 격리와 공식 URL 확인
+- refresh grace 120초 안에는 암호화 보관한 동일 pair 재생, 만료 뒤 family revoke
+- `scripts/verify-mobile-native-config.mjs all|ios|android`를 CNG 직후 실행
+
+실기기 gate는 카카오톡 설치/미설치 복귀, Apple 로그인, NAVER 지도 렌더링,
+HealthKit/Health Connect 실제·빈 자료, 권한 거부, process eviction을 포함합니다.
+
+## 12. 배포 보안 검사
 
 - `.env` Git ignore
 - 추적 파일 비밀값 검색
@@ -277,7 +302,7 @@ UI 전체 흐름:
 - API 로그에 query string·좌표·키·원문 없음
 - Docker image에 root `.env` 없음
 
-## 12. 운영 자동화와 모니터링
+## 13. 운영 자동화와 모니터링
 
 - 백업 파일 비어 있지 않음, `pg_restore --list`, SHA-256 일치
 - 최신 백업을 `template0` 기반 별도 PostGIS 18 DB에 전부 복원
@@ -292,7 +317,7 @@ UI 전체 흐름:
 - 외부 URL 미설정 시 relay 구성 지표 `0`과 설정 필요 경보 확인
 - 지표와 로그에 검색어·좌표·키·원문 없음
 
-## 13. 폐기 대상 잔존 검사
+## 14. 폐기 대상 잔존 검사
 
 lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기한 데이터
 경로와 실행 변수가 다시 들어오지 않았는지 검사합니다. 검사 대상은
@@ -302,7 +327,7 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 삭제된 파일 경로는 Git status에 삭제 항목으로 보일 수 있지만 작업 파일
 내용과 build asset에는 남지 않아야 합니다.
 
-## 14. 현재 검증 기록
+## 15. 현재 검증 기록
 
 2026-07-26 17:15 KST 운영 Web/API 기준선 검증:
 
@@ -319,19 +344,20 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 - 공개 실제 추천·NAVER 지도 main E2E 통과
 - 공급자 회귀는 전체 실행 중 20초 timeout 뒤 단독 재실행 5.5초 통과
 
-2026-07-26 cross-platform foundation 로컬 검증:
+2026-07-27 cross-platform foundation 로컬 검증:
 
 - workspace 경계 검사, format check, 전체 typecheck 통과
-- 결정적 테스트 148개 통과: contracts 11, app-core 3, alert-relay 3,
-  API 77, web 43, mobile 11
+- 결정적 테스트 151개 통과: contracts 11, app-core 3, alert-relay 3,
+  API 77, web 43, mobile 14
 - 격리 PostGIS에서 교통 5개와 mobile auth rotation/account deletion 2개 통과
 - Web production build 및 iOS·Android Hermes bundle export 통과
 - Expo prebuild 결과의 Bundle ID/package, NAVER Client ID, Apple/HealthKit,
   Health Connect, Kakao scheme, foreground-only 위치, Privacy Manifest 설정 통과
 - Expo Doctor 21개 중 프로젝트 검사 20개 통과. React Native Directory metadata
   검사는 외부 directory server 오류로 결과를 받지 못함
-- macOS iOS simulator compile와 Android Gradle assemble은 CI job에 구성했으며
-  첫 push/PR 결과 및 실제 기기 E2E 전에는 완료로 간주하지 않음
+- Android SDK 36/minSdk 26/Kotlin 2.1.20 arm64 debug Gradle assemble과 APK v2
+  서명 검증 통과. macOS iOS simulator와 Android 전체 ABI compile은 CI job에
+  구성했으며 첫 push/PR 결과 및 실제 기기 E2E 전에는 release 완료로 간주하지 않음
 
 2026-07-26 17:15 KST 전체 공개·운영 스냅샷:
 

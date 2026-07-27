@@ -4,9 +4,9 @@
 성공·오류 응답은 `@chimap/contracts`의 Zod schema로 검증합니다. 익명 UI
 이벤트 성공만 본문 없는 `204 No Content`를 반환합니다.
 
-계약은 현재 `feat/tago-transit` 구현과 2026-07-26 17:15 KST 공개 배포를
-기준으로 합니다. 배포 시점과 운영 통계는
-[구현·운영 현황](./current-state.md)에서 관리합니다.
+계약 구현 기준은 `feat/mobile/cross-platform-foundation`이며, 공개 Web/API
+배포 기준은 별도로 [구현·운영 현황](./current-state.md)에 기록합니다. mobile
+endpoint와 migration이 코드에 존재한다는 사실과 실제 store release를 구분합니다.
 
 ## 1. 공통 규칙
 

@@ -257,7 +257,10 @@ hash만 저장합니다. migration 4부터 Web cookie는 `WEB_SESSION/web`, 모�
 pair 원문은 grace 동안에만 server secret으로 AES-256-GCM 암호화해 보관합니다.
 같은 이전 token의 grace 안 재요청은 이 pair를 재생하고, grace가 지난 재사용은
 family의 모든 access/refresh row에 `revoked_at`을 설정합니다. 다른 mobile
-family와 Web session에는 영향을 주지 않습니다.
+family와 Web session에는 영향을 주지 않습니다. 이전 refresh row 자체를 즉시
+삭제하지 않으며 grace가 끝난 retry ciphertext/IV/tag만 제거합니다. 따라서 만료된
+token hash와 rotation metadata는 reuse 탐지에 남고, 직전 pair 원문은 grace보다
+오래 보관되지 않습니다.
 
 Apple refresh token은 계정 삭제 시 Apple `/auth/revoke`를 호출하기 위한
 최소 provider credential이며 CHIMap refresh token과 다른 값입니다. 동일한

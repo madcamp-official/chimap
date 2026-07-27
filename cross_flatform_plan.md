@@ -46,6 +46,7 @@ NAVER 지도, Kakao SDK, HealthKit/Health Connect가 필요하므로 Expo Go는
 - 현재 위치·장소 검색·걸음 입력·추천·NAVER 지도·상세 sheet의 iOS-first 세로 단면
 - Apple authorization code server exchange, 암호화 refresh 보관, 계정 삭제 grant revoke
 - mobile config/최소 버전/maintenance 계약과 앱 내 계정 삭제
+- Android Kotlin 2.1.20 고정, NAVER/Kakao Maven group 격리와 실제 arm64 debug APK compile
 
 아직 완료로 간주하지 않는 항목은 실제 iPhone/Android Development Build 설치,
 NAVER 지도 실기기 렌더링, Kakao 앱 복귀, HealthKit/Health Connect 실제 자료,
@@ -628,11 +629,14 @@ provider console credential과 Xcode Archive는 외부 release gate로 남는다
 실제 iPhone/Android에서 Kakao SDK 복귀, SecureStore 재실행, NAVER SDK와 health
 권한을 확인하는 것이다.
 
-로컬 자동 gate는 workspace 경계, 전체 typecheck, 148개 결정적 테스트,
+로컬 자동 gate는 workspace 경계, 전체 typecheck, 151개 결정적 테스트,
 7개 PostGIS 통합 테스트, Expo prebuild native 설정 검증, Web production build 및
-iOS·Android JavaScript bundle export까지 통과했다. macOS Xcode와 Android SDK가
-필요한 native compile job은 CI에 구성했지만 이 Linux 작업 환경에서는 실행하지
-않았으므로, 첫 push/PR의 성공 결과를 별도 release gate로 기록한다.
+iOS·Android JavaScript bundle export까지 통과했다. Android는 SDK 36, minSdk 26,
+Kotlin 2.1.20과 arm64-v8a로 `:app:assembleDebug`를 실제 통과하고 v2 서명 APK를
+검증했다. 격리 Docker network에서 국내 Maven TLS가 timeout되어 NAVER/Kakao의
+공식 artifact만 임시 local Maven mirror로 옮겨 compile했고, 최종 CNG 결과에는
+공식 HTTPS repository만 남는 것도 검증했다. macOS Xcode simulator compile와
+Android 전체 ABI compile은 CI 첫 실행 결과를 별도 release gate로 기록한다.
 
 Gate: 실제 iPhone에서 guest 추천과 선택 로그인→session 복구→logout→재로그인이
 되고 web session과 같은 `app_users` identity를 사용한다.

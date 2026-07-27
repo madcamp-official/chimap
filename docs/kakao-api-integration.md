@@ -133,6 +133,21 @@ token은 사용자 정보 확인 중에만 메모리에서 사용하고 저장�
 사용합니다. 상세 HTTP 계약은 [API 레퍼런스](./api-reference.md)를 따릅니다.
 [Kakao Login REST API](https://developers.kakao.com/docs/ko/kakaologin/rest-api)
 
+### iOS·Android 선택 로그인
+
+React Native 앱은 `KAKAO_NATIVE_APP_KEY`를 native SDK에 주입하고 iOS Bundle ID,
+Android package와 `kakao{NativeAppKey}` URL scheme를 Kakao Developers 플랫폼에
+등록합니다. Expo Go가 아니라 Development Build에서 카카오톡 설치·미설치 흐름과
+앱 복귀를 각각 검증합니다. 생성된 plist/manifest에 반대 OS 설정이 섞이지 않는지는
+native config verifier가 확인합니다.
+
+native SDK가 받은 Kakao access token은 CHIMap session으로 직접 사용하거나 기기에
+장기 보관하지 않습니다. 앱은 `/api/v1/auth/kakao/mobile`에 전달하고 backend는
+`access_token_info`의 `app_id`·만료를 확인한 뒤 `/v2/user/me` identity를 대조해
+15분 access/30일 refresh CHIMap token pair를 발급합니다. provider token은 검증 뒤
+폐기하며 CHIMap refresh token만 SecureStore에 저장합니다. Kakao 인증 장애·취소와
+무관하게 guest 검색·추천·지도는 계속 동작해야 합니다.
+
 2026-07-26 17:15 KST 운영 검증에서 익명 session은
 `kakaoLoginAvailable=true`, 로그인 시작은 HTTP 302, state cookie는
 HttpOnly·Secure·SameSite=Lax였고 Kakao authorize endpoint도 302를

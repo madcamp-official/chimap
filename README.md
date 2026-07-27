@@ -243,8 +243,8 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
 현재 일반 결정적 테스트는 contracts 11개, app-core 3개, alert-relay 3개,
-API 77개, web 43개, mobile 11개로 총 148개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 7개까지 포함하면 총 155개입니다.
+API 77개, web 43개, mobile 14개로 총 151개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 7개까지 포함하면 총 158개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \

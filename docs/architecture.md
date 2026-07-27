@@ -125,7 +125,18 @@ CHIMap user ID hash namespace로 전환하고 guest cache를 계정 cache에 암
 합치지 않습니다. 이 원칙 때문에 Web/iOS/Android와 서로 다른 계정의 추천 응답,
 선택 경로, 열린 상세 sheet가 충돌하지 않습니다. 앱 재실행 시 RouteStore의 마지막
 요청 hash와 TanStack Query의 성공 응답을 결합해 상세 sheet까지 먼저 복원하고,
-foreground 복귀 시 5분을 넘긴 활성 추천만 조용히 refetch합니다.
+foreground 복귀 시 온라인이고 같은 한국 날짜에 생성된 활성 추천 중 5분을
+엄격히 넘긴 query만 조용히 refetch합니다. fetch 중·offline·전날 요청은 중복
+갱신하지 않고, 성공했으며 `persistRecommendation`을 명시한 추천만 최대 24시간
+AsyncStorage에 보존합니다.
+
+CNG가 생성하는 native project에는 수동 설정을 남기지 않습니다. iOS entitlement,
+Info.plist, Android manifest, Gradle repository와 wrapper timeout은 `app.config.ts`와
+config plugin에서 생성합니다. Android는 Kotlin 2.1.20과 minSdk 26을 고정하고,
+NAVER `com.naver.maps`와 Kakao `com.kakao.sdk` artifact만 각 공식 Maven repository로
+보내 다른 Android dependency가 국내 SDK repository에 잘못 resolve되지 않게 합니다.
+`scripts/verify-mobile-native-config.mjs all|ios|android`가 CNG 직후 OS별 identity,
+권한, repository, entitlement와 Privacy Manifest 경계를 검증합니다.
 
 API는 mobile request header의 platform/app/contract version을 확인하지만 header가
 없는 Web 호출에는 mobile minimum-version gate를 적용하지 않습니다. 배포는 Web,

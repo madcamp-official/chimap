@@ -1,8 +1,9 @@
 # NAVER 지도와 Geocoding
 
-NAVER는 브라우저 지도 렌더링과 Kakao 주소 검색 보완을 담당합니다. Web
-Dynamic Map과 서버 REST API는 같은 Application을 사용할 수 있지만
-브라우저·서버 자격 증명의 노출 범위를 엄격히 분리합니다.
+NAVER는 Web·iOS·Android 지도 렌더링과 Kakao 주소 검색 보완을 담당합니다.
+Web Dynamic Map과 서버 REST API는 같은 Application을 사용할 수 있지만 native
+SDK는 quota·과금·application identity를 분리합니다. 브라우저·서버·native
+자격 증명의 노출 범위를 엄격히 구분합니다.
 
 이 문서는 현재 작업 트리의 구현과 2026-07-26에 확인한 NAVER Cloud 공식
 문서를 기준으로 합니다. 실제 공개 asset 반영 여부는
@@ -15,10 +16,14 @@ Dynamic Map과 서버 REST API는 같은 Application을 사용할 수 있지만
 | `VITE_NAVER_MAP_NCP_KEY_ID` | 브라우저 bundle | 공개 Client ID |
 | `NAVER_MAP_NCP_KEY_ID` | 서버 runtime | REST 요청 Client ID |
 | `NAVER_MAP_NCP_KEY` | 서버 runtime | Client Secret |
+| `NAVER_MAP_CLIENT_ID_IOS` | iOS binary/Info.plist | iOS 전용 공개 Client ID |
+| `NAVER_MAP_CLIENT_ID_ANDROID` | Android binary/manifest | Android 전용 공개 Client ID |
 
-같은 Maps Application에서 Dynamic Map, Geocoding, Reverse Geocoding을
-선택했다면 두 ID 변수는 같은 Client ID를 사용할 수 있습니다. Application을
-나눴다면 각 Application의 Client ID를 사용합니다.
+같은 Web/REST Maps Application에서 Dynamic Map, Geocoding, Reverse Geocoding을
+선택했다면 Web·server ID는 같은 Client ID를 사용할 수 있습니다. iOS와 Android는
+Web 및 서로의 Client ID를 재사용하지 않고 각각 별도 Maps Application을 사용합니다.
+production Expo config는 Web Client ID가 전달됐는데 native ID와 같으면 build를
+거절하며 iOS·Android ID가 같아도 항상 거절합니다.
 
 Client Secret은 어떤 경우에도 `VITE_` 변수, Docker build argument, 정적
 asset, 문서와 로그에 넣지 않습니다. 서버 설정은 공개 ID와 Client Secret이
@@ -29,11 +34,12 @@ asset, 문서와 로그에 넣지 않습니다. 서버 설정은 공개 ID와 Cl
 NAVER Cloud Platform에서:
 
 1. Application Services→Maps→Application
-2. CHIMap Application 등록 또는 수정
-3. Dynamic Map, Geocoding, Reverse Geocoding 선택
+2. CHIMap Web/REST, iOS, Android Application을 각각 등록 또는 수정
+3. Web/REST에는 Dynamic Map, Geocoding, Reverse Geocoding 선택
 4. Web 서비스 URL에 `https://chimap.madcamp-kaist.org` 등록
-5. Client ID와 Client Secret 확인
-6. 이용 한도와 임계치 알림 설정
+5. iOS Bundle ID와 Android package를 각 native Application에 정확히 등록
+6. 각 Application Client ID와 Web/REST Client Secret 확인
+7. Web·iOS·Android별 이용 한도와 임계치 알림 설정
 
 Web 서비스 URL에는 port와 path를 넣지 않습니다. localhost를 추가로
 사용하려면 콘솔 정책에 맞는 별도 URL을 등록합니다.
@@ -77,6 +83,23 @@ focus와 지도 경로는 같은 route ID로 동기화됩니다. SDK fallback SV
 SDK 인증·network·timeout 장애가 발생해도 추천 데이터는 제거하지 않습니다.
 동일 추천 응답의 실제 좌표를 SVG로 표시하고 카드와 텍스트 이동 단계를
 유지합니다.
+
+### 3.1 iOS·Android Native Map
+
+`app.config.ts`는 iOS Client ID를 `Info.plist`의 `NMFNcpKeyId`, Android Client
+ID를 manifest의 `com.naver.maps.map.NCP_KEY_ID` metadata에 각각 주입합니다.
+두 값을 `extra`나 JavaScript public config 하나로 합치지 않습니다. CNG 생성 후
+다음을 각각 실행해 반대 OS ID가 binary 설정에 섞이지 않았는지 확인합니다.
+
+```bash
+node scripts/verify-mobile-native-config.mjs ios
+node scripts/verify-mobile-native-config.mjs android
+```
+
+Android NAVER Maven repository는 `com.naver.maps` group에만 exclusive하게 적용해
+Fresco·React Native 같은 공통 artifact가 NAVER repository에서 resolve되지 않게
+합니다. 실제 rendering과 quota 인증은 Expo Go가 아닌 Development Build와 실제
+iPhone/Android 기기에서 최종 확인합니다.
 
 ## 4. 서버 Geocoding
 

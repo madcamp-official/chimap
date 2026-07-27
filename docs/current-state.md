@@ -2,11 +2,11 @@
 
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
-- **현재 구현**: `feat/tago-transit`의 Route Pulse UI·익명 이벤트·자동 건강
-  경로 UX와 선택형 카카오 웹 로그인. 2026-07-26에 계약·API·웹·알림 릴레이와
-  격리 PostGIS 결정적 테스트 118개 및 production build를 통과했습니다.
-  실제 카카오 계정으로 동의→callback→logout을 완료하는 사용자 E2E만
-  별도로 남았습니다.
+- **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
+  계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
+  포함합니다. 2026-07-27에 결정적 테스트 151개, 격리 PostGIS 7개, 전체
+  typecheck/build와 Android arm64 native compile을 통과했습니다. macOS iOS compile,
+  Android 전체 ABI CI와 실제 iPhone/Android E2E는 외부 release gate로 남습니다.
 - **현재 공개 배포**: 2026-07-26 17:13 KST에 이미지
   `sha256:67d47b65…`로 API/웹 컨테이너를 교체했습니다. 공개 asset
   `index-8c6yxSUg.js`, `index-BsaRoatc.css`와 선택형 로그인, 익명 이용,
@@ -105,8 +105,9 @@
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 구현 브랜치 | `feat/tago-transit` |
-| 마지막 CI 검증 구현 | `965aa88`, push run `30194446016` 두 job 성공 |
+| 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
+| 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
+| foundation CI | 다섯 독립 job 구성 완료, 현재 branch push 결과 확인 대기 |
 | 공개 웹 asset | `index-8c6yxSUg.js`, `index-BsaRoatc.css` |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
@@ -220,6 +221,26 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 카카오 token·email·전화번호·검색·위치·건강정보 비저장
 - 현재 운영 DB의 계정·OAuth·session row는 실제 계정 E2E 전이라 각각 0건
 
+### Cross-platform mobile foundation
+
+- `apps/mobile` 하나에서 iOS·Android 공용 화면·state·API 호출을 관리하고 OS SDK는
+  `src/platform`의 adapter로 격리
+- environment·OS·사용자 ID hash를 포함한 AsyncStorage/SecureStore namespace로
+  Web, iOS, Android와 서로 다른 계정의 자료 충돌 방지
+- Zustand RouteStore에 마지막 추천 요청, 선택 route ID/type과 상세 sheet 열림 상태 저장
+- 성공한 추천 TanStack Query만 최대 24시간 보존하고 eviction 뒤 즉시 복원
+- foreground 복귀 시 온라인·활성·같은 한국 날짜·5분 초과 query만 background refetch
+- NAVER iOS/Android Client ID, bundle/package, Kakao scheme와 native 권한 독립 검증
+- Health Connect가 설치·허용됐지만 기록이 없으면 Android adapter에서 정상 `0` 반환
+- CHIMap access/refresh token family, 120초 rotation grace와 동일 pair 재생,
+  grace 만료 재사용 시 해당 mobile family revoke
+- Apple authorization code server 교환, 암호화 refresh grant 보관과 앱 내 계정 삭제
+- Android SDK 36/minSdk 26/Kotlin 2.1.20 arm64 debug APK compile·v2 서명 검증
+
+생성되는 `apps/mobile/ios`, `android`, `.expo`, `dist`는 CNG/build 산출물이므로 Git에
+포함하지 않습니다. 최종 store 완료 조건은 실제 기기 NAVER/Kakao/Apple/health,
+process eviction과 TestFlight/Play release E2E입니다.
+
 ### 운영
 
 - PostgreSQL host port 미노출
@@ -237,8 +258,8 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 
 ## 5. 검증 기록
 
-로컬 검증은 2026-07-26 구현을, 최신 공개 검증은 17:13~17:15 KST에 배포된
-같은 웹/API 이미지를 대상으로 합니다.
+로컬 foundation 검증은 2026-07-27 구현을, 최신 공개 검증은 2026-07-26
+17:13~17:15 KST에 배포된 Web/API 이미지를 대상으로 합니다.
 
 | 검증 | 결과 |
 | --- | --- |
@@ -247,10 +268,10 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| cross-platform foundation 로컬 검사 | 경계·format·typecheck, 결정적 테스트 148개, PostGIS 7개 통과 |
+| cross-platform foundation 로컬 검사 | 경계·format·typecheck, 결정적 테스트 151개, PostGIS 7개 통과 |
 | cross-platform build | Web production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
-| native compile/실기기 | CI 첫 실행과 iPhone/Android Development Build 검증 대기 |
+| native compile/실기기 | Android arm64 debug APK 실제 compile·v2 서명 검증 통과. macOS iOS simulator CI, Android 전체 ABI CI와 iPhone/Android Development Build 검증 대기 |
 | PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 migration 3 적용·재적용 포함 5개 통과 |
 | 공개 strict 지도 E2E | 실제 추천·NAVER 지도 흐름 통과 |
 | 공개 반응형 Chromium smoke | 로그인 포함 1440/768/390/320px 통과; 768px 겹침 수정 후 재검증 |
@@ -273,7 +294,7 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 | 외부 운영 채널 | webhook 미입력, 구성 지표 `0`과 설정 필요 경보 발생 확인 |
 | 공개 번들 서버 비밀값 검사 | NAVER·Kakao OAuth·session 비밀값 미검출 |
 | 폐기 대상 용어·설정 내용 검색 | 0건 |
-| `git diff --check` | 2026-07-26 최종 문서 점검 통과 |
+| `git diff --check` | 2026-07-27 foundation 문서 점검 통과 |
 
 ## 6. 백업·복구 기록
 
@@ -334,9 +355,23 @@ push했습니다. GitHub push CI run `30194446016`과 PR 연동 run
 - `Typecheck, tests, build, config`
 - `PostgreSQL and PostGIS integration`
 
+cross-platform foundation은 `feat/tago-transit`의 `b9f7063`에서 분기해 다음 세
+commit으로 공통 feature, CI와 계획 문서를 분리했습니다.
+
+- `c7d8c9a feat: add cross-platform mobile foundation`
+- `252f1a0 ci: verify mobile platforms independently`
+- `633b166 docs: finalize cross-platform rollout plan`
+
+`82e7eca fix: harden mobile lifecycle and native builds`는 foreground persistence
+정책, Health Connect 빈 records 회귀, Kotlin/Maven/Gradle 안정화와 OS별 verifier를
+추가했습니다. 현재 workflow는 Web/API quality, Mobile JavaScript, iOS native,
+Android native, PostGIS의 다섯 독립 job을 사용합니다. 새 push CI 결과와 공개
+배포 기록은 이 문서에 이어서 갱신합니다.
+
 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
 있습니다. `feat/tago-transit`→`main` draft PR #1이 열려 있으며, 검토·병합,
-병합 후 수동 `Public live E2E`, 두 CI job의 필수 check 지정이 남았습니다.
+병합 후 수동 `Public live E2E`와 foundation 다섯 CI job의 필수 check 지정이
+남았습니다.
 
 ## 9. 현재 한계와 확장 조건
 

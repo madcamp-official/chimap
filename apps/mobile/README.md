@@ -40,6 +40,9 @@ pnpm --filter @chimap/mobile start
 
 네이티브 의존성이나 `app.config.ts`가 바뀌면 `native:prebuild` 후 Development
 Build를 다시 설치합니다. TypeScript만 바뀌면 Metro Fast Refresh를 사용합니다.
+생성 설정은 루트에서 `node scripts/verify-mobile-native-config.mjs ios` 또는
+`android`로 OS별 독립 검증합니다. Android Kakao wrapper는 Expo/RN과 맞는 Kotlin
+2.1.20을 사용하며 NAVER/Kakao Maven repository는 각 SDK group에만 적용됩니다.
 
 ### iOS 먼저 확인할 순서
 
