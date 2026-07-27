@@ -930,6 +930,10 @@ export const readinessResponseSchema = z
         subwayStations: z.number().int().nonnegative(),
         activeSubwayStations: z.number().int().nonnegative(),
         mappedSubwayStations: z.number().int().nonnegative(),
+        subwayServiceLines: z.number().int().nonnegative().optional(),
+        routeReadySubwayLines: z.number().int().nonnegative().optional(),
+        providerMappedStations: z.number().int().nonnegative().optional(),
+        busSubwayTransferEdges: z.number().int().nonnegative().optional(),
       })
       .strict(),
   })
