@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findMultimodalPaths,
+  splitSubwayTiming,
   type GraphEdge,
   type RequestGraph,
 } from "./multimodal-route-planner.js";
@@ -26,6 +27,21 @@ function graph(edges: GraphEdge[]): RequestGraph {
 }
 
 describe("요청 범위 멀티모달 graph", () => {
+  it("지하철 방향 내부값을 공개 timing 계약에서 분리한다", () => {
+    const result = splitSubwayTiming({
+      waitSeconds: 180,
+      timingSource: "SUBWAY_HEADWAY_FALLBACK",
+      isRealtime: false,
+      plannedBoardingAt: "2026-07-27T10:00:00.000Z",
+      updatedAt: null,
+      stale: false,
+      direction: "U",
+    });
+
+    expect(result.direction).toBe("U");
+    expect(result.timing).not.toHaveProperty("direction");
+  });
+
   it("버스→지하철 환승을 찾고 같은 노선 대기시간은 한 번만 더한다", () => {
     const result = findMultimodalPaths(graph([
       edge({ id: "access", fromNodeId: "ORIGIN", toNodeId: "B1", kind: "WALK", mode: "WALK", durationSeconds: 10 }),

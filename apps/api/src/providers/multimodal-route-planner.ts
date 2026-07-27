@@ -8,6 +8,7 @@ import {
   type NormalizedRoute,
   type RouteLeg,
   type TransitBusLeg,
+  type TransitTiming,
   type TransitTransferType,
 } from "@chimap/contracts";
 import { createHash } from "node:crypto";
@@ -115,6 +116,16 @@ function busServiceKey(route: BusRoute): string {
 
 function subwayServiceKey(serviceLineId: string): string {
   return `SUBWAY:${serviceLineId}`;
+}
+
+export function splitSubwayTiming(
+  resolved: TransitTiming & { direction: "U" | "D" | "UNKNOWN" },
+): {
+  direction: "U" | "D" | "UNKNOWN";
+  timing: TransitTiming;
+} {
+  const { direction, ...timing } = resolved;
+  return { direction, timing };
 }
 
 function routeStopAsStop(stop: BusRouteStop): BusStop {
@@ -985,7 +996,7 @@ export class MultimodalRoutePlanner {
       (total, step) => total + step.edge.durationSeconds,
       0,
     );
-    const timing = await this.#transitService.resolveSubwayTiming({
+    const resolvedTiming = await this.#transitService.resolveSubwayTiming({
       serviceLineId: boarding.serviceLineId,
       stationLineId: boarding.stationLineId,
       fromSourceStationKey: boarding.sourceStationKey,
@@ -994,7 +1005,13 @@ export class MultimodalRoutePlanner {
       fallbackWaitSeconds: first.boardingWaitSeconds,
       ...(signal === undefined ? {} : { signal }),
     });
+    const { direction, timing } = splitSubwayTiming(resolvedTiming);
     const waitSeconds = timing.waitSeconds;
+    const timingLabel = timing.isRealtime
+      ? "실시간 도착정보"
+      : timing.timingSource === "TAGO_SUBWAY_TIMETABLE"
+        ? "TAGO 시간표 기반 예상"
+        : "배차간격 기반 예상";
     const stationRef = (station: SubwayRoutingStation) => ({
       stationLineId: station.stationLineId,
       sourceStationKey: station.sourceStationKey,
@@ -1005,7 +1022,7 @@ export class MultimodalRoutePlanner {
       id: `multimodal-subway-${index}-${boarding.serviceLineId}`,
       mode: "SUBWAY",
       name: boarding.lineName,
-      guidance: `${boarding.stationName}역에서 ${boarding.lineName} 탑승 · ${alighting.stationName}역 하차 (배차간격 기반 예상)`,
+      guidance: `${boarding.stationName}역에서 ${boarding.lineName} 탑승 · ${alighting.stationName}역 하차 (${timingLabel})`,
       distanceMeters: steps.reduce(
         (total, step) => total + step.edge.distanceMeters,
         0,
@@ -1023,9 +1040,9 @@ export class MultimodalRoutePlanner {
         stationCount: stations.length - 1,
         rideDurationSeconds: rideSeconds,
         direction:
-          timing.direction === "U"
+          direction === "U"
             ? "UP"
-            : timing.direction === "D"
+            : direction === "D"
               ? "DOWN"
               : "UNKNOWN",
         destinationName: null,
@@ -1138,12 +1155,24 @@ export class MultimodalRoutePlanner {
         this.#materialize(graph, path, index, request.signal),
       ),
     );
-    return settled
+    const routes = settled
       .flatMap((result) =>
         result.status === "fulfilled" ? [result.value] : [],
       )
       .sort(
         (first, second) => first.durationSeconds - second.durationSeconds,
       );
+    const uniqueRoutes = [
+      ...new Map(routes.map((route) => [route.id, route])).values(),
+    ];
+    if (paths.length > 0 && uniqueRoutes.length === 0) {
+      throw new AggregateError(
+        settled.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        ),
+        "멀티모달 후보 경로를 응답 모델로 변환하지 못했습니다.",
+      );
+    }
+    return uniqueRoutes;
   }
 }
