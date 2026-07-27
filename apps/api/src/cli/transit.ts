@@ -154,14 +154,26 @@ async function syncArea(area: SyncArea, concurrency: number) {
     string,
     { cityCode: string; routeId: string }
   >();
+  const failureCodes = new Set<string>();
+  let failedStopRouteLookupCount = 0;
   for (const stop of nearby.items) {
     if (stop.cityCode === null || stop.nodeId === null) {
       continue;
     }
-    const response = await transit.getRoutesByStop(
-      stop.cityCode,
-      stop.nodeId,
-    );
+    let response;
+    try {
+      response = await transit.getRoutesByStop(
+        stop.cityCode,
+        stop.nodeId,
+      );
+    } catch (error) {
+      if (!(error instanceof TagoApiError)) {
+        throw error;
+      }
+      failedStopRouteLookupCount += 1;
+      failureCodes.add(safeFailureCode(error));
+      continue;
+    }
     for (const route of response.items) {
       routes.set(`${route.cityCode}:${route.routeId}`, {
         cityCode: route.cityCode,
@@ -173,7 +185,6 @@ async function syncArea(area: SyncArea, concurrency: number) {
   let nextIndex = 0;
   let synced = 0;
   let failed = 0;
-  const failureCodes = new Set<string>();
   const failedRoutes: Array<{
     cityCode: string;
     routeId: string;
@@ -213,6 +224,7 @@ async function syncArea(area: SyncArea, concurrency: number) {
     discoveredRouteCount: routes.size,
     selectedRouteCount: selected.length,
     syncedRouteCount: synced,
+    failedStopRouteLookupCount,
     failedRouteCount: failed,
     failureCodes: [...failureCodes],
     failedRoutes,
@@ -299,10 +311,10 @@ async function run(): Promise<void> {
       const result = await syncArea(area, concurrency);
       printJson(result);
       if (
-        result.selectedRouteCount > 0 &&
-        result.syncedRouteCount === 0
+        result.failureCodes.length > 0 ||
+        (result.selectedRouteCount > 0 && result.syncedRouteCount === 0)
       ) {
-        throw new Error("선택한 TAGO 노선을 하나도 동기화하지 못했습니다.");
+        throw new Error("TAGO 영역 동기화가 부분 실패했습니다.");
       }
       break;
     }
@@ -344,6 +356,7 @@ async function run(): Promise<void> {
             discoveredRouteCount: 0,
             selectedRouteCount: 0,
             syncedRouteCount: 0,
+            failedStopRouteLookupCount: 0,
             failedRouteCount: 1,
             failureCodes: [safeFailureCode(error)],
             failedRoutes: [],
@@ -358,13 +371,21 @@ async function run(): Promise<void> {
         (total, result) => total + result.failedRouteCount,
         0,
       );
-      const success = syncedRouteCount > 0 && failedRouteCount === 0;
+      const failedStopRouteLookupCount = results.reduce(
+        (total, result) => total + result.failedStopRouteLookupCount,
+        0,
+      );
+      const success =
+        syncedRouteCount > 0 &&
+        failedRouteCount === 0 &&
+        failedStopRouteLookupCount === 0;
       const status = {
         attemptedAt,
         success,
         lastSuccessAt: success ? new Date().toISOString() : previousLastSuccessAt,
         areaCount: results.length,
         syncedRouteCount,
+        failedStopRouteLookupCount,
         failedRouteCount,
         failureCodes: [
           ...new Set(results.flatMap((result) => result.failureCodes)),

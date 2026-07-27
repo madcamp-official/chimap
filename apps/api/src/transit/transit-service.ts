@@ -232,11 +232,17 @@ export class TransitService {
   public async syncSubwayStationMappings(
     concurrency = 4,
     signal?: AbortSignal,
-  ): Promise<{ mapped: number; unresolved: number; checked: number }> {
+  ): Promise<{
+    mapped: number;
+    unresolved: number;
+    failed: number;
+    checked: number;
+  }> {
     const stations = await this.repository.subwayStationsForMapping();
     let nextIndex = 0;
     let mapped = 0;
     let unresolved = 0;
+    let failed = 0;
     const workers = Array.from(
       { length: Math.min(concurrency, Math.max(stations.length, 1)) },
       async () => {
@@ -250,14 +256,29 @@ export class TransitService {
             .replace(/\([^)]*\)/gu, "")
             .replace(/역$/u, "")
             .trim();
-          const candidates = await this.#cache.getOrLoad(
-            `tago:subway:station-search:${normalizedStationName(queryName)}`,
-            24 * 60 * 60 * 1000,
-            () =>
-              this.#observeSubwayRequest("station_search", () =>
-                this.client.searchSubwayStations(queryName, signal),
-              ),
-          );
+          let candidates;
+          try {
+            candidates = await this.#cache.getOrLoad(
+              `tago:subway:station-search:${normalizedStationName(queryName)}`,
+              24 * 60 * 60 * 1000,
+              () =>
+                this.#observeSubwayRequest("station_search", () =>
+                  this.client.searchSubwayStations(queryName, signal),
+                ),
+            );
+          } catch (error) {
+            if (!(error instanceof TagoApiError)) {
+              throw error;
+            }
+            failed += 1;
+            this.#logger.warn({
+              event: "transit.subway_station_mapping_partial",
+              stationId: station.id,
+              resultCode: error.resultCode,
+              retryable: error.retryable,
+            });
+            continue;
+          }
           const matches = candidates.filter(
             (candidate) =>
               normalizedStationName(candidate.name) ===
@@ -286,7 +307,7 @@ export class TransitService {
       },
     );
     await Promise.all(workers);
-    return { mapped, unresolved, checked: stations.length };
+    return { mapped, unresolved, failed, checked: stations.length };
   }
 
   public async getSubwayDepartures(input: {
