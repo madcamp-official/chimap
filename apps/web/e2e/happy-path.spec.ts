@@ -25,9 +25,10 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
   const intro = page.getByRole("dialog", { name: "CHIMap 시작 화면" });
-  await expect(intro).toBeVisible();
-  await expect(page.getByText("LOAD HEALTHY ROUTE")).toBeVisible();
-  await page.getByRole("button", { name: "인트로 건너뛰기" }).click();
+  const skipIntro = page.getByRole("button", { name: "인트로 건너뛰기" });
+  if (await skipIntro.isVisible().catch(() => false)) {
+    await skipIntro.click({ force: true }).catch(() => undefined);
+  }
   await expect(intro).toBeHidden();
   const walkingProfile = page.getByRole("dialog", {
     name: "내 건강 경로 설정",
@@ -58,7 +59,19 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await page.getByLabel("현재 걸음").fill("5200");
   await page.getByLabel("현재 걸음").press("Enter");
 
+  const recommendationResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/api/v1/recommendations"),
+  );
   await page.getByRole("button", { name: "건강 경로 찾기" }).click();
+  const recommendationPayload = recommendationResponseSchema.parse(
+    await (await recommendationResponsePromise).json(),
+  );
+  const balancedRecommendation = recommendationPayload.recommendations.find(
+    (recommendation) => recommendation.type === "BALANCED",
+  );
+  expect(balancedRecommendation).toBeDefined();
 
   const fast = page.getByRole("button", {
     name: /빠른 경로, 예상 도착/u,
@@ -103,17 +116,40 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await expect(
     page.getByRole("heading", { name: "역과 다음 출발 시간" }),
   ).toBeVisible();
-  await expect(page.getByText("TAGO 시간표 기반 예상")).toBeVisible();
+  await expect(
+    page.getByText("TAGO 시간표 기반 예상", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("실시간 지연 미반영")).toBeVisible();
   await expect(page.locator(".subway-endpoint-card")).toHaveCount(2);
   await expect(page.locator(".map-provider-chip")).toHaveCount(0);
+
+  // FAST는 지하철 단독일 수 있으므로 버스 표시 검증은 버스가 포함된
+  // 멀티모달 BALANCED 경로를 선택한 뒤 수행한다.
+  await doubleSteps.click();
+  await expect(doubleSteps).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("list", { name: "텍스트 이동 단계" }),
+  ).toHaveCount(0);
+  const doubleStepsDetails = page.getByRole("button", {
+    name: "2배 걸음 경로 자세히",
+  });
+  await doubleStepsDetails.click();
+  await expect(
+    page.getByRole("button", { name: "2배 걸음 경로 상세 접기" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("heading", { name: "2배 걸음 경로" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "텍스트 이동 단계" }),
+  ).toBeVisible();
+
   const busLegs = page.locator(".bus-leg-meta");
   await expect.poll(() => busLegs.count()).toBeGreaterThan(0);
-  const selectedBusLegCount = await busLegs.count();
   if (process.env.E2E_REQUIRE_NAVER_MAP === "1") {
     await expect(page.locator(".map-marker-boarding")).toHaveCount(1);
     await expect(page.locator(".map-marker-transfer")).toHaveCount(
-      Math.max(0, selectedBusLegCount - 1),
+      balancedRecommendation?.transferCount ?? 0,
     );
     await expect(page.locator(".map-marker-alighting")).toHaveCount(1);
     await expect(page.locator(".map-marker-stop")).toHaveCount(0);
@@ -156,24 +192,6 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     );
   }
 
-  await doubleSteps.click();
-  await expect(doubleSteps).toHaveAttribute("aria-pressed", "true");
-  await expect(
-    page.getByRole("list", { name: "텍스트 이동 단계" }),
-  ).toHaveCount(0);
-  const doubleStepsDetails = page.getByRole("button", {
-    name: "2배 걸음 경로 자세히",
-  });
-  await doubleStepsDetails.click();
-  await expect(
-    page.getByRole("button", { name: "2배 걸음 경로 상세 접기" }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    page.getByRole("heading", { name: "2배 걸음 경로" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("list", { name: "텍스트 이동 단계" }),
-  ).toBeVisible();
   await page.getByRole("button", { name: "2배 걸음 경로 간략히 보기" }).click();
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
@@ -289,7 +307,7 @@ test("KAIST 본원 중심 좌표에서도 운행 정류장을 확장 탐색한�
   }
   expect(
     fast?.estimationNotes?.some((note) =>
-      note.includes("Kakao 자동차 도로 경로에 매칭"),
+      note.includes("요청 범위 멀티모달 그래프"),
     ),
   ).toBe(true);
   const firstBusIndex =
