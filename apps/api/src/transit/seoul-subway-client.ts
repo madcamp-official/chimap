@@ -97,6 +97,11 @@ function textValue(record: JsonRecord, key: string): string | undefined {
   return result.length === 0 ? undefined : result;
 }
 
+function normalizeStationQuery(value: string): string {
+  const stationName = value.normalize("NFKC").trim();
+  return stationName.length > 1 ? stationName.replace(/역$/u, "") : stationName;
+}
+
 function kstTimestamp(value: string): number | null {
   const normalized = value.trim().replace(" ", "T");
   const timestamp = Date.parse(
@@ -292,7 +297,7 @@ export class SeoulSubwayClient {
   ): Promise<SeoulSubwayArrival[]> {
     const rows = await this.#request(
       "realtimeStationArrival",
-      stationName,
+      normalizeStationQuery(stationName),
       20,
       signal,
     );

@@ -81,6 +81,22 @@ describe("서울 지하철 실시간 client", () => {
     })).toThrow(/공식 swopenapi/u);
   });
 
+  it("서울 API 도착 검색에서는 역 접미사를 제거한다", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        errorMessage: { status: 200, code: "INFO-000" },
+        realtimeArrivalList: [],
+      }),
+      { status: 200 },
+    ));
+
+    await new SeoulSubwayClient(config(), request).getArrivals("서울역");
+
+    const requestedUrl = String(request.mock.calls[0]?.[0]);
+    expect(decodeURIComponent(requestedUrl)).toMatch(/\/서울$/u);
+    expect(decodeURIComponent(requestedUrl)).not.toMatch(/\/서울역$/u);
+  });
+
   it("HTTP endpoint는 Node 기본 HTTP transport로 조회한다", async () => {
     let connectionHeader: string | undefined;
     const server = createServer((request, response) => {
