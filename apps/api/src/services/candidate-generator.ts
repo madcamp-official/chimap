@@ -429,11 +429,11 @@ function adjustedBusLeg(
   };
 }
 
-function rebuildRoute(
+export function rebuildRoute(
   base: NormalizedRoute,
   legs: RouteLeg[],
   id: string,
-  kind: AdjustmentSpec["kind"],
+  kind: Exclude<CandidateKind, "BASE">,
 ): NormalizedRoute {
   const walkDistanceMeters = legs
     .filter((leg) => leg.mode === "WALK")
@@ -443,6 +443,25 @@ function rebuildRoute(
     .reduce((total, leg) => total + leg.distanceMeters, 0);
   const busLegs = legs.flatMap((leg) =>
     leg.bus === undefined ? [] : [leg.bus],
+  );
+  const baseBusLegs = base.legs.flatMap((leg) =>
+    leg.bus === undefined ? [] : [leg.bus],
+  );
+  const nonBusWaitingDurationSeconds = Math.max(
+    0,
+    (base.waitingDurationSeconds ?? 0) -
+      baseBusLegs.reduce(
+        (total, bus) => total + bus.expectedArrivalSeconds,
+        0,
+      ),
+  );
+  const nonBusRidingDurationSeconds = Math.max(
+    0,
+    (base.ridingDurationSeconds ?? 0) -
+      baseBusLegs.reduce(
+        (total, bus) => total + bus.expectedRideSeconds,
+        0,
+      ),
   );
   return normalizedRouteSchema.parse({
     ...base,
@@ -454,15 +473,22 @@ function rebuildRoute(
     distanceMeters: walkDistanceMeters + transitDistanceMeters,
     walkDistanceMeters,
     transitDistanceMeters,
-    waitingDurationSeconds: busLegs.reduce(
-      (total, bus) => total + bus.expectedArrivalSeconds,
-      0,
-    ),
-    ridingDurationSeconds: busLegs.reduce(
-      (total, bus) => total + bus.expectedRideSeconds,
-      0,
-    ),
-    isRealtime: busLegs.every((bus) => bus.isArrivalRealtime),
+    waitingDurationSeconds:
+      nonBusWaitingDurationSeconds +
+      busLegs.reduce(
+        (total, bus) => total + bus.expectedArrivalSeconds,
+        0,
+      ),
+    ridingDurationSeconds:
+      nonBusRidingDurationSeconds +
+      busLegs.reduce(
+        (total, bus) => total + bus.expectedRideSeconds,
+        0,
+      ),
+    isRealtime:
+      base.isRealtime === false
+        ? false
+        : busLegs.every((bus) => bus.isArrivalRealtime),
     estimationNotes: [
       ...(base.estimationNotes ?? []),
       ...(kind === "LATE_BOARD" || kind === "BOTH_ENDS"
