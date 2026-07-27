@@ -35,6 +35,9 @@ function repositoryForMetrics(): TransitRepository {
       linkedStops: 2_188,
       routes: 127,
       routeStops: 4_469,
+      subwayStations: 1_097,
+      activeSubwayStations: 1_097,
+      mappedSubwayStations: 22,
     }),
   } as unknown as TransitRepository;
 }
@@ -73,6 +76,17 @@ describe("운영 metrics", () => {
       status: 200,
       durationSeconds: 0.25,
     });
+    metrics.observeHttp({
+      method: "GET",
+      path: "/api/v1/transit/subway/stations/223/departures",
+      status: 200,
+      durationSeconds: 0.4,
+    });
+    metrics.observeTagoSubway({
+      operation: "station_schedule",
+      outcome: "success",
+      durationSeconds: 0.35,
+    });
     metrics.observePlace("resolve", placeResult);
     metrics.observeUiEvent({
       version: "route-pulse-v1",
@@ -94,6 +108,15 @@ describe("운영 metrics", () => {
     );
     expect(output).toContain(
       'chimap_transit_rows{kind="stops",service="chimap-api"} 228119',
+    );
+    expect(output).toContain(
+      'route="/api/v1/transit/subway/stations/:id/departures"',
+    );
+    expect(output).toContain(
+      'chimap_tago_subway_requests_total{operation="station_schedule",outcome="success",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_tago_subway_unmapped_stations{service="chimap-api"} 1075',
     );
     expect(output).not.toContain("query=");
     expect(output).not.toContain("naver-secret");

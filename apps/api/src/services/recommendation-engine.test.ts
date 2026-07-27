@@ -107,8 +107,8 @@ describe("건강 경로 추천 선정", () => {
     durationSeconds: 3600,
     walkDistanceMeters: 700,
   });
-  const balanced = actualRoute({
-    id: "actual-balanced-102",
+  const doubleSteps = actualRoute({
+    id: "actual-double-102",
     routeNo: "102",
     durationSeconds: 3900,
     walkDistanceMeters: 1600,
@@ -120,9 +120,9 @@ describe("건강 경로 추천 선정", () => {
     walkDistanceMeters: 1960,
   });
 
-  it("빠른·균형·목표 경로를 중복 없이 사용자 판단 순서로 제공한다", () => {
+  it("빠른·약 2배 걸음·목표 근접 경로를 중복 없이 제공한다", () => {
     const result = selectRecommendations({
-      candidates: [candidate(goal), candidate(fast), candidate(balanced)],
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
       baseline: fast,
       request,
       departureAt: new Date("2026-07-25T12:00:00.000Z"),
@@ -135,6 +135,17 @@ describe("건강 경로 추천 선정", () => {
       "GOAL",
     ]);
     expect(new Set(result.recommendations.map((item) => item.id)).size).toBe(3);
+    expect(result.recommendations[1]).toMatchObject({
+      id: "actual-double-102",
+      type: "BALANCED",
+      title: "2배 걸음 경로",
+      reason: "가장 빠른 경로의 예상 걸음 수 약 두 배에 가장 가까워요.",
+    });
+    expect(result.recommendations[2]).toMatchObject({
+      id: "actual-goal-511",
+      type: "GOAL",
+      title: "목표 근접 경로",
+    });
     expect(result.goalReachable).toBe(true);
     expect(result.primaryRecommendationId).toBe("actual-goal-511");
     expect(
@@ -143,24 +154,82 @@ describe("건강 경로 추천 선정", () => {
     ).toBe(8000);
   });
 
-  it("이미 목표를 달성한 사용자는 불필요한 추가 도보 없이 빠른 경로만 본다", () => {
+  it("이미 목표를 달성했어도 후보가 충분하면 세 경로를 보여주고 빠른 경로를 기본 선택한다", () => {
     const completedRequest: RecommendationRequest = {
       ...request,
       currentSteps: 8100,
     };
     const result = selectRecommendations({
-      candidates: [candidate(fast), candidate(balanced), candidate(goal)],
+      candidates: [candidate(fast), candidate(doubleSteps), candidate(goal)],
       baseline: fast,
       request: completedRequest,
       departureAt: new Date("2026-07-25T12:00:00.000Z"),
       policy: resolveRecommendationPolicy(completedRequest, fast),
     });
 
-    expect(result.recommendations).toHaveLength(1);
-    expect(result.recommendations[0]).toMatchObject({
-      id: "actual-fast-108",
-      type: "FAST",
+    expect(result.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "BALANCED",
+      "GOAL",
+    ]);
+    expect(new Set(result.recommendations.map((item) => item.id)).size).toBe(3);
+    expect(result.primaryRecommendationId).toBe("actual-fast-108");
+  });
+
+  it("2배 걸음 경로는 빠른 경로 예상 걸음의 정확한 두 배에 가장 가까운 후보를 고른다", () => {
+    const exactDouble = actualRoute({
+      id: "exact-double",
+      routeNo: "705",
+      durationSeconds: 4500,
+      walkDistanceMeters: 1400,
     });
+    const nearDoubleButFaster = actualRoute({
+      id: "near-double-faster",
+      routeNo: "706",
+      durationSeconds: 3700,
+      walkDistanceMeters: 1260,
+    });
+
+    const result = selectRecommendations({
+      candidates: [
+        candidate(goal),
+        candidate(nearDoubleButFaster),
+        candidate(exactDouble),
+        candidate(fast),
+      ],
+      baseline: fast,
+      request,
+      departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      policy: resolveRecommendationPolicy(request, fast),
+    });
+
+    expect(
+      result.recommendations.find((item) => item.type === "FAST"),
+    ).toMatchObject({
+      id: "actual-fast-108",
+      estimatedSteps: 1000,
+    });
+    expect(
+      result.recommendations.find((item) => item.type === "BALANCED"),
+    ).toMatchObject({
+      id: "exact-double",
+      estimatedSteps: 2000,
+    });
+  });
+
+  it("실제 고유 후보가 세 개보다 적으면 같은 경로를 복제하지 않는다", () => {
+    const result = selectRecommendations({
+      candidates: [candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      policy: resolveRecommendationPolicy(request, fast),
+    });
+
+    expect(result.recommendations).toHaveLength(2);
+    expect(new Set(result.recommendations.map((item) => item.id))).toEqual(
+      new Set(["actual-fast-108", "actual-double-102"]),
+    );
   });
 
   it("추가 허용시간을 넘는 경로를 카드 후보에서 제외한다", () => {
@@ -171,7 +240,7 @@ describe("건강 경로 추천 선정", () => {
       safetyBufferMinutes: 3,
     };
     const result = selectRecommendations({
-      candidates: [candidate(fast), candidate(balanced), candidate(goal)],
+      candidates: [candidate(fast), candidate(doubleSteps), candidate(goal)],
       baseline: fast,
       request: legacyRequest,
       departureAt: new Date("2026-07-25T12:00:00.000Z"),
@@ -232,7 +301,7 @@ describe("건강 경로 추천 선정", () => {
       deduplicateRoutes([candidate(fast), candidate(sameRoute)]),
     ).toHaveLength(1);
     expect(
-      deduplicateRoutes([candidate(fast), candidate(balanced)]),
+      deduplicateRoutes([candidate(fast), candidate(doubleSteps)]),
     ).toHaveLength(2);
   });
 });

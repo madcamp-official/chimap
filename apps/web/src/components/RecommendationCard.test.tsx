@@ -7,8 +7,8 @@ import { RecommendationCard } from "./RecommendationCard.js";
 const recommendation: Recommendation = {
   id: "tago:25:daejeon-108",
   type: "BALANCED",
-  title: "걷기와 버스를 균형 있게",
-  reason: "현재 목표 걸음 수와 도착 마감시간을 함께 반영했습니다.",
+  title: "2배 걸음 경로",
+  reason: "가장 빠른 경로의 예상 걸음 수 약 두 배에 가장 가까워요.",
   durationSeconds: 2_280,
   arrivalAt: "2026-07-25T19:38:00+09:00",
   extraMinutes: 8,
@@ -80,6 +80,7 @@ describe("RecommendationCard", () => {
     expect(screen.getByText("환승 없음")).toBeInTheDocument();
     expect(screen.getByText(/1,600걸음 · 목표 65%/)).toBeInTheDocument();
     expect(screen.getByText("실시간 도착")).toBeInTheDocument();
+    expect(screen.getByText("약 2배 걷기")).toBeInTheDocument();
     expect(screen.queryByText(recommendation.reason)).not.toBeInTheDocument();
   });
 
@@ -99,14 +100,14 @@ describe("RecommendationCard", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: /걷기와 버스를 균형 있게, 예상 도착/,
+        name: /2배 걸음 경로, 예상 도착/,
       }),
     );
     expect(onSelect).toHaveBeenCalledOnce();
     expect(onToggleDetails).not.toHaveBeenCalled();
 
     const detailsButton = screen.getByRole("button", {
-      name: "걷기와 버스를 균형 있게 자세히",
+      name: "2배 걸음 경로 자세히",
     });
     expect(detailsButton).toHaveAttribute("aria-expanded", "false");
     expect(detailsButton).toHaveAttribute("aria-controls", "route-details");

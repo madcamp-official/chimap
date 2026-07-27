@@ -42,6 +42,7 @@ services:
       PORT: 3000
       WEB_ORIGIN: https://chimap.madcamp-kaist.org
       WEB_DIST_PATH: /app/web
+      SUBWAY_STATIONS_DATA_PATH: /data/subway_data.csv
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       METRICS_ENABLED: "1"
       METRICS_PORT: 9091
@@ -65,6 +66,7 @@ services:
       - 127.0.0.1:3000:3000
     volumes:
       - ${BACKUP_DIR:-/var/backups/chimap}:/backups:ro
+      - ./subway_data.csv:/data/subway_data.csv:ro
     networks:
       - internal
 

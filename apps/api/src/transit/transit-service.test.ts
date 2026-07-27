@@ -1,4 +1,4 @@
-import type { BusStop } from "@chimap/contracts";
+import type { BusStop, SubwayStation } from "@chimap/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig } from "../config.js";
@@ -115,6 +115,198 @@ describe("TransitService 주변 정류장 보강", () => {
     expect(result).toEqual({
       items: [kaistNorthGate],
       partial: true,
+    });
+  });
+});
+
+const daejeonStation: SubwayStation = {
+  id: "223",
+  stationCode: "104",
+  name: "대전",
+  lineCode: "S3001",
+  lineName: "대전 도시철도 1호선",
+  englishName: "Daejeon",
+  hanjaName: "大田",
+  transferType: "일반역",
+  transferLineCode: null,
+  transferLineName: null,
+  latitude: 36.331583,
+  longitude: 127.433118,
+  operatorName: "대전교통공사",
+  roadAddress: "대전광역시 동구 중앙로 지하 218 (중동)",
+  phoneNumber: "042-539-3604",
+  dataDate: "2026-06-25",
+  tagoStationId: "MTRDJ10004",
+  tagoRouteName: "1호선",
+  mappingStatus: "MAPPED",
+  active: true,
+};
+
+describe("TransitService TAGO 지하철 시간표", () => {
+  it.each([
+    ["평일", "2026-07-27T11:00:00+09:00", "U", "01"],
+    ["토요일", "2026-07-25T11:00:00+09:00", "D", "02"],
+    ["일요일", "2026-07-26T11:00:00+09:00", "U", "03"],
+  ] as const)("%s의 요일 코드와 %s 방향을 사용한다", async (_label, at, direction, dailyTypeCode) => {
+    const getSubwaySchedules = vi.fn().mockResolvedValue([
+      {
+        stationId: "MTRDJ10004",
+        stationName: "대전",
+        subwayRouteId: "MTRDJ1",
+        terminalStationId: "MTRDJ10001",
+        terminalStationName: "판암(대전대)",
+        departureTime: "120000",
+        arrivalTime: "120000",
+        dailyTypeCode,
+        direction,
+      },
+    ]);
+    const repository = {
+      getSubwayStation: vi.fn().mockResolvedValue(daejeonStation),
+    } as unknown as TransitRepository;
+    const client = { getSubwaySchedules } as unknown as TagoClient;
+    const config = loadConfig({
+      NODE_ENV: "test",
+      DATA_GO_KR_SERVICE_KEY: "subway-key",
+    });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository,
+      client,
+    });
+
+    const result = await service.getSubwayDepartures({
+      stationId: daejeonStation.id,
+      direction,
+      at: new Date(at),
+      limit: 3,
+    });
+
+    expect(getSubwaySchedules).toHaveBeenCalledWith(
+      "MTRDJ10004",
+      dailyTypeCode,
+      direction,
+      undefined,
+    );
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        dailyTypeCode,
+        direction,
+        rawDepartureTime: "120000",
+        departureAt: at.replace("11:00:00", "12:00:00"),
+        scheduleBased: true,
+      }),
+    ]);
+  });
+
+  it("TAGO 미매핑 역에는 명시적인 사유와 빈 시간표를 반환한다", async () => {
+    const repository = {
+      getSubwayStation: vi.fn().mockResolvedValue({
+        ...daejeonStation,
+        tagoStationId: null,
+        tagoRouteName: null,
+        mappingStatus: "UNRESOLVED",
+      }),
+    } as unknown as TransitRepository;
+    const config = loadConfig({ NODE_ENV: "test" });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository,
+      client: {} as TagoClient,
+    });
+
+    await expect(
+      service.getSubwayDepartures({
+        stationId: daejeonStation.id,
+        direction: "U",
+        at: new Date("2026-07-27T11:00:00+09:00"),
+        limit: 3,
+      }),
+    ).resolves.toMatchObject({
+      items: [],
+      scheduleAvailable: false,
+      unavailableReason: "TAGO_STATION_UNRESOLVED",
+    });
+  });
+});
+
+describe("TransitService TAGO 역 매핑", () => {
+  it("역명과 노선번호가 정확한 단일 후보만 매핑하고 같은 역명 검색을 공유한다", async () => {
+    const stations = [
+      { ...daejeonStation, id: "223", tagoStationId: null, mappingStatus: "PENDING" as const },
+      { ...daejeonStation, id: "224", tagoStationId: null, mappingStatus: "UNRESOLVED" as const },
+    ];
+    const updateSubwayStationMapping = vi.fn().mockResolvedValue(undefined);
+    const repository = {
+      subwayStationsForMapping: vi.fn().mockResolvedValue(stations),
+      updateSubwayStationMapping,
+    } as unknown as TransitRepository;
+    const searchSubwayStations = vi.fn().mockResolvedValue([
+      { stationId: "MTRDJ10004", name: "대전역", routeName: "1호선" },
+      { stationId: "WRONG", name: "대전", routeName: "11호선" },
+    ]);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      DATA_GO_KR_SERVICE_KEY: "subway-key",
+    });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository,
+      client: { searchSubwayStations } as unknown as TagoClient,
+    });
+
+    await expect(service.syncSubwayStationMappings(4)).resolves.toEqual({
+      mapped: 2,
+      unresolved: 0,
+      checked: 2,
+    });
+    expect(searchSubwayStations).toHaveBeenCalledOnce();
+    expect(updateSubwayStationMapping).toHaveBeenCalledTimes(2);
+    expect(updateSubwayStationMapping).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "MAPPED",
+        tagoStationId: "MTRDJ10004",
+      }),
+    );
+  });
+
+  it("역명·노선 후보가 복수이면 fuzzy 선택 없이 UNRESOLVED로 남긴다", async () => {
+    const updateSubwayStationMapping = vi.fn().mockResolvedValue(undefined);
+    const repository = {
+      subwayStationsForMapping: vi.fn().mockResolvedValue([
+        { ...daejeonStation, tagoStationId: null, mappingStatus: "PENDING" },
+      ]),
+      updateSubwayStationMapping,
+    } as unknown as TransitRepository;
+    const config = loadConfig({
+      NODE_ENV: "test",
+      DATA_GO_KR_SERVICE_KEY: "subway-key",
+    });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository,
+      client: {
+        searchSubwayStations: vi.fn().mockResolvedValue([
+          { stationId: "A", name: "대전", routeName: "1호선" },
+          { stationId: "B", name: "대전역", routeName: "대전 도시철도 1호선" },
+        ]),
+      } as unknown as TagoClient,
+    });
+
+    await expect(service.syncSubwayStationMappings()).resolves.toEqual({
+      mapped: 0,
+      unresolved: 1,
+      checked: 1,
+    });
+    expect(updateSubwayStationMapping).toHaveBeenCalledWith({
+      id: daejeonStation.id,
+      status: "UNRESOLVED",
+      tagoStationId: null,
+      tagoRouteName: null,
     });
   });
 });

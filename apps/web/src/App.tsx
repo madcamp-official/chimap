@@ -36,6 +36,7 @@ import {
   shouldPlayIntro,
 } from "./components/IntroSequence.js";
 import { MapView } from "./components/MapView.js";
+import { NearbySubwayPanel } from "./components/NearbySubwayPanel.js";
 import { PlaceCombobox } from "./components/PlaceCombobox.js";
 import { RecommendationCard } from "./components/RecommendationCard.js";
 import { RecommendationProgress } from "./components/RecommendationProgress.js";
@@ -48,6 +49,7 @@ import {
 import {
   ApiClientError,
   createRecommendations,
+  getBusArrivals,
   getBusVehicles,
   reverseGeocode,
   sendUiEvent,
@@ -418,24 +420,54 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
           ]),
         ).values(),
       );
-      const responses = await Promise.all(
-        uniqueRoutes.map((leg) =>
-          getBusVehicles({
-            cityCode: leg.cityCode,
-            routeId: leg.routeId,
-            signal,
-          }),
+      const uniqueBoardingStops = Array.from(
+        new Map(
+          selectedBusLegs.flatMap((leg) =>
+            leg.boardingStop.nodeId === null
+              ? []
+              : [
+                  [
+                    `${leg.cityCode}:${leg.boardingStop.nodeId}`,
+                    {
+                      cityCode: leg.cityCode,
+                      nodeId: leg.boardingStop.nodeId,
+                    },
+                  ] as const,
+                ],
+          ),
+        ).values(),
+      );
+      const [vehicleResponses, arrivalResponses] = await Promise.all([
+        Promise.allSettled(
+          uniqueRoutes.map((leg) =>
+            getBusVehicles({
+              cityCode: leg.cityCode,
+              routeId: leg.routeId,
+              signal,
+            }),
+          ),
         ),
+        Promise.allSettled(
+          uniqueBoardingStops.map((stop) =>
+            getBusArrivals({ ...stop, signal }),
+          ),
+        ),
+      ]);
+      const successfulVehicleResponses = vehicleResponses.flatMap((response) =>
+        response.status === "fulfilled" ? [response.value] : [],
       );
       const items = selectRelevantVehiclePositions(
         selectedBusLegs,
-        responses.flatMap((response) => response.items),
+        successfulVehicleResponses.flatMap((response) => response.items),
+        arrivalResponses.flatMap((response) =>
+          response.status === "fulfilled" ? response.value.items : [],
+        ),
       );
       return {
         items,
-        realtimeAvailable: responses.some(
+        realtimeAvailable: successfulVehicleResponses.some(
           (response) => response.realtimeAvailable,
-        ) && items.length > 0,
+        ),
       };
     },
     enabled: selectedBusLegs.length > 0,
@@ -704,6 +736,7 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
             destination={destination}
             recommendations={result?.recommendations ?? []}
             selectedRouteId={selectedRouteId}
+            cameraResetKey={result?.requestId}
             {...(previewRouteId === undefined
               ? {}
               : { highlightedRouteId: previewRouteId })}
@@ -860,6 +893,10 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
                 </details>
               )}
 
+              {origin === undefined || destination === undefined ? null : (
+                <NearbySubwayPanel origin={origin} destination={destination} />
+              )}
+
               <div className="recommendation-list">
                 {result.recommendations.map((recommendation, index) => {
                   const detailsId = `route-details-${recommendation.id}`;
@@ -909,7 +946,7 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
             )}
           </div>
           <footer className="data-sources-footer">
-            데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO 버스
+            데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO 버스·지하철
           </footer>
         </aside>
         </main>

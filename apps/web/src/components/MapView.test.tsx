@@ -1,7 +1,8 @@
 import type { Place, Recommendation } from "@chimap/contracts";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
 import { MapView } from "./MapView.js";
 
 const origin: Place = {
@@ -80,7 +81,34 @@ const walkingDisplayRoute: Recommendation = {
   ],
 };
 
+const alternateRoute: Recommendation = {
+  ...route,
+  id: "kakao:walk:kaist-daejeon-alternate",
+  legs: route.legs.map((leg) => ({ ...leg, id: `${leg.id}-alternate` })),
+};
+
+const vehicle: RelevantVehiclePosition = {
+  cityCode: "25",
+  routeId: "DJB30300070",
+  routeNo: "603",
+  vehicleNo: "대전75자2238",
+  latitude: 36.35,
+  longitude: 127.4,
+  nodeId: "DJB8002720",
+  nodeName: "이전 정류장",
+  nodeOrder: 21,
+  routeType: "간선버스",
+  fetchedAt: "2026-07-25T06:37:00.000Z",
+  stopsUntilBoarding: 6,
+  stopsUntilAlighting: 9,
+  displayReason: "ARRIVING_SOON",
+  arrivalSeconds: 59,
+};
+
 describe("MapView", () => {
+  afterEach(() => {
+    delete (window as Window & { naver?: unknown }).naver;
+  });
   it("지도 키가 없어도 경로 카드 기능과 대체 경로선을 유지한다", () => {
     render(
       <MapView
@@ -150,5 +178,138 @@ describe("MapView", () => {
     expect(screen.getByLabelText("지도 경로 범례")).not.toHaveTextContent(
       "추가 운동",
     );
+  });
+
+  it("SVG fallback도 WebP 버스 이미지와 흰 전광판·검은 노선번호를 표시한다", () => {
+    const { container } = render(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[route]}
+        selectedRouteId={route.id}
+        vehiclePositions={[vehicle]}
+      />,
+    );
+
+    const image = container.querySelector(".route-preview-svg image");
+    const number = container.querySelector(".preview-vehicle-number");
+    expect(image).toHaveAttribute(
+      "href",
+      expect.stringContaining("bus_icon.webp"),
+    );
+    expect(number).toHaveTextContent("603");
+    expect(number).toHaveClass("preview-vehicle-number");
+    expect(number).toHaveAttribute("fill", "#111");
+    expect(container.querySelector(".preview-vehicle-display")).toHaveAttribute(
+      "fill",
+      "#fff",
+    );
+    expect(container.querySelector(".route-preview-svg title")).toHaveTextContent(
+      "603번 · 1분 후 도착",
+    );
+  });
+
+  it("차량만 갱신할 때 카메라는 유지하고 버스 이미지 마커만 교체한다", async () => {
+    const fitBounds = vi.fn();
+    const setCenter = vi.fn();
+    const setZoom = vi.fn();
+    const markerOptions: Array<{ icon: { content: HTMLElement }; title: string }> = [];
+    class LatLng {}
+    class LatLngBounds {}
+    class MapMock {
+      destroy = vi.fn();
+      fitBounds = fitBounds;
+      setCenter = setCenter;
+      setZoom = setZoom;
+    }
+    class OverlayMock {
+      setMap = vi.fn();
+    }
+    class MarkerMock extends OverlayMock {
+      constructor(options: { icon: { content: HTMLElement }; title: string }) {
+        super();
+        markerOptions.push(options);
+      }
+    }
+    Object.assign(window, {
+      naver: {
+        maps: {
+          Map: MapMock,
+          LatLng,
+          LatLngBounds,
+          Polyline: OverlayMock,
+          Marker: MarkerMock,
+          MapTypeId: { NORMAL: "normal" },
+          Position: { RIGHT_CENTER: "right" },
+        },
+      },
+    });
+    const view = render(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[route, alternateRoute]}
+        selectedRouteId={route.id}
+        cameraResetKey="request-1"
+        ncpKeyId="public-map-key"
+        vehiclePositions={[vehicle]}
+      />,
+    );
+
+    await waitFor(() => expect(fitBounds).toHaveBeenCalledTimes(1));
+    const vehicleMarker = markerOptions.find((option) =>
+      option.icon.content.classList.contains("map-marker-vehicle"),
+    );
+    expect(vehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("bus_icon"),
+    );
+    expect(vehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
+      "alt",
+      "",
+    );
+    expect(vehicleMarker?.icon.content).toHaveTextContent("603");
+    expect(vehicleMarker?.title).toContain("1분 후 도착");
+    expect(vehicleMarker?.icon.content).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("603번 · 1분 후 도착"),
+    );
+
+    view.rerender(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[route, alternateRoute]}
+        selectedRouteId={route.id}
+        cameraResetKey="request-1"
+        ncpKeyId="public-map-key"
+        vehiclePositions={[
+          { ...vehicle, latitude: 36.351, fetchedAt: "2026-07-25T06:37:10.000Z" },
+        ]}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        markerOptions.filter((option) =>
+          option.icon.content.classList.contains("map-marker-vehicle"),
+        ),
+      ).toHaveLength(2),
+    );
+    expect(fitBounds).toHaveBeenCalledTimes(1);
+    expect(setCenter).not.toHaveBeenCalled();
+    expect(setZoom).not.toHaveBeenCalled();
+
+    view.rerender(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[route, alternateRoute]}
+        selectedRouteId={alternateRoute.id}
+        cameraResetKey="request-1"
+        ncpKeyId="public-map-key"
+        vehiclePositions={[vehicle]}
+      />,
+    );
+    await waitFor(() => expect(fitBounds).toHaveBeenCalledTimes(2));
   });
 });

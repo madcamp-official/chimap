@@ -5,6 +5,8 @@ import type {
   BusStop,
   BusVehiclePosition,
   Coordinate,
+  SubwayDeparture,
+  SubwayStation,
 } from "@chimap/contracts";
 import type { Logger } from "pino";
 
@@ -45,10 +47,93 @@ function uniqueStops(stops: BusStop[]): BusStop[] {
   );
 }
 
+function normalizedStationName(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/\([^)]*\)/gu, "")
+    .replace(/역$/u, "")
+    .replace(/[^\p{L}\p{N}]/gu, "")
+    .toLocaleLowerCase();
+}
+
+function normalizedLineName(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}]/gu, "")
+    .toLocaleLowerCase();
+}
+
+function sameSubwayLine(csvName: string, tagoName: string): boolean {
+  const csv = normalizedLineName(csvName);
+  const tago = normalizedLineName(tagoName);
+  if (csv === tago) {
+    return true;
+  }
+  const csvNumber = csv.match(/(\d+)호선$/u)?.[1];
+  const tagoNumber = tago.match(/(\d+)호선$/u)?.[1];
+  return (
+    csvNumber !== undefined &&
+    tagoNumber !== undefined &&
+    csvNumber === tagoNumber
+  );
+}
+
+function kstParts(at: Date): {
+  date: string;
+  day: number;
+  hour: number;
+} {
+  const shifted = new Date(at.getTime() + 9 * 60 * 60 * 1000);
+  return {
+    date: shifted.toISOString().slice(0, 10),
+    day: shifted.getUTCDay(),
+    hour: shifted.getUTCHours(),
+  };
+}
+
+function kstIso(milliseconds: number): string {
+  const shifted = new Date(milliseconds + 9 * 60 * 60 * 1000);
+  return `${shifted.toISOString().slice(0, 19)}+09:00`;
+}
+
+function scheduleTimestamp(
+  serviceDate: string,
+  rawTime: string,
+  at: Date,
+): number {
+  const hours = Number(rawTime.slice(0, 2));
+  const minutes = Number(rawTime.slice(2, 4));
+  const seconds = Number(rawTime.slice(4, 6));
+  let timestamp =
+    Date.parse(`${serviceDate}T00:00:00+09:00`) +
+    (hours * 3600 + minutes * 60 + seconds) * 1000;
+  if (hours < 4 && kstParts(at).hour >= 4) {
+    timestamp += 24 * 60 * 60 * 1000;
+  }
+  return timestamp;
+}
+
 export type NearbyStopsResult = {
   items: BusStop[];
   partial: boolean;
 };
+
+export type SubwayDepartureResult = {
+  station: SubwayStation | null;
+  items: SubwayDeparture[];
+  scheduleAvailable: boolean;
+  unavailableReason:
+    | "TAGO_STATION_UNRESOLVED"
+    | "NO_UPCOMING_DEPARTURES"
+    | null;
+  fetchedAt: string;
+};
+
+type SubwayMetricsObserver = (input: {
+  operation: "station_search" | "station_schedule";
+  outcome: "success" | "failure";
+  durationSeconds: number;
+}) => void;
 
 export class TransitService {
   public readonly client: TagoClient;
@@ -57,6 +142,7 @@ export class TransitService {
   readonly #config: AppConfig;
   readonly #cache: MemoryCache;
   readonly #logger: Logger;
+  #subwayMetricsObserver: SubwayMetricsObserver | undefined;
 
   public constructor(options: {
     config: AppConfig;
@@ -86,6 +172,33 @@ export class TransitService {
     return this.client.hasServiceKey(service);
   }
 
+  public setSubwayMetricsObserver(observer: SubwayMetricsObserver): void {
+    this.#subwayMetricsObserver = observer;
+  }
+
+  async #observeSubwayRequest<T>(
+    operation: "station_search" | "station_schedule",
+    request: () => Promise<T>,
+  ): Promise<T> {
+    const startedAt = performance.now();
+    try {
+      const result = await request();
+      this.#subwayMetricsObserver?.({
+        operation,
+        outcome: "success",
+        durationSeconds: (performance.now() - startedAt) / 1000,
+      });
+      return result;
+    } catch (error) {
+      this.#subwayMetricsObserver?.({
+        operation,
+        outcome: "failure",
+        durationSeconds: (performance.now() - startedAt) / 1000,
+      });
+      throw error;
+    }
+  }
+
   public getCityCodes(
     service: TagoServiceKind = "stop",
     signal?: AbortSignal,
@@ -95,6 +208,175 @@ export class TransitService {
       this.#config.tagoCacheTtlSeconds.route * 1000,
       () => this.client.getCityCodes(service, signal),
     );
+  }
+
+  public searchSubwayStations(
+    query: string,
+    limit: number,
+  ): Promise<SubwayStation[]> {
+    return this.repository.searchSubwayStations(query, limit);
+  }
+
+  public findNearbySubwayStations(
+    coordinate: Coordinate,
+    radiusMeters: number,
+    limit: number,
+  ): Promise<SubwayStation[]> {
+    return this.repository.findNearbySubwayStations(
+      coordinate,
+      radiusMeters,
+      limit,
+    );
+  }
+
+  public async syncSubwayStationMappings(
+    concurrency = 4,
+    signal?: AbortSignal,
+  ): Promise<{ mapped: number; unresolved: number; checked: number }> {
+    const stations = await this.repository.subwayStationsForMapping();
+    let nextIndex = 0;
+    let mapped = 0;
+    let unresolved = 0;
+    const workers = Array.from(
+      { length: Math.min(concurrency, Math.max(stations.length, 1)) },
+      async () => {
+        while (nextIndex < stations.length) {
+          const station = stations[nextIndex];
+          nextIndex += 1;
+          if (station === undefined) {
+            continue;
+          }
+          const queryName = station.name
+            .replace(/\([^)]*\)/gu, "")
+            .replace(/역$/u, "")
+            .trim();
+          const candidates = await this.#cache.getOrLoad(
+            `tago:subway:station-search:${normalizedStationName(queryName)}`,
+            24 * 60 * 60 * 1000,
+            () =>
+              this.#observeSubwayRequest("station_search", () =>
+                this.client.searchSubwayStations(queryName, signal),
+              ),
+          );
+          const matches = candidates.filter(
+            (candidate) =>
+              normalizedStationName(candidate.name) ===
+                normalizedStationName(station.name) &&
+              sameSubwayLine(station.lineName, candidate.routeName),
+          );
+          if (matches.length === 1) {
+            const match = matches[0]!;
+            await this.repository.updateSubwayStationMapping({
+              id: station.id,
+              status: "MAPPED",
+              tagoStationId: match.stationId,
+              tagoRouteName: match.routeName,
+            });
+            mapped += 1;
+          } else {
+            await this.repository.updateSubwayStationMapping({
+              id: station.id,
+              status: "UNRESOLVED",
+              tagoStationId: null,
+              tagoRouteName: null,
+            });
+            unresolved += 1;
+          }
+        }
+      },
+    );
+    await Promise.all(workers);
+    return { mapped, unresolved, checked: stations.length };
+  }
+
+  public async getSubwayDepartures(input: {
+    stationId: string;
+    direction: "U" | "D";
+    at: Date;
+    limit: number;
+    signal?: AbortSignal;
+  }): Promise<SubwayDepartureResult> {
+    const station = await this.repository.getSubwayStation(input.stationId);
+    if (station === null) {
+      return {
+        station: null,
+        items: [],
+        scheduleAvailable: false,
+        unavailableReason: "TAGO_STATION_UNRESOLVED",
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+    if (station.tagoStationId === null) {
+      return {
+        station,
+        items: [],
+        scheduleAvailable: false,
+        unavailableReason: "TAGO_STATION_UNRESOLVED",
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+    const parts = kstParts(input.at);
+    const dailyTypeCode = parts.day === 0 ? "03" : parts.day === 6 ? "02" : "01";
+    const schedules = await this.#cache.getOrLoad(
+      `tago:subway:schedules:${station.tagoStationId}:${dailyTypeCode}:${input.direction}`,
+      this.#config.tagoCacheTtlSeconds.subwaySchedules * 1000,
+      () =>
+        this.#observeSubwayRequest("station_schedule", () =>
+          this.client.getSubwaySchedules(
+            station.tagoStationId!,
+            dailyTypeCode,
+            input.direction,
+            input.signal,
+          ),
+        ),
+    );
+    const items = schedules
+      .map((schedule): SubwayDeparture => {
+        const departureTimestamp = scheduleTimestamp(
+          parts.date,
+          schedule.departureTime,
+          input.at,
+        );
+        let arrivalTimestamp = scheduleTimestamp(
+          parts.date,
+          schedule.arrivalTime,
+          input.at,
+        );
+        if (arrivalTimestamp < departureTimestamp) {
+          arrivalTimestamp += 24 * 60 * 60 * 1000;
+        }
+        return {
+          stationId: station.id,
+          stationName: schedule.stationName,
+          tagoStationId: schedule.stationId,
+          subwayRouteId: schedule.subwayRouteId,
+          terminalStationId: schedule.terminalStationId,
+          terminalStationName: schedule.terminalStationName,
+          direction: schedule.direction,
+          dailyTypeCode: schedule.dailyTypeCode,
+          rawDepartureTime: schedule.departureTime,
+          rawArrivalTime: schedule.arrivalTime,
+          departureAt: kstIso(departureTimestamp),
+          arrivalAt: kstIso(arrivalTimestamp),
+          scheduleBased: true,
+        };
+      })
+      .filter(
+        (departure) => Date.parse(departure.departureAt) >= input.at.getTime(),
+      )
+      .sort(
+        (first, second) =>
+          Date.parse(first.departureAt) - Date.parse(second.departureAt),
+      )
+      .slice(0, input.limit);
+    return {
+      station,
+      items,
+      scheduleAvailable: items.length > 0,
+      unavailableReason:
+        items.length === 0 ? "NO_UPCOMING_DEPARTURES" : null,
+      fetchedAt: new Date().toISOString(),
+    };
   }
 
   public async getNearbyStops(

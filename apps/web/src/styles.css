@@ -1331,12 +1331,45 @@ summary:focus-visible,
 }
 
 .map-marker-vehicle {
-  min-width: 42px;
-  padding-inline: 8px;
-  background: #0b6b50;
-  box-shadow:
-    0 0 0 3px rgb(255 255 255 / 82%),
-    0 6px 16px rgb(11 107 80 / 24%);
+  position: relative;
+  width: 60px !important;
+  min-width: 60px;
+  height: 60px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.map-marker-vehicle img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 4px 5px rgb(11 53 107 / 28%));
+}
+
+.map-marker-vehicle-number {
+  position: absolute;
+  top: 34%;
+  left: 30%;
+  display: flex;
+  width: 40%;
+  height: 22%;
+  align-items: center;
+  justify-content: center;
+  color: #111;
+  background: #fff;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  transform-origin: center;
+}
+
+.preview-vehicle-number {
+  fill: #111;
+  font-size: 5px;
+  font-weight: 900;
 }
 
 .trip-panel {
@@ -2126,6 +2159,213 @@ summary:focus-visible,
 
 .warning-list li.warning-caution > svg {
   color: var(--orange);
+}
+
+.nearby-subway-panel {
+  padding: 12px;
+  margin: 0 0 10px;
+  border: 1px solid #d9d2ec;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fbf9ff, #f4f0fc);
+  animation: result-block-enter 0.55s 0.1s cubic-bezier(0.16, 1, 0.3, 1)
+    both;
+}
+
+.nearby-subway-panel > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.subway-panel-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: 10px;
+  color: white;
+  background: var(--purple);
+}
+
+.subway-panel-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.nearby-subway-panel > header small {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--purple);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.nearby-subway-panel h2 {
+  margin: 0;
+  color: var(--navy-strong);
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.subway-schedule-notice {
+  min-height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  margin: 9px 0;
+  border-radius: 8px;
+  color: #64577e;
+  background: rgb(121 87 184 / 9%);
+  font-size: 9px;
+}
+
+.subway-schedule-notice svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.subway-schedule-notice strong {
+  font-size: 10px;
+}
+
+.subway-schedule-notice span:last-child {
+  margin-left: auto;
+  color: #81798f;
+}
+
+.subway-panel-status {
+  padding: 13px 8px;
+  margin: 0;
+  color: #6f6780;
+  font-size: 10px;
+  text-align: center;
+}
+
+.subway-endpoint-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.subway-endpoint-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgb(121 87 184 / 15%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 82%);
+}
+
+.subway-endpoint-card > small {
+  display: block;
+  color: #7b718b;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.subway-endpoint-card h3,
+.subway-endpoint-card > strong {
+  display: block;
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--navy-strong);
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subway-station-meta {
+  display: flex;
+  gap: 4px;
+  margin: 3px 0 7px;
+  color: #6b627b;
+  font-size: 9px;
+}
+
+.subway-station-meta span + span::before {
+  margin-right: 4px;
+  content: "·";
+}
+
+.subway-endpoint-card ul {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.subway-endpoint-card li {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  color: #6b627b;
+  background: #f3eff9;
+  font-size: 9px;
+}
+
+.subway-endpoint-card li > span {
+  flex: none;
+  font-weight: 900;
+}
+
+.subway-endpoint-card li > strong {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  color: var(--navy-strong);
+}
+
+.subway-endpoint-card li time {
+  font-size: 11px;
+}
+
+.subway-endpoint-card li small {
+  overflow: hidden;
+  color: #766c87;
+  max-width: 100%;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subway-endpoint-card.is-unavailable {
+  min-height: 94px;
+  color: #766f7f;
+  background: rgb(255 255 255 / 52%);
+}
+
+.subway-endpoint-card.is-unavailable p,
+.subway-mapping-pending,
+.subway-nearby-alternatives {
+  margin: 5px 0 0;
+  color: #7e758c;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.subway-nearby-alternatives {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subway-routing-boundary {
+  margin: 8px 1px 0;
+  color: #82798f;
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .recommendation-list {
@@ -3184,6 +3424,12 @@ summary:focus-visible,
 
   .telemetry-banner > div {
     justify-content: flex-end;
+  }
+}
+
+@media (max-width: 359px) {
+  .subway-endpoint-grid {
+    grid-template-columns: 1fr;
   }
 }
 

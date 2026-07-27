@@ -9,6 +9,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/alert-relay/package.json apps/alert-relay/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY bus_icon.webp bus_icon.webp
 
 RUN pnpm install --frozen-lockfile
 

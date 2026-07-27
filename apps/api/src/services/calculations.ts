@@ -27,10 +27,6 @@ export type EvaluatedCandidate = RouteCandidate & {
   shortfallCoverageRate: number;
   deadlineSatisfied: boolean;
   extraTimeSatisfied: boolean;
-  stepError: number;
-  timePenalty: number;
-  transferPenalty: number;
-  balancedScore: number;
 };
 
 export type RecommendationPolicy = {
@@ -182,21 +178,6 @@ export function evaluateCandidate(
   const extraTimeSatisfied =
     candidate.route.durationSeconds <=
     baseline.durationSeconds + policy.maxExtraMinutes * 60;
-  const stepError = Math.min(
-    Math.abs(metrics.routeEstimatedSteps - metrics.remainingSteps) /
-      Math.max(metrics.remainingSteps, 1000),
-    1,
-  );
-  const timePenalty = Math.min(
-    Math.max(extraMinutesRaw, 0) / Math.max(policy.maxExtraMinutes, 1),
-    1,
-  );
-  const transferPenalty = Math.min(candidate.route.transferCount / 3, 1);
-  const balancedScore =
-    0.6 * stepError +
-    0.3 * timePenalty +
-    0.1 * transferPenalty;
-
   return {
     ...candidate,
     arrivalAt,
@@ -207,9 +188,5 @@ export function evaluateCandidate(
     shortfallCoverageRate: metrics.shortfallCoverageRate,
     deadlineSatisfied,
     extraTimeSatisfied,
-    stepError,
-    timePenalty,
-    transferPenalty,
-    balancedScore,
   };
 }

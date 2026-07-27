@@ -27,7 +27,7 @@ type RecommendationCardProps = {
 
 const TYPE_META = {
   FAST: { badge: "가장 빠름", tone: "navy" },
-  BALANCED: { badge: "추천", tone: "teal" },
+  BALANCED: { badge: "약 2배 걷기", tone: "teal" },
   GOAL: { badge: "목표에 가까움", tone: "orange" },
 } as const;
 

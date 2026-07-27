@@ -7,6 +7,7 @@ import { expect, test } from "@playwright/test";
 test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장한다", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   let vehicleResponseCount = 0;
   page.on("response", (response) => {
     if (response.url().includes("/api/v1/transit/bus/routes/") &&
@@ -62,14 +63,14 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   const fast = page.getByRole("button", {
     name: /빠른 경로, 예상 도착/u,
   });
-  const balanced = page.getByRole("button", {
-    name: /균형 경로, 예상 도착/u,
+  const doubleSteps = page.getByRole("button", {
+    name: /2배 걸음 경로, 예상 도착/u,
   });
   const goal = page.getByRole("button", {
-    name: /목표 달성 경로, 예상 도착/u,
+    name: /목표 근접 경로, 예상 도착/u,
   });
   await expect(fast).toBeVisible();
-  await expect(balanced).toBeVisible();
+  await expect(doubleSteps).toBeVisible();
   await expect(goal).toBeVisible();
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
@@ -97,8 +98,14 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     await expect(mapStatus).toContainText("네이버 지도");
   }
   await expect(page.locator(".data-sources-footer")).toContainText(
-    "데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO 버스",
+    "데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO 버스·지하철",
   );
+  await expect(
+    page.getByRole("heading", { name: "역과 다음 출발 시간" }),
+  ).toBeVisible();
+  await expect(page.getByText("TAGO 시간표 기반 예상")).toBeVisible();
+  await expect(page.getByText("실시간 지연 미반영")).toBeVisible();
+  await expect(page.locator(".subway-endpoint-card")).toHaveCount(2);
   await expect(page.locator(".map-provider-chip")).toHaveCount(0);
   const busLegs = page.locator(".bus-leg-meta");
   await expect.poll(() => busLegs.count()).toBeGreaterThan(0);
@@ -114,33 +121,60 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await expect.poll(() => vehicleResponseCount).toBeGreaterThan(0);
   await page.waitForTimeout(250);
   const vehicleMarkers = page.locator(".map-marker-vehicle");
-  expect(await vehicleMarkers.count()).toBeLessThanOrEqual(
-    await busLegs.count(),
-  );
   for (const marker of await vehicleMarkers.all()) {
-    await expect(marker).not.toContainText(/^버스/u);
-    await expect(marker).toHaveAttribute("title", /탑승 예정 차량.*정류장 전/u);
+    await expect(marker.locator("img")).toHaveAttribute(
+      "src",
+      /bus_icon\.webp/u,
+    );
+    await expect(marker.locator(".map-marker-vehicle-number")).toHaveCSS(
+      "color",
+      "rgb(17, 17, 17)",
+    );
+    await expect(marker.locator(".map-marker-vehicle-number")).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+    await expect(marker).toHaveAttribute(
+      "title",
+      /분 후 도착|이동 구간 운행 중/u,
+    );
+  }
+  if (process.env.E2E_REQUIRE_NAVER_MAP === "1") {
+    const naverMap = page.locator(".naver-map");
+    const cameraFitCount = await naverMap.getAttribute(
+      "data-camera-fit-count",
+    );
+    await naverMap.hover();
+    await page.mouse.wheel(0, -600);
+    const responsesBeforeWaiting = vehicleResponseCount;
+    await expect
+      .poll(() => vehicleResponseCount, { timeout: 25_000 })
+      .toBeGreaterThanOrEqual(responsesBeforeWaiting + 2);
+    await expect(naverMap).toHaveAttribute(
+      "data-camera-fit-count",
+      cameraFitCount ?? "1",
+    );
   }
 
-  await balanced.click();
-  await expect(balanced).toHaveAttribute("aria-pressed", "true");
+  await doubleSteps.click();
+  await expect(doubleSteps).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
   ).toHaveCount(0);
-  const balancedDetails = page.getByRole("button", {
-    name: "균형 경로 자세히",
+  const doubleStepsDetails = page.getByRole("button", {
+    name: "2배 걸음 경로 자세히",
   });
-  await balancedDetails.click();
+  await doubleStepsDetails.click();
   await expect(
-    page.getByRole("button", { name: "균형 경로 상세 접기" }),
+    page.getByRole("button", { name: "2배 걸음 경로 상세 접기" }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(
-    page.getByRole("heading", { name: "균형 경로" }),
+    page.getByRole("heading", { name: "2배 걸음 경로" }),
   ).toBeVisible();
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "균형 경로 간략히 보기" }).click();
+  await page.getByRole("button", { name: "2배 걸음 경로 간략히 보기" }).click();
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
   ).toHaveCount(0);

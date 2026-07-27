@@ -2,6 +2,8 @@ import {
   type BusRoute,
   type BusRouteStop,
   type BusStop,
+  type SubwayStation,
+  type SubwayStationMappingStatus,
 } from "@chimap/contracts";
 import { createHash } from "node:crypto";
 import { finished } from "node:stream/promises";
@@ -37,6 +39,27 @@ export type TransitStats = {
   linkedStops: number;
   routes: number;
   routeStops: number;
+  subwayStations: number;
+  activeSubwayStations: number;
+  mappedSubwayStations: number;
+};
+
+export type CsvSubwayStation = {
+  stationCode: string;
+  name: string;
+  lineCode: string;
+  lineName: string;
+  englishName: string | null;
+  hanjaName: string | null;
+  transferType: string | null;
+  transferLineCode: string | null;
+  transferLineName: string | null;
+  latitude: number;
+  longitude: number;
+  operatorName: string;
+  roadAddress: string | null;
+  phoneNumber: string | null;
+  dataDate: string;
 };
 
 function normalizeName(value: string): string {
@@ -121,6 +144,34 @@ function rowToRoute(row: SqlRow): BusRoute {
   };
 }
 
+function rowToSubwayStation(row: SqlRow): SubwayStation {
+  return {
+    id: String(row.id),
+    stationCode: String(row.station_code),
+    name: String(row.station_name),
+    lineCode: String(row.line_code),
+    lineName: String(row.line_name),
+    englishName: nullableString(row.english_name),
+    hanjaName: nullableString(row.hanja_name),
+    transferType: nullableString(row.transfer_type),
+    transferLineCode: nullableString(row.transfer_line_code),
+    transferLineName: nullableString(row.transfer_line_name),
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    operatorName: String(row.operator_name),
+    roadAddress: nullableString(row.road_address),
+    phoneNumber: nullableString(row.phone_number),
+    dataDate: String(row.data_date),
+    tagoStationId: nullableString(row.tago_station_id),
+    tagoRouteName: nullableString(row.tago_route_name),
+    mappingStatus: String(row.mapping_status) as SubwayStationMappingStatus,
+    active: row.active === true,
+    ...(row.distance_meters === undefined
+      ? {}
+      : { distanceMeters: Math.round(Number(row.distance_meters)) }),
+  };
+}
+
 function migrationChecksum(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");
 }
@@ -167,6 +218,31 @@ function stopSelect(prefix = ""): string {
     ${prefix}ars_id,
     ${prefix}name,
     ${prefix}source,
+    ST_Y(${prefix}location::geometry) AS latitude,
+    ST_X(${prefix}location::geometry) AS longitude
+  `;
+}
+
+function subwayStationSelect(prefix = ""): string {
+  return `
+    ${prefix}id,
+    ${prefix}station_code,
+    ${prefix}station_name,
+    ${prefix}line_code,
+    ${prefix}line_name,
+    ${prefix}english_name,
+    ${prefix}hanja_name,
+    ${prefix}transfer_type,
+    ${prefix}transfer_line_code,
+    ${prefix}transfer_line_name,
+    ${prefix}operator_name,
+    ${prefix}road_address,
+    ${prefix}phone_number,
+    ${prefix}data_date,
+    ${prefix}tago_station_id,
+    ${prefix}tago_route_name,
+    ${prefix}mapping_status,
+    ${prefix}active,
     ST_Y(${prefix}location::geometry) AS latitude,
     ST_X(${prefix}location::geometry) AS longitude
   `;
@@ -749,12 +825,194 @@ export class TransitRepository {
     }));
   }
 
+  public async importSubwayStations(rows: CsvSubwayStation[]): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`
+        CREATE TEMP TABLE subway_station_import (
+          station_code varchar(50) NOT NULL,
+          station_name varchar(200) NOT NULL,
+          line_code varchar(50) NOT NULL,
+          line_name varchar(200) NOT NULL,
+          english_name varchar(200),
+          hanja_name varchar(200),
+          transfer_type varchar(100),
+          transfer_line_code varchar(200),
+          transfer_line_name varchar(500),
+          latitude double precision NOT NULL,
+          longitude double precision NOT NULL,
+          operator_name varchar(200) NOT NULL,
+          road_address varchar(500),
+          phone_number varchar(100),
+          data_date text NOT NULL
+        ) ON COMMIT DROP
+      `);
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO subway_station_import(
+             station_code, station_name, line_code, line_name,
+             english_name, hanja_name, transfer_type, transfer_line_code,
+             transfer_line_name, latitude, longitude, operator_name,
+             road_address, phone_number, data_date
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+           )`,
+          [
+            row.stationCode,
+            row.name,
+            row.lineCode,
+            row.lineName,
+            row.englishName,
+            row.hanjaName,
+            row.transferType,
+            row.transferLineCode,
+            row.transferLineName,
+            row.latitude,
+            row.longitude,
+            row.operatorName,
+            row.roadAddress,
+            row.phoneNumber,
+            row.dataDate,
+          ],
+        );
+      }
+      await client.query("UPDATE subway_station_lines SET active = false, updated_at = now()");
+      await client.query(`
+        INSERT INTO subway_station_lines(
+          station_code, station_name, line_code, line_name,
+          english_name, hanja_name, transfer_type, transfer_line_code,
+          transfer_line_name, location, operator_name, road_address,
+          phone_number, data_date, active, created_at, updated_at
+        )
+        SELECT
+          station_code, station_name, line_code, line_name,
+          english_name, hanja_name, transfer_type, transfer_line_code,
+          transfer_line_name,
+          ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+          operator_name, road_address, phone_number, data_date,
+          true, now(), now()
+        FROM subway_station_import
+        ON CONFLICT(station_code, line_code, line_name, operator_name)
+        DO UPDATE SET
+          station_name = EXCLUDED.station_name,
+          english_name = EXCLUDED.english_name,
+          hanja_name = EXCLUDED.hanja_name,
+          transfer_type = EXCLUDED.transfer_type,
+          transfer_line_code = EXCLUDED.transfer_line_code,
+          transfer_line_name = EXCLUDED.transfer_line_name,
+          location = EXCLUDED.location,
+          road_address = EXCLUDED.road_address,
+          phone_number = EXCLUDED.phone_number,
+          data_date = EXCLUDED.data_date,
+          active = true,
+          updated_at = now()
+      `);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async searchSubwayStations(
+    query: string,
+    limit: number,
+  ): Promise<SubwayStation[]> {
+    const result = await this.pool.query(
+      `SELECT ${subwayStationSelect()}
+       FROM subway_station_lines
+       WHERE active = true
+         AND (station_name ILIKE $1 OR line_name ILIKE $1)
+       ORDER BY
+         CASE WHEN station_name = $2 THEN 0 ELSE 1 END,
+         station_name, line_name
+       LIMIT $3`,
+      [`%${query}%`, query, limit],
+    );
+    return result.rows.map(rowToSubwayStation);
+  }
+
+  public async findNearbySubwayStations(
+    coordinate: { lat: number; lng: number },
+    radiusMeters: number,
+    limit: number,
+  ): Promise<SubwayStation[]> {
+    const result = await this.pool.query(
+      `SELECT ${subwayStationSelect()},
+         ST_Distance(
+           location,
+           ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+         ) AS distance_meters
+       FROM subway_station_lines
+       WHERE active = true
+         AND ST_DWithin(
+           location,
+           ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+           $3
+         )
+       ORDER BY distance_meters, station_name, line_name
+       LIMIT $4`,
+      [coordinate.lng, coordinate.lat, radiusMeters, limit],
+    );
+    return result.rows.map(rowToSubwayStation);
+  }
+
+  public async getSubwayStation(id: string): Promise<SubwayStation | null> {
+    const result = await this.pool.query(
+      `SELECT ${subwayStationSelect()}
+       FROM subway_station_lines
+       WHERE id = $1 AND active = true`,
+      [id],
+    );
+    return result.rows[0] === undefined
+      ? null
+      : rowToSubwayStation(result.rows[0]);
+  }
+
+  public async subwayStationsForMapping(
+    limit = 10_000,
+  ): Promise<SubwayStation[]> {
+    const result = await this.pool.query(
+      `SELECT ${subwayStationSelect()}
+       FROM subway_station_lines
+       WHERE active = true AND mapping_status <> 'MAPPED'
+       ORDER BY station_name, line_name
+       LIMIT $1`,
+      [limit],
+    );
+    return result.rows.map(rowToSubwayStation);
+  }
+
+  public async updateSubwayStationMapping(input: {
+    id: string;
+    status: SubwayStationMappingStatus;
+    tagoStationId: string | null;
+    tagoRouteName: string | null;
+  }): Promise<void> {
+    await this.pool.query(
+      `UPDATE subway_station_lines
+       SET mapping_status = $2,
+           tago_station_id = $3,
+           tago_route_name = $4,
+           mapping_checked_at = now(),
+           updated_at = now()
+       WHERE id = $1`,
+      [input.id, input.status, input.tagoStationId, input.tagoRouteName],
+    );
+  }
+
   public async stats(): Promise<TransitStats> {
     const result = await this.pool.query<{
       stops: string;
       linked_stops: string;
       routes: string;
       route_stops: string;
+      subway_stations: string;
+      active_subway_stations: string;
+      mapped_subway_stations: string;
     }>(`
       SELECT
         (SELECT COUNT(*) FROM bus_stops)::text AS stops,
@@ -763,7 +1021,15 @@ export class TransitRepository {
           WHERE city_code IS NOT NULL AND node_id IS NOT NULL
         )::text AS linked_stops,
         (SELECT COUNT(*) FROM bus_routes)::text AS routes,
-        (SELECT COUNT(*) FROM bus_route_stops)::text AS route_stops
+        (SELECT COUNT(*) FROM bus_route_stops)::text AS route_stops,
+        (SELECT COUNT(*) FROM subway_station_lines)::text AS subway_stations,
+        (
+          SELECT COUNT(*) FROM subway_station_lines WHERE active = true
+        )::text AS active_subway_stations,
+        (
+          SELECT COUNT(*) FROM subway_station_lines
+          WHERE active = true AND mapping_status = 'MAPPED'
+        )::text AS mapped_subway_stations
     `);
     const row = result.rows[0];
     return {
@@ -771,6 +1037,9 @@ export class TransitRepository {
       linkedStops: Number(row?.linked_stops ?? 0),
       routes: Number(row?.routes ?? 0),
       routeStops: Number(row?.route_stops ?? 0),
+      subwayStations: Number(row?.subway_stations ?? 0),
+      activeSubwayStations: Number(row?.active_subway_stations ?? 0),
+      mappedSubwayStations: Number(row?.mapped_subway_stations ?? 0),
     };
   }
 }

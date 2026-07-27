@@ -31,11 +31,11 @@ const TYPE_COPY: Record<
     reason: "지금 출발 기준 가장 빠르게 도착해요.",
   },
   BALANCED: {
-    title: "균형 경로",
-    reason: "추가시간과 부족한 걸음을 균형 있게 맞췄어요.",
+    title: "2배 걸음 경로",
+    reason: "가장 빠른 경로의 예상 걸음 수 약 두 배에 가장 가까워요.",
   },
   GOAL: {
-    title: "목표 달성 경로",
+    title: "목표 근접 경로",
     reason: "남은 걸음 수에 가장 가까운 경로예요.",
   },
 };
@@ -59,11 +59,14 @@ function byGoal(
     byFastest(first, second);
 }
 
-function byBalanced(
-  first: EvaluatedCandidate,
-  second: EvaluatedCandidate,
-): number {
-  return first.balancedScore - second.balancedScore || byFastest(first, second);
+function byDoubleSteps(
+  fastEstimatedSteps: number,
+): (first: EvaluatedCandidate, second: EvaluatedCandidate) => number {
+  const targetSteps = fastEstimatedSteps * 2;
+  return (first, second) =>
+    Math.abs(first.estimatedSteps - targetSteps) -
+      Math.abs(second.estimatedSteps - targetSteps) ||
+    byFastest(first, second);
 }
 
 function toRecommendation(
@@ -176,22 +179,20 @@ export function selectRecommendations(input: {
   selected.set("FAST", fast);
   usedIds.add(fast.route.id);
 
-  if (remainingSteps > 0) {
-    const goal = [...unique]
-      .sort(byGoal(remainingSteps))
-      .find((candidate) => !usedIds.has(candidate.route.id));
-    if (goal !== undefined) {
-      selected.set("GOAL", goal);
-      usedIds.add(goal.route.id);
-    }
+  const doubleSteps = [...unique]
+    .sort(byDoubleSteps(fast.estimatedSteps))
+    .find((candidate) => !usedIds.has(candidate.route.id));
+  if (doubleSteps !== undefined) {
+    selected.set("BALANCED", doubleSteps);
+    usedIds.add(doubleSteps.route.id);
+  }
 
-    const balanced = [...unique]
-      .sort(byBalanced)
-      .find((candidate) => !usedIds.has(candidate.route.id));
-    if (balanced !== undefined) {
-      selected.set("BALANCED", balanced);
-      usedIds.add(balanced.route.id);
-    }
+  const goal = [...unique]
+    .sort(byGoal(remainingSteps))
+    .find((candidate) => !usedIds.has(candidate.route.id));
+  if (goal !== undefined) {
+    selected.set("GOAL", goal);
+    usedIds.add(goal.route.id);
   }
 
   const typeOrder: RecommendationType[] = ["FAST", "BALANCED", "GOAL"];
@@ -202,9 +203,11 @@ export function selectRecommendations(input: {
       : [toRecommendation(candidate, type, remainingSteps)];
   });
   const primaryRecommendationId =
-    recommendations.find((item) => item.type === "GOAL")?.id ??
-    recommendations.find((item) => item.type === "BALANCED")?.id ??
-    recommendations[0]?.id;
+    remainingSteps === 0
+      ? recommendations.find((item) => item.type === "FAST")?.id
+      : (recommendations.find((item) => item.type === "GOAL")?.id ??
+        recommendations.find((item) => item.type === "BALANCED")?.id ??
+        recommendations[0]?.id);
 
   return {
     recommendations,

@@ -1,5 +1,6 @@
 import {
   authSessionResponseSchema,
+  busArrivalsResponseSchema,
   busRouteStopsResponseSchema,
   busVehiclesResponseSchema,
   errorResponseSchema,
@@ -8,7 +9,10 @@ import {
   recommendationRequestSchema,
   recommendationResponseSchema,
   reverseGeocodeResponseSchema,
+  subwayDeparturesResponseSchema,
+  subwayStationsResponseSchema,
   type Coordinate,
+  type BusArrivalsResponse,
   type BusRouteStopsResponse,
   type BusVehiclesResponse,
   type ErrorCode,
@@ -17,6 +21,8 @@ import {
   type RecommendationRequest,
   type RecommendationResponse,
   type ReverseGeocodeResponse,
+  type SubwayDeparturesResponse,
+  type SubwayStationsResponse,
   type UiEventPayload,
   type AuthSessionResponse,
 } from "@chimap/contracts";
@@ -215,6 +221,62 @@ export async function getBusVehicles(input: {
   return busVehiclesResponseSchema.parse(
     await fetchJson(
       `/api/v1/transit/bus/routes/${encodeURIComponent(input.routeId)}/vehicles?${parameters.toString()}`,
+      input.signal === undefined ? {} : { signal: input.signal },
+    ),
+  );
+}
+
+export async function getBusArrivals(input: {
+  cityCode: string;
+  nodeId: string;
+  signal?: AbortSignal;
+}): Promise<BusArrivalsResponse> {
+  const parameters = new URLSearchParams({ cityCode: input.cityCode });
+  return busArrivalsResponseSchema.parse(
+    await fetchJson(
+      `/api/v1/transit/bus/stops/${encodeURIComponent(input.nodeId)}/arrivals?${parameters.toString()}`,
+      input.signal === undefined ? {} : { signal: input.signal },
+    ),
+  );
+}
+
+export async function getNearbySubwayStations(input: {
+  coordinate: Coordinate;
+  radiusMeters?: number;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<SubwayStationsResponse> {
+  const parameters = new URLSearchParams({
+    lat: String(input.coordinate.lat),
+    lng: String(input.coordinate.lng),
+    radiusMeters: String(input.radiusMeters ?? 2_000),
+    limit: String(input.limit ?? 3),
+  });
+  return subwayStationsResponseSchema.parse(
+    await fetchJson(
+      `/api/v1/transit/subway/stations/nearby?${parameters.toString()}`,
+      input.signal === undefined ? {} : { signal: input.signal },
+    ),
+  );
+}
+
+export async function getSubwayDepartures(input: {
+  stationId: string;
+  direction: "U" | "D";
+  at?: string;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<SubwayDeparturesResponse> {
+  const parameters = new URLSearchParams({
+    direction: input.direction,
+    limit: String(input.limit ?? 2),
+  });
+  if (input.at !== undefined) {
+    parameters.set("at", input.at);
+  }
+  return subwayDeparturesResponseSchema.parse(
+    await fetchJson(
+      `/api/v1/transit/subway/stations/${encodeURIComponent(input.stationId)}/departures?${parameters.toString()}`,
       input.signal === undefined ? {} : { signal: input.signal },
     ),
   );

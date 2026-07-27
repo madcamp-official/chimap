@@ -128,6 +128,7 @@ const environmentSchema = z
     TAGO_RESPONSE_TYPE: z.literal("json").default("json"),
     TAGO_DEFAULT_CITY_CODE: z.string().trim().min(1).default("25"),
     BUS_STOPS_DATA_PATH: optionalSecret,
+    SUBWAY_STATIONS_DATA_PATH: optionalSecret,
     TAGO_HTTP_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -154,12 +155,17 @@ const environmentSchema = z
       .number()
       .int()
       .positive()
-      .default(20),
+      .default(10),
     TAGO_LOCATION_CACHE_TTL_SECONDS: z.coerce
       .number()
       .int()
       .positive()
       .default(10),
+    TAGO_SUBWAY_SCHEDULE_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(300),
     TRANSIT_MAX_NEARBY_STOP_DISTANCE_METERS: z.coerce
       .number()
       .int()
@@ -324,7 +330,12 @@ const environmentSchema = z
     }
   });
 
-export type TagoServiceKind = "stop" | "route" | "arrival" | "location";
+export type TagoServiceKind =
+  | "stop"
+  | "route"
+  | "arrival"
+  | "location"
+  | "subway";
 
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
@@ -391,6 +402,7 @@ export type AppConfig = {
   tagoResponseType: "json";
   tagoDefaultCityCode: string;
   busStopsDataPath?: string;
+  subwayStationsDataPath?: string;
   tagoHttpTimeoutMs: number;
   tagoHttpRetryCount: number;
   tagoCacheTtlSeconds: {
@@ -399,6 +411,7 @@ export type AppConfig = {
     routeStops: number;
     arrivals: number;
     locations: number;
+    subwaySchedules: number;
   };
   transit: {
     maxNearbyStopDistanceMeters: number;
@@ -538,6 +551,9 @@ export function loadConfig(
     ...(parsed.BUS_STOPS_DATA_PATH === undefined
       ? {}
       : { busStopsDataPath: parsed.BUS_STOPS_DATA_PATH }),
+    ...(parsed.SUBWAY_STATIONS_DATA_PATH === undefined
+      ? {}
+      : { subwayStationsDataPath: parsed.SUBWAY_STATIONS_DATA_PATH }),
     tagoHttpTimeoutMs: parsed.TAGO_HTTP_TIMEOUT_MS,
     tagoHttpRetryCount: parsed.TAGO_HTTP_RETRY_COUNT,
     tagoCacheTtlSeconds: {
@@ -546,6 +562,7 @@ export function loadConfig(
       routeStops: parsed.TAGO_ROUTE_STOPS_CACHE_TTL_SECONDS,
       arrivals: parsed.TAGO_ARRIVAL_CACHE_TTL_SECONDS,
       locations: parsed.TAGO_LOCATION_CACHE_TTL_SECONDS,
+      subwaySchedules: parsed.TAGO_SUBWAY_SCHEDULE_CACHE_TTL_SECONDS,
     },
     transit: {
       maxNearbyStopDistanceMeters:

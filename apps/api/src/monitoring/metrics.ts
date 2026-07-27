@@ -49,6 +49,19 @@ function canonicalRoute(path: string): string {
   if (normalized === "/api/v1/transit/bus/stops/nearby") {
     return normalized;
   }
+  if (
+    normalized === "/api/v1/transit/subway/stations/search" ||
+    normalized === "/api/v1/transit/subway/stations/nearby"
+  ) {
+    return normalized;
+  }
+  if (
+    /^\/api\/v1\/transit\/subway\/stations\/[^/]+\/departures$/u.test(
+      normalized,
+    )
+  ) {
+    return "/api/v1/transit/subway/stations/:id/departures";
+  }
   if (/^\/api\/v1\/transit\/bus\/stops\/[^/]+\/routes$/u.test(normalized)) {
     return "/api/v1/transit/bus/stops/:nodeId/routes";
   }
@@ -94,6 +107,9 @@ export class AppMetrics {
   readonly #databasePoolConnections: Gauge;
   readonly #transitRows: Gauge;
   readonly #providerConfigured: Gauge;
+  readonly #subwayTagoRequests: Counter;
+  readonly #subwayTagoDuration: Histogram;
+  readonly #subwayUnmappedStations: Gauge;
   readonly #backupLastSuccess: Gauge;
   readonly #backupBytes: Gauge;
   readonly #transitSyncLastSuccess: Gauge;
@@ -216,6 +232,24 @@ export class AppMetrics {
       name: "chimap_provider_configured",
       help: "외부 공급자 필수 키 설정 상태",
       labelNames: ["provider"] as const,
+      registers: [this.registry],
+    });
+    this.#subwayTagoRequests = new Counter({
+      name: "chimap_tago_subway_requests_total",
+      help: "TAGO 지하철 operation별 요청 결과",
+      labelNames: ["operation", "outcome"] as const,
+      registers: [this.registry],
+    });
+    this.#subwayTagoDuration = new Histogram({
+      name: "chimap_tago_subway_request_duration_seconds",
+      help: "TAGO 지하철 operation별 요청 처리시간",
+      labelNames: ["operation", "outcome"] as const,
+      buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15],
+      registers: [this.registry],
+    });
+    this.#subwayUnmappedStations = new Gauge({
+      name: "chimap_tago_subway_unmapped_stations",
+      help: "활성 지하철역 중 TAGO 역 ID가 매핑되지 않은 수",
       registers: [this.registry],
     });
     this.#backupLastSuccess = new Gauge({
@@ -341,6 +375,19 @@ export class AppMetrics {
     this.#apiErrors.inc({ code, provider });
   }
 
+  public observeTagoSubway(input: {
+    operation: "station_search" | "station_schedule";
+    outcome: "success" | "failure";
+    durationSeconds: number;
+  }): void {
+    const labels = {
+      operation: input.operation,
+      outcome: input.outcome,
+    };
+    this.#subwayTagoRequests.inc(labels);
+    this.#subwayTagoDuration.observe(labels, input.durationSeconds);
+  }
+
   async #refreshInfrastructure(): Promise<void> {
     const [database, transit] = await Promise.all([
       this.#repository.status(),
@@ -349,6 +396,9 @@ export class AppMetrics {
         linkedStops: 0,
         routes: 0,
         routeStops: 0,
+        subwayStations: 0,
+        activeSubwayStations: 0,
+        mappedSubwayStations: 0,
       })),
     ]);
     this.#databaseReady.set(
@@ -371,6 +421,12 @@ export class AppMetrics {
     for (const [kind, count] of Object.entries(transit)) {
       this.#transitRows.set({ kind }, count);
     }
+    this.#subwayUnmappedStations.set(
+      Math.max(
+        0,
+        transit.activeSubwayStations - transit.mappedSubwayStations,
+      ),
+    );
     this.#providerConfigured.set(
       { provider: "KAKAO" },
       this.#config.kakaoRestApiKey === undefined ? 0 : 1,
@@ -384,7 +440,7 @@ export class AppMetrics {
     );
     this.#providerConfigured.set(
       { provider: "TAGO" },
-      (["stop", "route", "arrival", "location"] as const).every(
+      (["stop", "route", "arrival", "location", "subway"] as const).every(
         (service) =>
           this.#config.tagoServiceKeys[service] !== undefined ||
           this.#config.dataGoKrServiceKey !== undefined,

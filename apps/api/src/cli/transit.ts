@@ -6,6 +6,7 @@ import { z } from "zod";
 import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
 import { importBusStopsFile } from "../transit/csv-importer.js";
+import { importSubwayStationsFile } from "../transit/subway-csv-importer.js";
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
 
@@ -400,12 +401,54 @@ async function run(): Promise<void> {
       });
       break;
     }
+    case "import-subway-stations": {
+      const path = argument("path") ?? config.subwayStationsDataPath;
+      if (path === undefined) {
+        throw new Error(
+          "SUBWAY_STATIONS_DATA_PATH 또는 --path를 설정해 주세요.",
+        );
+      }
+      const result = await importSubwayStationsFile(
+        path,
+        transit.repository,
+      );
+      printJson({
+        path,
+        sourceRows: result.sourceRowCount,
+        imported: result.rows.length,
+        duplicateRows: result.duplicateRows,
+      });
+      break;
+    }
+    case "sync-subway-stations": {
+      const concurrency = Math.min(
+        Math.max(Number(argument("concurrency") ?? 4), 1),
+        4,
+      );
+      printJson(await transit.syncSubwayStationMappings(concurrency));
+      break;
+    }
+    case "subway-departures": {
+      printJson(
+        await transit.getSubwayDepartures({
+          stationId: requiredArgument("stationId"),
+          direction:
+            argument("direction") === "D" ? "D" : "U",
+          at: new Date(argument("at") ?? Date.now()),
+          limit: Math.min(
+            Math.max(Number(argument("limit") ?? 3), 1),
+            100,
+          ),
+        }),
+      );
+      break;
+    }
     case "stats":
       printJson(await transit.repository.stats());
       break;
     default:
       throw new Error(
-        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, sync-areas, import-stops, stats 중 하나여야 합니다.",
+        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, sync-areas, import-stops, import-subway-stations, sync-subway-stations, subway-departures, stats 중 하나여야 합니다.",
       );
   }
 }

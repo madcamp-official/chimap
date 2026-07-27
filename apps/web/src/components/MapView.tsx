@@ -7,6 +7,7 @@ import type {
 import { AlertTriangle, Map, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import busIconUrl from "../../../../bus_icon.webp";
 import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
 
 type NaverLatLng = object;
@@ -242,7 +243,24 @@ function createMarkerElement(
     | "alighting"
     | "vehicle",
   title?: string,
-): { element: HTMLElement; width: number } {
+): { element: HTMLElement; width: number; height: number } {
+  if (tone === "vehicle") {
+    const element = document.createElement("div");
+    element.className = "map-marker map-marker-vehicle";
+    element.title = title ?? label;
+    element.setAttribute("role", "img");
+    element.setAttribute("aria-label", title ?? label);
+    const image = document.createElement("img");
+    image.src = busIconUrl;
+    image.alt = "";
+    const routeNumber = document.createElement("span");
+    routeNumber.className = "map-marker-vehicle-number";
+    routeNumber.textContent = label;
+    routeNumber.style.fontSize = `${Math.max(5, Math.min(12, 38 / Math.max(1, label.length)))}px`;
+    routeNumber.style.transform = `scaleX(${Math.min(1, 4.5 / Math.max(1, label.length))})`;
+    element.append(image, routeNumber);
+    return { element, width: 60, height: 60 };
+  }
   const width = Math.max(48, Math.min(96, label.length * 13 + 22));
   const element = document.createElement("div");
   element.className = `map-marker map-marker-${tone}`;
@@ -250,7 +268,20 @@ function createMarkerElement(
   element.title = title ?? label;
   element.style.width = `${width}px`;
   element.setAttribute("aria-hidden", "true");
-  return { element, width };
+  return { element, width, height: 34 };
+}
+
+function vehicleMarkerTitle(vehicle: RelevantVehiclePosition): string {
+  const vehicleLabel =
+    vehicle.vehicleNo === null ? "" : ` · 차량 ${vehicle.vehicleNo}`;
+  if (vehicle.displayReason === "ARRIVING_SOON") {
+    const minutes = Math.max(
+      1,
+      Math.ceil((vehicle.arrivalSeconds ?? 0) / 60),
+    );
+    return `${vehicle.routeNo}번 · ${minutes}분 후 도착${vehicleLabel}`;
+  }
+  return `${vehicle.routeNo}번 · 이동 구간 운행 중${vehicleLabel}`;
 }
 
 export function transitMarkers(
@@ -461,8 +492,26 @@ function RoutePreview({
             key={`${vehicle.routeId}:${vehicle.vehicleNo ?? index}`}
             transform={`translate(${x} ${y})`}
           >
-            <circle r="7" fill="#0b6b50" stroke="white" strokeWidth="2" />
-            <text x="10" y="4" className="preview-label">
+            <title>{vehicleMarkerTitle(vehicle)}</title>
+            <image href={busIconUrl} x="-18" y="-27" width="36" height="36" />
+            <rect
+              className="preview-vehicle-display"
+              x="-7.2"
+              y="-14.75"
+              width="14.4"
+              height="7.9"
+              fill="#fff"
+            />
+            <text
+              x="0"
+              y="-9.3"
+              textAnchor="middle"
+              fill="#111"
+              className="preview-vehicle-number"
+              {...(vehicle.routeNo.length > 5
+                ? { textLength: 14, lengthAdjust: "spacingAndGlyphs" }
+                : {})}
+            >
               {vehicle.routeNo}
             </text>
           </g>
@@ -478,6 +527,7 @@ type MapViewProps = {
   recommendations: Recommendation[];
   selectedRouteId: string | undefined;
   highlightedRouteId?: string;
+  cameraResetKey?: string | undefined;
   ncpKeyId?: string;
   vehiclePositions?: RelevantVehiclePosition[];
 };
@@ -488,13 +538,17 @@ export function MapView({
   recommendations,
   selectedRouteId,
   highlightedRouteId,
+  cameraResetKey,
   ncpKeyId,
   vehiclePositions = [],
 }: MapViewProps) {
   const normalizedNcpKeyId = ncpKeyId?.trim();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<NaverMap | undefined>(undefined);
-  const overlaysRef = useRef<NaverOverlay[]>([]);
+  const routeOverlaysRef = useRef<NaverOverlay[]>([]);
+  const vehicleOverlaysRef = useRef<NaverOverlay[]>([]);
+  const lastCameraSignatureRef = useRef<string | undefined>(undefined);
+  const cameraFitCountRef = useRef(0);
   const [status, setStatus] = useState<
     "missing" | "loading" | "ready" | "error"
   >(normalizedNcpKeyId === undefined || normalizedNcpKeyId.length === 0
@@ -504,6 +558,19 @@ export function MapView({
   const selectedRoute =
     recommendations.find((route) => route.id === selectedRouteId) ??
     recommendations[0];
+  const cameraSignature = useMemo(
+    () =>
+      JSON.stringify({
+        cameraResetKey: cameraResetKey ?? null,
+        reloadToken,
+        routeId: selectedRoute?.id ?? null,
+        origin: origin?.location ?? null,
+        destination: destination?.location ?? null,
+        coordinates:
+          selectedRoute?.legs.flatMap((leg) => leg.coordinates) ?? [],
+      }),
+    [cameraResetKey, destination, origin, reloadToken, selectedRoute],
+  );
 
   useEffect(() => {
     if (normalizedNcpKeyId === undefined || normalizedNcpKeyId.length === 0) {
@@ -522,8 +589,12 @@ export function MapView({
     const handleAuthFailure = () => {
       sdkPromise = undefined;
       sdkAuthenticationFailed = true;
-      overlaysRef.current.forEach(detachOverlay);
-      overlaysRef.current = [];
+      routeOverlaysRef.current.forEach(detachOverlay);
+      vehicleOverlaysRef.current.forEach(detachOverlay);
+      routeOverlaysRef.current = [];
+      vehicleOverlaysRef.current = [];
+      lastCameraSignatureRef.current = undefined;
+      cameraFitCountRef.current = 0;
       destroyMap(mapRef.current);
       mapRef.current = undefined;
       if (!cancelled) {
@@ -584,8 +655,12 @@ export function MapView({
     }
 
     return () => {
-      overlaysRef.current.forEach(detachOverlay);
-      overlaysRef.current = [];
+      routeOverlaysRef.current.forEach(detachOverlay);
+      vehicleOverlaysRef.current.forEach(detachOverlay);
+      routeOverlaysRef.current = [];
+      vehicleOverlaysRef.current = [];
+      lastCameraSignatureRef.current = undefined;
+      cameraFitCountRef.current = 0;
       destroyMap(mapRef.current);
       mapRef.current = undefined;
     };
@@ -598,164 +673,203 @@ export function MapView({
       return;
     }
 
-    overlaysRef.current.forEach(detachOverlay);
+    routeOverlaysRef.current.forEach(detachOverlay);
     const overlays: NaverOverlay[] = [];
-
     try {
-
-    for (const recommendation of recommendations) {
-      const selected = recommendation.id === selectedRoute?.id;
-      const highlighted = recommendation.id === highlightedRouteId;
-      for (const leg of recommendation.legs) {
-        if (leg.coordinates.length < 2) {
-          continue;
+      for (const recommendation of recommendations) {
+        const selected = recommendation.id === selectedRoute?.id;
+        const highlighted = recommendation.id === highlightedRouteId;
+        for (const leg of recommendation.legs) {
+          if (leg.coordinates.length < 2) {
+            continue;
+          }
+          const style = legStyle(leg);
+          overlays.push(
+            new maps.Polyline({
+              map,
+              path: leg.coordinates.map(
+                (point) => new maps.LatLng(point.lat, point.lng),
+              ),
+              strokeWeight: selected
+                ? style.width
+                : Math.max(3, style.width - 2),
+              strokeColor: style.color,
+              strokeOpacity: selected ? 0.95 : highlighted ? 0.55 : 0.18,
+              strokeStyle: style.dash,
+              strokeLineCap: "round",
+              strokeLineJoin: "round",
+              zIndex: selected ? 20 : 10,
+            }),
+          );
         }
-        const style = legStyle(leg);
+      }
+
+      const markerPoints: Array<{
+        coordinate: Coordinate;
+        label: string;
+        tone:
+          | "origin"
+          | "destination"
+          | "boarding"
+          | "transfer"
+          | "alighting";
+        title?: string;
+      }> = [
+        ...(origin === undefined
+          ? []
+          : [
+              {
+                coordinate: origin.location,
+                label: "출발",
+                tone: "origin" as const,
+              },
+            ]),
+        ...(destination === undefined
+          ? []
+          : [
+              {
+                coordinate: destination.location,
+                label: "도착",
+                tone: "destination" as const,
+              },
+            ]),
+        ...transitMarkers(selectedRoute),
+      ];
+      markerPoints.forEach((marker) => {
+        const icon = createMarkerElement(marker.label, marker.tone, marker.title);
         overlays.push(
-          new maps.Polyline({
+          new maps.Marker({
             map,
-            path: leg.coordinates.map(
-              (point) => new maps.LatLng(point.lat, point.lng),
+            position: new maps.LatLng(
+              marker.coordinate.lat,
+              marker.coordinate.lng,
             ),
-            strokeWeight: selected ? style.width : Math.max(3, style.width - 2),
-            strokeColor: style.color,
-            strokeOpacity: selected ? 0.95 : highlighted ? 0.55 : 0.18,
-            strokeStyle: style.dash,
-            strokeLineCap: "round",
-            strokeLineJoin: "round",
-            zIndex: selected ? 20 : 10,
+            icon: {
+              content: icon.element,
+              size: { width: icon.width, height: icon.height },
+              anchor: { x: icon.width / 2, y: icon.height },
+            },
+            title: marker.title ?? marker.label,
+            clickable: false,
+            zIndex: 30,
           }),
         );
-      }
-    }
-
-    const markerPoints: Array<{
-      coordinate: Coordinate;
-      label: string;
-      tone:
-        | "origin"
-        | "destination"
-        | "boarding"
-        | "transfer"
-        | "alighting"
-        | "vehicle";
-      title?: string;
-    }> = [
-      ...(origin === undefined
-        ? []
-        : [
-            {
-              coordinate: origin.location,
-              label: "출발",
-              tone: "origin" as const,
-            },
-          ]),
-      ...(destination === undefined
-        ? []
-        : [
-            {
-              coordinate: destination.location,
-              label: "도착",
-              tone: "destination" as const,
-            },
-          ]),
-    ];
-    markerPoints.push(...transitMarkers(selectedRoute));
-    vehiclePositions.forEach((vehicle) => {
-      markerPoints.push({
-        coordinate: {
-          lat: vehicle.latitude,
-          lng: vehicle.longitude,
-        },
-        label: vehicle.routeNo,
-        tone: "vehicle",
-        title:
-          vehicle.vehicleNo === null
-            ? `${vehicle.routeNo}번 탑승 예정 차량 · ${vehicle.stopsUntilBoarding}정류장 전`
-            : `${vehicle.routeNo}번 탑승 예정 차량 ${vehicle.vehicleNo} · ${vehicle.stopsUntilBoarding}정류장 전`,
       });
-    });
-    markerPoints.forEach((marker) => {
-      const icon = createMarkerElement(
-        marker.label,
-        marker.tone,
-        marker.title,
-      );
-      overlays.push(
-        new maps.Marker({
-          map,
-          position: new maps.LatLng(
-            marker.coordinate.lat,
-            marker.coordinate.lng,
-          ),
-          icon: {
-            content: icon.element,
-            size: { width: icon.width, height: 34 },
-            anchor: { x: icon.width / 2, y: 34 },
-          },
-          title: marker.title ?? marker.label,
-          clickable: false,
-          zIndex: 30,
-        }),
-      );
-    });
-    overlaysRef.current = overlays;
-
-    const selectedCoordinates =
-      selectedRoute?.legs.flatMap((leg) => leg.coordinates) ?? [];
-    const visibleCoordinates = [
-      ...selectedCoordinates,
-      ...(origin === undefined ? [] : [origin.location]),
-      ...(destination === undefined ? [] : [destination.location]),
-    ];
-    if (visibleCoordinates.length >= 2) {
-      const latitudes = visibleCoordinates.map((point) => point.lat);
-      const longitudes = visibleCoordinates.map((point) => point.lng);
-      const bounds = new maps.LatLngBounds(
-        new maps.LatLng(Math.min(...latitudes), Math.min(...longitudes)),
-        new maps.LatLng(Math.max(...latitudes), Math.max(...longitudes)),
-      );
-      map.fitBounds(bounds, {
-        top: 54,
-        right: 54,
-        bottom: 54,
-        left: 54,
-        maxZoom: 16,
-      });
-    } else if (visibleCoordinates[0] !== undefined) {
-      map.setCenter(
-        new maps.LatLng(
-          visibleCoordinates[0].lat,
-          visibleCoordinates[0].lng,
-        ),
-      );
-      map.setZoom(15);
-    }
-
+      routeOverlaysRef.current = overlays;
     } catch {
       overlays.forEach(detachOverlay);
-      if (overlaysRef.current === overlays) {
-        overlaysRef.current = [];
-      }
+      routeOverlaysRef.current = [];
       setStatus("error");
       return;
     }
 
     return () => {
       overlays.forEach(detachOverlay);
-      if (overlaysRef.current === overlays) {
-        overlaysRef.current = [];
+      if (routeOverlaysRef.current === overlays) {
+        routeOverlaysRef.current = [];
       }
     };
   }, [
     destination,
+    highlightedRouteId,
     origin,
     recommendations,
-    highlightedRouteId,
     selectedRoute,
     status,
-    vehiclePositions,
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = (window as NaverWindow).naver?.maps;
+    if (status !== "ready" || map === undefined || !isNaverMapsApi(maps)) {
+      return;
+    }
+
+    vehicleOverlaysRef.current.forEach(detachOverlay);
+    const overlays: NaverOverlay[] = [];
+    try {
+      vehiclePositions.forEach((vehicle) => {
+        const title = vehicleMarkerTitle(vehicle);
+        const icon = createMarkerElement(vehicle.routeNo, "vehicle", title);
+        overlays.push(
+          new maps.Marker({
+            map,
+            position: new maps.LatLng(vehicle.latitude, vehicle.longitude),
+            icon: {
+              content: icon.element,
+              size: { width: icon.width, height: icon.height },
+              anchor: { x: icon.width / 2, y: icon.height },
+            },
+            title,
+            clickable: false,
+            zIndex: 35,
+          }),
+        );
+      });
+      vehicleOverlaysRef.current = overlays;
+    } catch {
+      overlays.forEach(detachOverlay);
+      vehicleOverlaysRef.current = [];
+      setStatus("error");
+      return;
+    }
+
+    return () => {
+      overlays.forEach(detachOverlay);
+      if (vehicleOverlaysRef.current === overlays) {
+        vehicleOverlaysRef.current = [];
+      }
+    };
+  }, [status, vehiclePositions]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = (window as NaverWindow).naver?.maps;
+    if (
+      status !== "ready" ||
+      map === undefined ||
+      !isNaverMapsApi(maps) ||
+      lastCameraSignatureRef.current === cameraSignature
+    ) {
+      return;
+    }
+
+    const visibleCoordinates = [
+      ...(selectedRoute?.legs.flatMap((leg) => leg.coordinates) ?? []),
+      ...(origin === undefined ? [] : [origin.location]),
+      ...(destination === undefined ? [] : [destination.location]),
+    ];
+    try {
+      if (visibleCoordinates.length >= 2) {
+        const latitudes = visibleCoordinates.map((point) => point.lat);
+        const longitudes = visibleCoordinates.map((point) => point.lng);
+        map.fitBounds(
+          new maps.LatLngBounds(
+            new maps.LatLng(Math.min(...latitudes), Math.min(...longitudes)),
+            new maps.LatLng(Math.max(...latitudes), Math.max(...longitudes)),
+          ),
+          { top: 54, right: 54, bottom: 54, left: 54, maxZoom: 16 },
+        );
+      } else if (visibleCoordinates[0] !== undefined) {
+        map.setCenter(
+          new maps.LatLng(
+            visibleCoordinates[0].lat,
+            visibleCoordinates[0].lng,
+          ),
+        );
+        map.setZoom(15);
+      }
+      lastCameraSignatureRef.current = cameraSignature;
+      cameraFitCountRef.current += 1;
+      if (containerRef.current !== null) {
+        containerRef.current.dataset.cameraFitCount = String(
+          cameraFitCountRef.current,
+        );
+      }
+    } catch {
+      setStatus("error");
+    }
+  }, [cameraSignature, destination, origin, selectedRoute, status]);
 
   return (
     <section className="map-region" aria-label="경로 지도">
@@ -763,6 +877,7 @@ export function MapView({
         ref={containerRef}
         className={`naver-map ${status === "ready" ? "" : "is-hidden"}`}
         aria-label="네이버 지도에 표시된 추천 경로"
+        data-camera-fit-count="0"
       />
       <p className="sr-only" role="status">
         {status === "ready"

@@ -20,6 +20,9 @@ function repositoryForTest(): TransitRepository {
       linkedStops: 0,
       routes: 0,
       routeStops: 0,
+      subwayStations: 0,
+      activeSubwayStations: 0,
+      mappedSubwayStations: 0,
     }),
   } as unknown as TransitRepository;
 }

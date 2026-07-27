@@ -1,4 +1,5 @@
 import type {
+  BusArrival,
   BusVehiclePosition,
   TransitBusLeg,
 } from "@chimap/contracts";
@@ -8,12 +9,16 @@ type VehicleSelectionLeg = Pick<
   | "cityCode"
   | "routeId"
   | "vehicleNo"
+  | "boardingStop"
   | "boardingNodeOrder"
   | "alightingNodeOrder"
 >;
 
 export type RelevantVehiclePosition = BusVehiclePosition & {
   stopsUntilBoarding: number;
+  stopsUntilAlighting: number;
+  displayReason: "ARRIVING_SOON" | "ON_ROUTE";
+  arrivalSeconds: number | null;
 };
 
 function vehicleIdentity(vehicle: BusVehiclePosition): string {
@@ -26,52 +31,96 @@ function vehicleIdentity(vehicle: BusVehiclePosition): string {
 }
 
 /**
- * TAGO의 노선별 차량 API는 회차 구간을 포함한 전체 운행 차량을 반환한다.
- * 지도에는 선택한 각 버스 구간의 탑승 정류장에 가장 가까이 접근 중인 차량
- * 한 대만 남긴다. 정류장 순서를 알 수 없거나 이미 탑승 지점을 지난 차량은
- * 사용자에게 실제로 탈 차량이라는 근거가 없으므로 표시하지 않는다.
+ * TAGO 도착 응답에는 차량번호가 없으므로 가장 빠른 도착 응답과 개별 차량을
+ * 직접 연결할 수 없다. ETA가 10분 이하이면 승차 정류장 직전의 가장 가까운
+ * 차량을 도착 예정 차량으로 근사하고, 승차~하차 구간을 운행 중인 차량은
+ * 별도로 모두 표시한다.
  */
 export function selectRelevantVehiclePositions(
   busLegs: VehicleSelectionLeg[],
   vehicles: BusVehiclePosition[],
+  arrivals: BusArrival[] = [],
 ): RelevantVehiclePosition[] {
-  const selected: RelevantVehiclePosition[] = [];
-  const seenVehicles = new Set<string>();
+  const selected = new Map<string, RelevantVehiclePosition>();
+
+  const addVehicle = (
+    vehicle: BusVehiclePosition,
+    leg: VehicleSelectionLeg,
+    displayReason: RelevantVehiclePosition["displayReason"],
+    arrivalSeconds: number | null,
+  ) => {
+    if (vehicle.nodeOrder === null) {
+      return;
+    }
+    const identity = vehicleIdentity(vehicle);
+    const candidate: RelevantVehiclePosition = {
+      ...vehicle,
+      stopsUntilBoarding: Math.max(
+        0,
+        leg.boardingNodeOrder - vehicle.nodeOrder,
+      ),
+      stopsUntilAlighting: Math.max(
+        0,
+        leg.alightingNodeOrder - vehicle.nodeOrder,
+      ),
+      displayReason,
+      arrivalSeconds,
+    };
+    const existing = selected.get(identity);
+    if (
+      existing === undefined ||
+      (existing.displayReason === "ARRIVING_SOON" &&
+        displayReason === "ON_ROUTE")
+    ) {
+      selected.set(identity, candidate);
+    }
+  };
 
   for (const leg of busLegs) {
-    const approaching = vehicles
+    const routeVehicles = vehicles.filter(
+      (vehicle) =>
+        vehicle.cityCode === leg.cityCode && vehicle.routeId === leg.routeId,
+    );
+    const earliestArrival = arrivals
+      .filter(
+        (arrival) =>
+          arrival.cityCode === leg.cityCode &&
+          arrival.routeId === leg.routeId &&
+          arrival.nodeId === leg.boardingStop.nodeId,
+      )
+      .sort((first, second) => first.arrivalSeconds - second.arrivalSeconds)[0];
+
+    if (earliestArrival !== undefined && earliestArrival.arrivalSeconds <= 600) {
+      const nearestApproaching = routeVehicles
       .filter(
         (vehicle) =>
-          vehicle.cityCode === leg.cityCode &&
-          vehicle.routeId === leg.routeId &&
           vehicle.nodeOrder !== null &&
-          vehicle.nodeOrder <= leg.boardingNodeOrder,
+          vehicle.nodeOrder < leg.boardingNodeOrder,
       )
-      .sort((first, second) => {
-        const firstExact =
-          leg.vehicleNo !== null && first.vehicleNo === leg.vehicleNo;
-        const secondExact =
-          leg.vehicleNo !== null && second.vehicleNo === leg.vehicleNo;
-        return (
-          Number(secondExact) - Number(firstExact) ||
-          (second.nodeOrder ?? -1) - (first.nodeOrder ?? -1) ||
-          second.fetchedAt.localeCompare(first.fetchedAt)
+        .sort(
+          (first, second) =>
+            (second.nodeOrder ?? -1) - (first.nodeOrder ?? -1) ||
+            second.fetchedAt.localeCompare(first.fetchedAt),
+        )[0];
+      if (nearestApproaching !== undefined) {
+        addVehicle(
+          nearestApproaching,
+          leg,
+          "ARRIVING_SOON",
+          earliestArrival.arrivalSeconds,
         );
-      });
-    const nearest = approaching[0];
-    if (nearest?.nodeOrder === null || nearest === undefined) {
-      continue;
+      }
     }
-    const identity = vehicleIdentity(nearest);
-    if (seenVehicles.has(identity)) {
-      continue;
-    }
-    seenVehicles.add(identity);
-    selected.push({
-      ...nearest,
-      stopsUntilBoarding: leg.boardingNodeOrder - nearest.nodeOrder,
-    });
+
+    routeVehicles
+      .filter(
+        (vehicle) =>
+          vehicle.nodeOrder !== null &&
+          vehicle.nodeOrder >= leg.boardingNodeOrder &&
+          vehicle.nodeOrder <= leg.alightingNodeOrder,
+      )
+      .forEach((vehicle) => addVehicle(vehicle, leg, "ON_ROUTE", null));
   }
 
-  return selected;
+  return [...selected.values()];
 }

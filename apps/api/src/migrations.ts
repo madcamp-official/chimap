@@ -16,4 +16,4 @@ export const APP_MIGRATIONS: ReadonlyArray<AppMigration> = [
   AUTH_SESSION_ROTATION_MIGRATION,
   AUTH_PROVIDER_EXPANSION_MIGRATION,
   APPLE_REFRESH_CREDENTIAL_MIGRATION,
-];
+].sort((first, second) => first.version - second.version);

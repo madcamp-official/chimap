@@ -16,6 +16,8 @@ import {
   storedPreferencesV1Schema,
   storedPreferencesV2Schema,
   storedPreferencesV3Schema,
+  subwayDeparturesResponseSchema,
+  subwayStationSchema,
   uiEventPayloadSchema,
 } from "./index.js";
 
@@ -315,6 +317,52 @@ describe("공유 계약", () => {
         query: "대전역",
         coordinates: { lat: 36.3, lng: 127.4 },
         sessionId: "private-session",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("지하철역과 시간표 기반 출발 응답을 실시간 정보와 구분한다", () => {
+    const station = {
+      id: "223",
+      stationCode: "104",
+      name: "대전",
+      lineCode: "S3001",
+      lineName: "대전 도시철도 1호선",
+      englishName: "Daejeon",
+      hanjaName: "大田",
+      transferType: "일반역",
+      transferLineCode: null,
+      transferLineName: null,
+      latitude: 36.331583,
+      longitude: 127.433118,
+      operatorName: "대전교통공사",
+      roadAddress: null,
+      phoneNumber: null,
+      dataDate: "2026-06-25",
+      tagoStationId: "MTRDJ10004",
+      tagoRouteName: "1호선",
+      mappingStatus: "MAPPED",
+      active: true,
+    };
+    expect(subwayStationSchema.safeParse(station).success).toBe(true);
+    expect(
+      subwayDeparturesResponseSchema.safeParse({
+        items: [],
+        scheduleAvailable: false,
+        unavailableReason: "TAGO_STATION_UNRESOLVED",
+        scheduleBased: true,
+        realtimeAvailable: false,
+        fetchedAt: "2026-07-27T03:00:00.000Z",
+      }).success,
+    ).toBe(true);
+    expect(
+      subwayDeparturesResponseSchema.safeParse({
+        items: [],
+        scheduleAvailable: true,
+        unavailableReason: null,
+        scheduleBased: false,
+        realtimeAvailable: true,
+        fetchedAt: "2026-07-27T03:00:00.000Z",
       }).success,
     ).toBe(false);
   });

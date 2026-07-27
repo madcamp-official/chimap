@@ -4,6 +4,7 @@ import type { BusRoute, BusRouteStop } from "@chimap/contracts";
 import { describe, expect, it } from "vitest";
 
 import { parseBusStopsCsvBuffer } from "./csv-importer.js";
+import { parseSubwayStationsCsvBuffer } from "./subway-csv-importer.js";
 import { TransitRepository } from "./transit-repository.js";
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
@@ -12,6 +13,9 @@ const source = readFileSync(
     "../../test-data/bus-stops-public-sample-20251031.csv",
     import.meta.url,
   ),
+);
+const subwaySource = readFileSync(
+  new URL("../../../../subway_data.csv", import.meta.url),
 );
 const actualRoute: BusRoute = {
   id: "25:DJB30300043",
@@ -294,6 +298,71 @@ describe.skipIf(databaseUrl === undefined)(
              DROP CONSTRAINT IF EXISTS actual_route_failure_guard`,
           )
           .catch(() => undefined);
+        await repository.close();
+      }
+    });
+
+    it("지하철 CSV 재import는 멱등이고 누락 역의 TAGO 매핑을 보존해 비활성화한다", async () => {
+      const repository = new TransitRepository({
+        url: databaseUrl!,
+        poolMax: 2,
+        connectTimeoutMs: 3000,
+        statementTimeoutMs: 5000,
+        sslMode: "disable",
+      });
+      try {
+        await repository.migrate();
+        const parsed = parseSubwayStationsCsvBuffer(subwaySource);
+        expect(parsed).toMatchObject({
+          sourceRowCount: 1099,
+          duplicateRows: 2,
+        });
+        await repository.importSubwayStations(parsed.rows);
+        await repository.importSubwayStations(parsed.rows);
+        expect(await repository.stats()).toMatchObject({
+          subwayStations: 1097,
+          activeSubwayStations: 1097,
+        });
+
+        const first = (
+          await repository.searchSubwayStations(parsed.rows[0]!.name, 100)
+        ).find(
+          (station) =>
+            station.stationCode === parsed.rows[0]!.stationCode &&
+            station.lineCode === parsed.rows[0]!.lineCode &&
+            station.lineName === parsed.rows[0]!.lineName &&
+            station.operatorName === parsed.rows[0]!.operatorName,
+        );
+        expect(first).toBeDefined();
+        await repository.updateSubwayStationMapping({
+          id: first!.id,
+          status: "MAPPED",
+          tagoStationId: "TEST_TAGO_STATION",
+          tagoRouteName: "TEST_ROUTE",
+        });
+        await repository.importSubwayStations(parsed.rows.slice(1));
+
+        const inactive = await repository.pool.query<{
+          active: boolean;
+          tago_station_id: string;
+          mapping_status: string;
+        }>(
+          `SELECT active, tago_station_id, mapping_status
+           FROM subway_station_lines WHERE id = $1`,
+          [first!.id],
+        );
+        expect(inactive.rows[0]).toEqual({
+          active: false,
+          tago_station_id: "TEST_TAGO_STATION",
+          mapping_status: "MAPPED",
+        });
+
+        await repository.importSubwayStations(parsed.rows);
+        expect(await repository.stats()).toMatchObject({
+          subwayStations: 1097,
+          activeSubwayStations: 1097,
+        });
+      } finally {
         await repository.close();
       }
     });

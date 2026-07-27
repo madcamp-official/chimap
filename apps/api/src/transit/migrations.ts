@@ -156,4 +156,46 @@ export const TRANSIT_MIGRATIONS: ReadonlyArray<{
         ON auth_sessions(expires_at);
     `,
   },
+  {
+    version: 7,
+    name: "subway_station_lines",
+    sql: `
+      CREATE TABLE IF NOT EXISTS subway_station_lines (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        station_code varchar(50) NOT NULL,
+        station_name varchar(200) NOT NULL,
+        line_code varchar(50) NOT NULL,
+        line_name varchar(200) NOT NULL,
+        english_name varchar(200),
+        hanja_name varchar(200),
+        transfer_type varchar(100),
+        transfer_line_code varchar(200),
+        transfer_line_name varchar(500),
+        location geography(Point, 4326) NOT NULL,
+        operator_name varchar(200) NOT NULL,
+        road_address varchar(500),
+        phone_number varchar(100),
+        data_date text NOT NULL,
+        tago_station_id varchar(100),
+        tago_route_name varchar(200),
+        mapping_status varchar(20) NOT NULL DEFAULT 'PENDING'
+          CHECK (mapping_status IN ('PENDING', 'MAPPED', 'UNRESOLVED')),
+        mapping_checked_at timestamptz,
+        active boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE(station_code, line_code, line_name, operator_name)
+      );
+
+      CREATE INDEX IF NOT EXISTS subway_station_lines_location_gist
+        ON subway_station_lines USING gist(location);
+      CREATE INDEX IF NOT EXISTS subway_station_lines_name_index
+        ON subway_station_lines(lower(station_name));
+      CREATE INDEX IF NOT EXISTS subway_station_lines_tago_station_index
+        ON subway_station_lines(tago_station_id)
+        WHERE tago_station_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS subway_station_lines_mapping_index
+        ON subway_station_lines(mapping_status, active);
+    `,
+  },
 ];

@@ -114,6 +114,63 @@ export const busVehiclePositionSchema = z
 
 export type BusVehiclePosition = z.infer<typeof busVehiclePositionSchema>;
 
+export const subwayStationMappingStatusSchema = z.enum([
+  "PENDING",
+  "MAPPED",
+  "UNRESOLVED",
+]);
+export type SubwayStationMappingStatus = z.infer<
+  typeof subwayStationMappingStatusSchema
+>;
+
+export const subwayStationSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    stationCode: z.string().min(1).max(50),
+    name: z.string().min(1).max(200),
+    lineCode: z.string().min(1).max(50),
+    lineName: z.string().min(1).max(200),
+    englishName: z.string().max(200).nullable(),
+    hanjaName: z.string().max(200).nullable(),
+    transferType: z.string().max(100).nullable(),
+    transferLineCode: z.string().max(200).nullable(),
+    transferLineName: z.string().max(500).nullable(),
+    latitude: z.number().finite().min(-90).max(90),
+    longitude: z.number().finite().min(-180).max(180),
+    operatorName: z.string().min(1).max(200),
+    roadAddress: z.string().max(500).nullable(),
+    phoneNumber: z.string().max(100).nullable(),
+    dataDate: z.string().trim().min(1),
+    tagoStationId: z.string().max(100).nullable(),
+    tagoRouteName: z.string().max(200).nullable(),
+    mappingStatus: subwayStationMappingStatusSchema,
+    active: z.boolean(),
+    distanceMeters: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type SubwayStation = z.infer<typeof subwayStationSchema>;
+
+export const subwayDepartureSchema = z
+  .object({
+    stationId: z.string().min(1).max(100),
+    stationName: z.string().min(1).max(200),
+    tagoStationId: z.string().min(1).max(100),
+    subwayRouteId: z.string().min(1).max(100),
+    terminalStationId: z.string().min(1).max(100),
+    terminalStationName: z.string().min(1).max(200),
+    direction: z.enum(["U", "D"]),
+    dailyTypeCode: z.enum(["01", "02", "03"]),
+    rawDepartureTime: z.string().regex(/^\d{6}$/u),
+    rawArrivalTime: z.string().regex(/^\d{6}$/u),
+    departureAt: z.iso.datetime({ offset: true }),
+    arrivalAt: z.iso.datetime({ offset: true }),
+    scheduleBased: z.literal(true),
+  })
+  .strict();
+
+export type SubwayDeparture = z.infer<typeof subwayDepartureSchema>;
+
 export const transitBusLegSchema = z
   .object({
     routeId: z.string().min(1).max(100),
@@ -769,6 +826,9 @@ export const readinessResponseSchema = z
         linkedStops: z.number().int().nonnegative(),
         routes: z.number().int().nonnegative(),
         routeStops: z.number().int().nonnegative(),
+        subwayStations: z.number().int().nonnegative(),
+        activeSubwayStations: z.number().int().nonnegative(),
+        mappedSubwayStations: z.number().int().nonnegative(),
       })
       .strict(),
   })
@@ -871,6 +931,34 @@ export const busVehiclesResponseSchema = z
 
 export type BusVehiclesResponse = z.infer<
   typeof busVehiclesResponseSchema
+>;
+
+export const subwayStationsResponseSchema = z
+  .object({
+    items: z.array(subwayStationSchema).max(100),
+    total: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type SubwayStationsResponse = z.infer<
+  typeof subwayStationsResponseSchema
+>;
+
+export const subwayDeparturesResponseSchema = z
+  .object({
+    items: z.array(subwayDepartureSchema).max(100),
+    scheduleAvailable: z.boolean(),
+    unavailableReason: z
+      .enum(["TAGO_STATION_UNRESOLVED", "NO_UPCOMING_DEPARTURES"])
+      .nullable(),
+    scheduleBased: z.literal(true),
+    realtimeAvailable: z.literal(false),
+    fetchedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+
+export type SubwayDeparturesResponse = z.infer<
+  typeof subwayDeparturesResponseSchema
 >;
 
 export const storedPreferencesV1Schema = z

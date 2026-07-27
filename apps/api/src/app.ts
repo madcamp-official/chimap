@@ -26,6 +26,8 @@ import {
   recommendationRequestSchema,
   reverseGeocodeQuerySchema,
   reverseGeocodeResponseSchema,
+  subwayDeparturesResponseSchema,
+  subwayStationsResponseSchema,
   uiEventPayloadSchema,
   type ErrorResponse,
 } from "@chimap/contracts";
@@ -356,6 +358,9 @@ export function createApp(options: CreateAppOptions): Express {
       config: options.config,
       repository: transitService.repository,
     });
+  transitService.setSubwayMetricsObserver?.((input) =>
+    metrics.observeTagoSubway(input),
+  );
   app.locals.metrics = metrics;
   const authRepository = new AuthRepository(transitService.repository.pool);
   const authService =
@@ -751,10 +756,13 @@ export function createApp(options: CreateAppOptions): Express {
         linkedStops: 0,
         routes: 0,
         routeStops: 0,
+        subwayStations: 0,
+        activeSubwayStations: 0,
+        mappedSubwayStations: 0,
       })),
     ]);
     const tago = (
-      ["stop", "route", "arrival", "location"] as const
+      ["stop", "route", "arrival", "location", "subway"] as const
     ).every((service) => transitService.hasServiceKey(service));
     const providersReady =
       options.config.kakaoRestApiKey !== undefined &&
@@ -1021,6 +1029,89 @@ export function createApp(options: CreateAppOptions): Express {
           items,
           realtimeAvailable: items.length > 0,
           fetchedAt: new Date().toISOString(),
+        }),
+      );
+    },
+  );
+
+  const subwayStationSearchSchema = z
+    .object({
+      query: z.string().trim().min(1).max(100),
+      limit: z.coerce.number().int().min(1).max(100).default(20),
+    })
+    .strict();
+  const nearbySubwayStationsSchema = z
+    .object({
+      lat: z.coerce.number().finite().min(-90).max(90),
+      lng: z.coerce.number().finite().min(-180).max(180),
+      radiusMeters: z.coerce.number().int().min(50).max(10_000).default(1000),
+      limit: z.coerce.number().int().min(1).max(100).default(20),
+    })
+    .strict();
+  const subwayStationParametersSchema = z
+    .object({ id: z.string().trim().regex(/^\d+$/u).max(100) })
+    .strict();
+  const subwayDeparturesQuerySchema = z
+    .object({
+      direction: z.enum(["U", "D"]),
+      at: z.iso.datetime({ offset: true }).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(3),
+    })
+    .strict();
+
+  transitRouter.get("/subway/stations/search", async (request, response) => {
+    const query = subwayStationSearchSchema.parse(request.query);
+    const items = await transitService.searchSubwayStations(
+      query.query,
+      query.limit,
+    );
+    response.json(
+      subwayStationsResponseSchema.parse({ items, total: items.length }),
+    );
+  });
+
+  transitRouter.get("/subway/stations/nearby", async (request, response) => {
+    const query = nearbySubwayStationsSchema.parse(request.query);
+    const items = await transitService.findNearbySubwayStations(
+      { lat: query.lat, lng: query.lng },
+      query.radiusMeters,
+      query.limit,
+    );
+    response.json(
+      subwayStationsResponseSchema.parse({ items, total: items.length }),
+    );
+  });
+
+  transitRouter.get(
+    "/subway/stations/:id/departures",
+    async (request, response) => {
+      const parameters = subwayStationParametersSchema.parse(request.params);
+      const query = subwayDeparturesQuerySchema.parse(request.query);
+      const result = await transitCall(() =>
+        transitService.getSubwayDepartures({
+          stationId: parameters.id,
+          direction: query.direction,
+          at: query.at === undefined ? new Date() : new Date(query.at),
+          limit: query.limit,
+          signal: requestAbortSignal(request),
+        }),
+      );
+      if (result.station === null) {
+        throw new AppError({
+          code: "NOT_FOUND",
+          message: "지하철역을 찾지 못했습니다.",
+          status: 404,
+        });
+      }
+      response.setHeader("Cache-Control", "no-store");
+      response.json(
+        subwayDeparturesResponseSchema.parse({
+          items: result.items,
+          scheduleAvailable: result.scheduleAvailable,
+          unavailableReason: result.unavailableReason,
+          scheduleBased: true,
+          realtimeAvailable: false,
+          fetchedAt: result.fetchedAt,
         }),
       );
     },

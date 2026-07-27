@@ -30,11 +30,30 @@ export type TagoCityCode = {
   cityName: string;
 };
 
+export type TagoSubwayStation = {
+  stationId: string;
+  name: string;
+  routeName: string;
+};
+
+export type TagoSubwaySchedule = {
+  stationId: string;
+  stationName: string;
+  subwayRouteId: string;
+  terminalStationId: string;
+  terminalStationName: string;
+  departureTime: string;
+  arrivalTime: string;
+  dailyTypeCode: "01" | "02" | "03";
+  direction: "U" | "D";
+};
+
 const SERVICE_PATHS: Record<TagoServiceKind, string> = {
   stop: "BusSttnInfoInqireService",
   route: "BusRouteInfoInqireService",
   arrival: "ArvlInfoInqireService",
   location: "BusLcInfoInqireService",
+  subway: "SubwayInfo",
 };
 
 const SUCCESS_RESULT_CODES = new Set(["00", "0", "0000"]);
@@ -445,6 +464,113 @@ export class TagoClient {
       return cityCode === undefined || cityName === undefined
         ? []
         : [{ cityCode, cityName }];
+    });
+  }
+
+  public async searchSubwayStations(
+    stationName: string,
+    signal?: AbortSignal,
+  ): Promise<TagoSubwayStation[]> {
+    const items = await this.#requestAllPages(
+      "subway",
+      "GetKwrdFndSubwaySttnList",
+      { subwayStationName: stationName },
+      signal,
+    );
+    return items.flatMap((item) => {
+      const stationId = textValue(
+        item,
+        "subwayStationId",
+        "subwaystationid",
+      );
+      const name = textValue(
+        item,
+        "subwayStationName",
+        "subwaystationname",
+      );
+      const routeName = textValue(
+        item,
+        "subwayRouteName",
+        "subwayroutename",
+      );
+      return stationId === undefined || name === undefined || routeName === undefined
+        ? []
+        : [{ stationId, name, routeName }];
+    });
+  }
+
+  public async getSubwaySchedules(
+    stationId: string,
+    dailyTypeCode: "01" | "02" | "03",
+    direction: "U" | "D",
+    signal?: AbortSignal,
+  ): Promise<TagoSubwaySchedule[]> {
+    const items = await this.#requestAllPages(
+      "subway",
+      "GetSubwaySttnAcctoSchdulList",
+      {
+        subwayStationId: stationId,
+        dailyTypeCode,
+        upDownTypeCode: direction,
+      },
+      signal,
+    );
+    return items.flatMap((item) => {
+      const itemStationId = textValue(
+        item,
+        "subwayStationId",
+        "subwaystationid",
+      );
+      const stationName = textValue(
+        item,
+        "subwayStationNm",
+        "subwayStationName",
+        "subwaystationnm",
+      );
+      const subwayRouteId = textValue(
+        item,
+        "subwayRouteId",
+        "subwayrouteid",
+      );
+      const terminalStationId = textValue(
+        item,
+        "endSubwayStationId",
+        "endsubwaystationid",
+      );
+      const terminalStationName = textValue(
+        item,
+        "endSubwayStationNm",
+        "endSubwayStationName",
+        "endsubwaystationnm",
+      );
+      const departureTime = textValue(item, "depTime", "deptime");
+      const arrivalTime = textValue(item, "arrTime", "arrtime");
+      if (
+        itemStationId === undefined ||
+        stationName === undefined ||
+        subwayRouteId === undefined ||
+        terminalStationId === undefined ||
+        terminalStationName === undefined ||
+        departureTime === undefined ||
+        arrivalTime === undefined ||
+        !/^\d{6}$/u.test(departureTime) ||
+        !/^\d{6}$/u.test(arrivalTime)
+      ) {
+        return [];
+      }
+      return [
+        {
+          stationId: itemStationId,
+          stationName,
+          subwayRouteId,
+          terminalStationId,
+          terminalStationName,
+          departureTime,
+          arrivalTime,
+          dailyTypeCode,
+          direction,
+        },
+      ];
     });
   }
 
