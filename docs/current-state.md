@@ -3,19 +3,17 @@
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
-  계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
-  포함합니다. 2026-07-27에 결정적 테스트 192개, 격리 PostGIS 8개, 전체
-  typecheck/build, Android arm64 native compile과 GitHub의 iOS simulator·Android
-  전체 ABI compile을 통과했습니다. 실제 iPhone/Android Development Build와
-  store archive는 외부 release gate로 남습니다.
-- **현재 공개 배포**: 2026-07-27 15:51 KST에 commit `7a99e03` 소스의 이미지
-  `sha256:6cbd51c8…`로 API/웹·alert relay를 교체했습니다. 이 이미지에는 지하철
-  routing 안정화와 보정 경로의 시간표 metadata 보존 수정이 포함됩니다. 16:48
-  KST production health HTTP 200을 재확인했고, 아래 전체 DB·E2E·복구 기록은
-  별도로 명시한 14:29 KST 검증 스냅샷을 기준으로 합니다.
-- **마지막 전체 운영 점검**: 2026-07-27 14:29 KST에 컨테이너, PostgreSQL,
-  migration 7, 지하철 1,097개 import·706개 TAGO 매핑, 배포 후 백업·전체 복원,
-  모니터링, 공개 E2E와 인증·mobile config smoke를 대조했습니다.
+  계약과 Expo 앱에 더해 migration 9, 요청 범위 버스·지하철 멀티모달 그래프,
+  최대 2회 환승, TAGO 시간표 timing과 사전 계산 버스↔지하철 보행 연결을
+  포함합니다. 이번 변경은 API 119개 테스트(운영 DB가 없는 실행에서는 DB
+  통합 8개 제외), 전체 build와 공개 strict Playwright 3개를 통과했습니다.
+- **현재 공개 배포**: 2026-07-27 19:25 KST에 기능 commit `43b71a1`의 이미지
+  `sha256:ce1caaca…`로 API/웹을 교체했습니다. `TRANSIT_ROUTER_MODE=multimodal`이며
+  공개 KAIST→대전역 요청에서 지하철 단독과 지하철→버스 환승 경로가
+  `multimodal-*` ID로 반환됩니다. 검증 보정은 commit `1d0804c`에 기록했습니다.
+- **마지막 전체 운영 점검**: 2026-07-27 19:29 KST에 컨테이너, PostgreSQL,
+  migration 9, 멀티모달 seed, 공개 HTTPS 추천, NAVER 필수 E2E, 모니터링,
+  공개 bundle 비밀값과 배포 후 백업을 대조했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
@@ -77,6 +75,12 @@
 - 지하철 검색·근처 역·TAGO 시간표 기반 다음 출발 API 제공
 - 추천 결과에서 출발·도착 2km 내 매핑 역과 상·하행 다음 출발을 조회해
   `TAGO 시간표 기반 예상`으로 표시하며 실제 지연 미반영과 추천시간 미합산을 명시
+- 전체 route-ready 지하철 그래프와 요청 출발·도착 주변 버스 노선만 조합해
+  버스 단독·지하철 단독·버스→지하철·지하철→버스·버스→지하철→버스를 탐색
+- 버스↔지하철 500m 이내 실제 Kakao 보행 경로 182개를 사전 계산하고,
+  서비스 승차 전환 기준 최대 2회 환승과 중복 경로 제거 적용
+- 버스는 TAGO 도착정보, 지하철은 TAGO 시간표, 없으면 검증된 배차간격을
+  사용하며 실제 실시간 여부와 timing source를 구간별 공개
 
 ### 데이터·운영
 
@@ -110,8 +114,8 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:6cbd51c8…`, code commit `7a99e03`), 단일 Node.js 프로세스, healthy |
-| DB | PostgreSQL 18 + PostGIS 3.6, migration 7, healthy |
+| API | `chimap:actual-data` (`sha256:ce1caaca…`, 기능 commit `43b71a1`), 단일 Node.js 프로세스, healthy |
+| DB | PostgreSQL 18 + PostGIS 3.6, migration 9, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
@@ -124,7 +128,7 @@
 | 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
 | 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
 | foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
-| 공개 웹 asset | `index-BjbF61pt.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
+| 공개 웹 asset | `index-DVyoPrrl.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | production 14:29 snapshot은 guest만 enabled, staging 16:48 snapshot은 guest/Kakao enabled·Apple disabled |
 | 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
@@ -132,7 +136,7 @@
 
 ## 3. readiness 스냅샷
 
-2026-07-27 14:29 KST 공개 재확인 결과:
+2026-07-27 19:29 KST 공개 재확인 결과:
 
 ```json
 {
@@ -150,16 +154,20 @@
   "transit": {
     "stops": 227225,
     "linkedStops": 2844,
-    "routes": 134,
-    "routeStops": 5731,
+    "routes": 140,
+    "routeStops": 5794,
     "subwayStations": 1097,
     "activeSubwayStations": 1097,
-    "mappedSubwayStations": 706
+    "mappedSubwayStations": 706,
+    "subwayServiceLines": 46,
+    "routeReadySubwayLines": 30,
+    "providerMappedStations": 697,
+    "busSubwayTransferEdges": 182
   }
 }
 ```
 
-readiness timestamp는 `2026-07-27T05:29:23.205Z`였습니다. 위 JSON에서는
+readiness timestamp는 `2026-07-27T10:25:01.783Z`였습니다. 위 JSON에서는
 가독성을 위해 timestamp를 생략했습니다. 필수 교통 통계가 준비되고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
@@ -184,7 +192,8 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 출발·도착 500m에서 시작해 실제 연결 경로가 없으면 800m, 최대
   1.2km까지 정류장 탐색
 - 노선 0건 정류장은 승하차 후보에서 제외
-- 직행 또는 최대 1회 환승 버스 후보 생성
+- 요청 주변 버스 노선과 전체 route-ready 지하철 그래프에서 최대 2회 환승 후보 생성
+- 사전 계산한 버스↔지하철 보행 엣지로 버스·지하철 혼합 경로를 한 번에 탐색
 - TAGO 도착정보 우선, 없으면 실제 노선의 배차·정류장 정보로 추정
 - Kakao 도보 경로를 버스 전후와 운동 구간에 사용
 - 만 나이·신장·체중·필수 생물학적 성별로 개인화 한 걸음 길이 추정
@@ -227,7 +236,9 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 ### PostgreSQL/PostGIS
 
 - `schema_migrations`, `bus_stops`, `bus_routes`, `bus_route_stops`
-- `subway_station_lines`, 위치 GiST와 TAGO 매핑 상태 인덱스
+- `subway_station_lines`, 노선·역순서·구간·환승·배차간격과 위치 GiST
+- provider 역·방향 매핑, dataset version, transfer build run,
+  PostGIS LineString 기반 `bus_subway_transfer_edges`
 - migration advisory lock과 SHA-256 checksum 검증
 - CSV 임시 테이블/COPY/upsert
 - `geography(Point,4326)` + GiST 반경 검색

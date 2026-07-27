@@ -575,6 +575,33 @@ production의 마지막 전체 strict E2E·백업·restore는 앞선 14:29 KST �
 적재했으며 자세한 재실행 절차는 [staging 환경 운영서](./staging-environment.md)를
 따릅니다.
 
+### 2026-07-27 요청 범위 멀티모달 routing 승격 기록
+
+- 기능 commits: `4d800a5`, `83efdd3`, `b4c418d`, `43b71a1`
+- 공개 E2E 보정 commit: `1d0804c`
+- production image: `sha256:ce1caaca95c7b822bad59e790d2ad88560c9c95369573fd04db0ede15bba915d`
+- router: `TRANSIT_ROUTER_MODE=multimodal`, 최대 환승 2회
+- DB: migration 1~9 current, 정류장 227,225개·연결 2,844개,
+  버스 노선 140개·노선 정류장 5,794개
+- subway topology: 전체/활성 역 1,097개, TAGO 역 매핑 706개,
+  서비스 노선 46개·route-ready 30개·provider mapping 697개
+- bus↔subway: 500m 이내 후보 200개 중 실제 Kakao 보행 경로 182개 저장,
+  거리·endpoint·LineString 검증 실패 후보는 제외
+- 공개 smoke: KAIST→대전역에서 `multimodal-*` 3건, 지하철 포함·환승 포함,
+  `TAGO_SUBWAY_TIMETABLE`과 버스 fallback timing source 확인
+- strict E2E: NAVER 지도 필수, 지하철 단독 FAST·버스 포함 BALANCED,
+  차량 10초 polling 2회 이상·카메라 고정과 4개 viewport 포함 3/3 통과
+- security: 공개 JavaScript 1개에서 SEOUL/TAGO/Kakao 서버 key 이름과 값 0건
+- monitoring: Prometheus target 3개 `up`; 외부 webhook 미설정 경고 1개는
+  `ALERT_WEBHOOK_URL` 입력 대기 상태와 일치
+- 배포 전 backup: `chimap-daily-20260727T092614Z.dump`, 17,611,642 bytes,
+  SHA-256 `764dba0e81872eef431b8756f55512ba56ed35abf5d034fd9af4c93051d3fff6`
+- 최종 backup: `chimap-daily-20260727T102927Z.dump`, 17,725,228 bytes,
+  SHA-256 `e93038a5f59c2df6f36caab0edbd6ef5c21f78fc23e3916623790ca1c36d9f1f`
+- 서울 실시간 API: `SEOUL_SUBWAY_API_KEY`는 서버 환경에만 존재하지만 공식
+  HTTPS endpoint 연결을 검증하지 못해 `SEOUL_SUBWAY_ENABLED=0` 유지. 운영
+  ETA는 TAGO 시간표 또는 배차간격 기반임을 응답에 명시
+
 ## 12. 공개 번들 비밀값 검사
 
 배포 후 HTML의 JavaScript asset을 받아 서버 Client Secret이 포함되지
