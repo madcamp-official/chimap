@@ -142,7 +142,7 @@ jobs:
         run: |
           pnpm --filter @chimap/mobile exec expo config --type public
           pnpm --filter @chimap/mobile exec expo prebuild --clean --no-install
-          node scripts/verify-mobile-native-config.mjs
+          node scripts/verify-mobile-native-config.mjs all
           pnpm --filter @chimap/mobile typecheck
 
       - name: Test lifecycle and platform adapters
@@ -183,6 +183,7 @@ jobs:
       - name: Generate iOS and install CocoaPods
         run: |
           pnpm --filter @chimap/mobile exec expo prebuild --clean --platform ios --no-install
+          node scripts/verify-mobile-native-config.mjs ios
           cd apps/mobile/ios
           pod install
 
@@ -234,8 +235,9 @@ jobs:
       - name: Generate and compile Android debug app
         run: |
           pnpm --filter @chimap/mobile exec expo prebuild --clean --platform android --no-install
+          node scripts/verify-mobile-native-config.mjs android
           cd apps/mobile/android
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleDebug --no-daemon --max-workers=2
 
   postgis:
     name: PostgreSQL and PostGIS integration

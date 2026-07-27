@@ -1,9 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
-  isSameKoreanCalendarDay,
   RECOMMENDATION_CACHE_MAX_AGE_MS,
   RECOMMENDATION_STALE_TIME_MS,
-  shouldRefreshRecommendation,
 } from "@chimap/app-core";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import {
@@ -25,8 +23,16 @@ import {
 } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
+import {
+  shouldPersistRecommendation,
+  shouldRefetchRecommendationOnForeground,
+} from "./query-persistence-policy";
+
 function persistentRecommendation(query: Query): boolean {
-  return query.state.status === "success" && query.meta?.persistRecommendation === true;
+  return shouldPersistRecommendation({
+    status: query.state.status,
+    persistRecommendation: query.meta?.persistRecommendation === true,
+  });
 }
 
 const QueryPersistenceContext = createContext<(() => Promise<void>) | null>(null);
@@ -41,20 +47,23 @@ function ForegroundRefresh({ queryClient }: { queryClient: QueryClient }) {
       const becameActive = previous.current !== "active" && next === "active";
       previous.current = next;
       focusManager.setFocused(next === "active");
-      if (!becameActive || onlineManager.isOnline() === false) {
-        return;
-      }
       for (const query of queryClient.getQueryCache().findAll({
         type: "active",
         predicate: persistentRecommendation,
       })) {
-        if (
-          query.state.fetchStatus !== "fetching" &&
-          (query.meta?.requestSavedAt === null ||
-            query.meta?.requestSavedAt === undefined ||
-            isSameKoreanCalendarDay(query.meta.requestSavedAt, Date.now())) &&
-          shouldRefreshRecommendation(query.state.dataUpdatedAt)
-        ) {
+        if (shouldRefetchRecommendationOnForeground({
+          becameActive,
+          online: onlineManager.isOnline() !== false,
+          now: Date.now(),
+          query: {
+            status: query.state.status,
+            fetchStatus: query.state.fetchStatus,
+            dataUpdatedAt: query.state.dataUpdatedAt,
+            persistRecommendation:
+              query.meta?.persistRecommendation === true,
+            requestSavedAt: query.meta?.requestSavedAt,
+          },
+        })) {
           void query.fetch().catch(() => undefined);
         }
       }

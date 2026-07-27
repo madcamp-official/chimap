@@ -28,6 +28,7 @@ describe("Expo platform identity", () => {
     ]);
     expect(config.plugins).toContain("react-native-health-connect");
     expect(config.plugins).toContain("./plugins/with-health-connect-main-activity.cjs");
+    expect(config.plugins).toContain("./plugins/with-gradle-wrapper-timeout.cjs");
     expect(config.plugins).toContainEqual([
       "expo-location",
       expect.objectContaining({
@@ -43,9 +44,16 @@ describe("Expo platform identity", () => {
         ios: { privacyManifestAggregationEnabled: true },
       }),
     ]);
+    expect(config.plugins).toContain(
+      "./plugins/with-scoped-android-maven-repositories.cjs",
+    );
     expect(config.plugins).toContainEqual([
       "./plugins/with-naver-map-client-ids.cjs",
       { iosClientId: "naver-ios-id", androidClientId: "naver-android-id" },
+    ]);
+    expect(config.plugins).toContainEqual([
+      "@react-native-seoul/kakao-login",
+      { kakaoAppKey: "kakao-native-key", kotlinVersion: "2.1.20" },
     ]);
   });
 

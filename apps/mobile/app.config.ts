@@ -2,6 +2,8 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 
 type AppEnvironment = "development" | "staging" | "production";
 
+const androidKotlinVersion = "2.1.20";
+
 const identifiers: Record<
   AppEnvironment,
   { bundleIdentifier: string; displaySuffix: string }
@@ -110,6 +112,7 @@ export function createExpoConfig(
       ],
       "react-native-health-connect",
       "./plugins/with-health-connect-main-activity.cjs",
+      "./plugins/with-gradle-wrapper-timeout.cjs",
       [
         "expo-location",
         {
@@ -132,18 +135,18 @@ export function createExpoConfig(
           },
           android: {
             minSdkVersion: 26,
-            extraMavenRepos: [
-              "https://repository.map.naver.com/archive/maven",
-              "https://devrepo.kakao.com/nexus/content/groups/public/",
-            ],
           },
         },
       ],
+      "./plugins/with-scoped-android-maven-repositories.cjs",
       [
         "./plugins/with-naver-map-client-ids.cjs",
         { iosClientId, androidClientId },
       ],
-      ["@react-native-seoul/kakao-login", { kakaoAppKey: kakaoNativeAppKey }],
+      [
+        "@react-native-seoul/kakao-login",
+        { kakaoAppKey: kakaoNativeAppKey, kotlinVersion: androidKotlinVersion },
+      ],
     ],
     experiments: {
       typedRoutes: true,
