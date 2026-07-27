@@ -307,6 +307,7 @@ describe("TransitService TAGO 역 매핑", () => {
     expect(updateSubwayStationMapping).toHaveBeenCalledWith({
       id: daejeonStation.id,
       status: "UNRESOLVED",
+      canonicalStatus: "AMBIGUOUS",
       tagoStationId: null,
       tagoRouteName: null,
     });

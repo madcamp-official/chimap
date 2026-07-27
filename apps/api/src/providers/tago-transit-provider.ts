@@ -26,6 +26,7 @@ import type {
   TransitRouteRequest,
   WalkRouteRequest,
 } from "./types.js";
+import { MultimodalRoutePlanner } from "./multimodal-route-planner.js";
 import { SubwayRoutePlanner } from "./subway-route-planner.js";
 
 type StopRoutes = {
@@ -239,6 +240,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
   readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
   readonly #roadGeometryCache = new MemoryCache(64 * 1024 * 1024);
   readonly #subwayRoutePlanner: SubwayRoutePlanner;
+  readonly #multimodalRoutePlanner: MultimodalRoutePlanner;
 
   public constructor(options: {
     baseProvider: MobilityProvider & RoadGeometryProvider;
@@ -249,6 +251,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     this.#transitService = options.transitService;
     this.#config = options.config;
     this.#subwayRoutePlanner = new SubwayRoutePlanner(options);
+    this.#multimodalRoutePlanner = new MultimodalRoutePlanner(options);
   }
 
   public searchPlaces(
@@ -263,6 +266,28 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
   }
 
   public async getTransitRoutes(
+    request: TransitRouteRequest,
+  ): Promise<NormalizedRoute[]> {
+    if (this.#config.transit.routerMode === "legacy") {
+      return this.#getLegacyTransitRoutes(request);
+    }
+    if (this.#config.transit.routerMode === "shadow") {
+      const routes = await this.#getLegacyTransitRoutes(request);
+      void this.#multimodalRoutePlanner.getRoutes(request).catch(() => undefined);
+      return routes;
+    }
+    try {
+      const routes = await this.#multimodalRoutePlanner.getRoutes(request);
+      if (routes.length > 0) {
+        return routes;
+      }
+    } catch {
+      // Migration/seed rollout 중에는 기존 탐색기로 안전하게 복귀한다.
+    }
+    return this.#getLegacyTransitRoutes(request);
+  }
+
+  async #getLegacyTransitRoutes(
     request: TransitRouteRequest,
   ): Promise<NormalizedRoute[]> {
     const busPromise = this.#getBusTransitRoutes(request);

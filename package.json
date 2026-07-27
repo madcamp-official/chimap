@@ -27,6 +27,8 @@
     "bus:stats": "pnpm --filter @chimap/api bus:stats",
     "subway:import-stations": "pnpm --filter @chimap/api subway:import-stations",
     "subway:import-topology": "pnpm --filter @chimap/api subway:import-topology",
+    "subway:import-provider-map": "pnpm --filter @chimap/api subway:import-provider-map",
+    "transit:build-transfers": "pnpm --filter @chimap/api transit:build-transfers",
     "subway:sync-stations": "pnpm --filter @chimap/api subway:sync-stations",
     "subway:test-departures": "pnpm --filter @chimap/api subway:test-departures",
     "subway:stats": "pnpm --filter @chimap/api subway:stats",

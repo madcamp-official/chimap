@@ -194,6 +194,80 @@ export const transitBusLegSchema = z
 
 export type TransitBusLeg = z.infer<typeof transitBusLegSchema>;
 
+export const transitTimingSourceSchema = z.enum([
+  "SEOUL_REALTIME_ARRIVAL",
+  "SEOUL_REALTIME_POSITION_ESTIMATE",
+  "TAGO_SUBWAY_TIMETABLE",
+  "SUBWAY_HEADWAY_FALLBACK",
+  "TAGO_BUS_ARRIVAL",
+  "TAGO_BUS_LOCATION_ESTIMATE",
+  "BUS_INTERVAL_FALLBACK",
+]);
+export type TransitTimingSource = z.infer<
+  typeof transitTimingSourceSchema
+>;
+
+export const transitTimingSchema = z
+  .object({
+    waitSeconds: z.number().int().nonnegative(),
+    timingSource: transitTimingSourceSchema,
+    isRealtime: z.boolean(),
+    plannedBoardingAt: z.iso.datetime({ offset: true }),
+    updatedAt: z.iso.datetime({ offset: true }).nullable(),
+    scheduledDepartureAt: z.iso.datetime({ offset: true }).optional(),
+    stale: z.boolean(),
+  })
+  .strict();
+export type TransitTiming = z.infer<typeof transitTimingSchema>;
+
+export const transitSubwayStationRefSchema = z
+  .object({
+    stationLineId: z.string().min(1).max(100),
+    sourceStationKey: z.string().min(1).max(120),
+    name: z.string().min(1).max(200),
+    location: coordinateSchema,
+  })
+  .strict();
+export type TransitSubwayStationRef = z.infer<
+  typeof transitSubwayStationRefSchema
+>;
+
+export const transitSubwayLegSchema = z
+  .object({
+    serviceLineId: z.string().min(1).max(32),
+    lineName: z.string().min(1).max(200),
+    boardingStation: transitSubwayStationRefSchema,
+    alightingStation: transitSubwayStationRefSchema,
+    stationCount: z.number().int().positive(),
+    rideDurationSeconds: z.number().int().nonnegative(),
+    direction: z.enum(["UP", "DOWN", "INNER", "OUTER", "UNKNOWN"]),
+    destinationName: z.string().min(1).max(200).nullable(),
+    intermediateStations: z
+      .array(transitSubwayStationRefSchema)
+      .max(200),
+  })
+  .strict();
+export type TransitSubwayLeg = z.infer<typeof transitSubwayLegSchema>;
+
+export const transitTransferTypeSchema = z.enum([
+  "BUS_TO_BUS",
+  "BUS_TO_SUBWAY",
+  "SUBWAY_TO_BUS",
+  "SUBWAY_TO_SUBWAY",
+]);
+export type TransitTransferType = z.infer<
+  typeof transitTransferTypeSchema
+>;
+
+export const transitTransferSchema = z
+  .object({
+    transferType: transitTransferTypeSchema,
+    fromServiceId: z.string().min(1).max(200),
+    toServiceId: z.string().min(1).max(200),
+  })
+  .strict();
+export type TransitTransfer = z.infer<typeof transitTransferSchema>;
+
 export const routeModeSchema = z.enum(["WALK", "BUS", "SUBWAY"]);
 export type RouteMode = z.infer<typeof routeModeSchema>;
 
@@ -219,6 +293,9 @@ export const routeLegSchema = z
     isExerciseSegment: z.boolean(),
     walkingRole: walkingRoleSchema.optional(),
     bus: transitBusLegSchema.optional(),
+    subway: transitSubwayLegSchema.optional(),
+    timing: transitTimingSchema.optional(),
+    transfer: transitTransferSchema.optional(),
   })
   .strict()
   .superRefine((leg, context) => {
@@ -246,11 +323,35 @@ export const routeLegSchema = z
         message: "목표 도보 구간은 운동 구간으로 표시해야 합니다.",
       });
     }
+    if (leg.mode !== "BUS" && leg.bus !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["bus"],
+        message: "버스 상세정보는 버스 구간에서만 사용할 수 있습니다.",
+      });
+    }
+    if (leg.mode !== "SUBWAY" && leg.subway !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["subway"],
+        message: "지하철 상세정보는 지하철 구간에서만 사용할 수 있습니다.",
+      });
+    }
+    if (
+      leg.transfer !== undefined &&
+      (leg.mode !== "WALK" || leg.walkingRole !== "TRANSFER")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["transfer"],
+        message: "환승정보는 환승 도보 구간에서만 사용할 수 있습니다.",
+      });
+    }
   });
 
 export type RouteLeg = z.infer<typeof routeLegSchema>;
 
-export const routeSourceSchema = z.enum(["KAKAO", "TAGO"]);
+export const routeSourceSchema = z.enum(["KAKAO", "TAGO", "MULTIMODAL"]);
 export type RouteSource = z.infer<typeof routeSourceSchema>;
 
 export const normalizedRouteSchema = z

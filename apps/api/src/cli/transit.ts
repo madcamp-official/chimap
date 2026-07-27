@@ -1,12 +1,16 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
+import { KakaoMobilityProvider } from "../providers/kakao-provider.js";
+import { buildBusSubwayTransferEdges } from "../transit/bus-subway-transfer-builder.js";
 import { importBusStopsFile } from "../transit/csv-importer.js";
 import { importSubwayStationsFile } from "../transit/subway-csv-importer.js";
+import { importSubwayProviderMapFile } from "../transit/subway-provider-map-importer.js";
 import { importSubwayTopologyDirectory } from "../transit/subway-topology-importer.js";
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
@@ -465,6 +469,51 @@ async function run(): Promise<void> {
         headways: result.headways.length,
         transfers: result.transfers.length,
       });
+      break;
+    }
+    case "import-subway-provider-map": {
+      const path =
+        argument("path") ??
+        (config.subwayTopologyDataDir === undefined
+          ? undefined
+          : join(
+              config.subwayTopologyDataDir,
+              "subway_provider_station_map_template.csv",
+            ));
+      if (path === undefined) {
+        throw new Error(
+          "SUBWAY_TOPOLOGY_DATA_DIR 또는 --path를 설정해 주세요.",
+        );
+      }
+      const rows = await importSubwayProviderMapFile(
+        path,
+        transit.repository,
+      );
+      printJson({ path, sourceRows: rows.length });
+      break;
+    }
+    case "build-bus-subway-transfers": {
+      if (config.kakaoRestApiKey === undefined) {
+        throw new Error("KAKAO_REST_API_KEY를 설정해 주세요.");
+      }
+      const concurrency = Math.min(
+        Math.max(Number(argument("concurrency") ?? 2), 1),
+        4,
+      );
+      const limit = Math.min(
+        Math.max(Number(argument("limit") ?? 20_000), 1),
+        20_000,
+      );
+      const result = await buildBusSubwayTransferEdges({
+        repository: transit.repository,
+        walkingProvider: new KakaoMobilityProvider(config.kakaoRestApiKey),
+        concurrency,
+        limit,
+      });
+      printJson(result);
+      if (result.failed > 0) {
+        throw new Error("일부 버스-지하철 환승 간선 생성에 실패했습니다.");
+      }
       break;
     }
     case "sync-subway-stations": {

@@ -118,6 +118,32 @@ const environmentSchema = z
       .enum(["disable", "require", "verify-full"])
       .default("disable"),
     DATA_GO_KR_SERVICE_KEY: optionalSecret,
+    SEOUL_SUBWAY_API_KEY: optionalSecret,
+    SEOUL_SUBWAY_BASE_URL: z
+      .url()
+      .refine((value) => value.startsWith("https://"), {
+        message: "서울 지하철 API는 HTTPS URL만 사용할 수 있습니다.",
+      })
+      .default("https://swopenAPI.seoul.go.kr"),
+    SEOUL_SUBWAY_ENABLED: z.enum(["0", "1"]).default("0"),
+    SEOUL_SUBWAY_HTTP_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(10_000)
+      .default(3000),
+    SEOUL_SUBWAY_ARRIVAL_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(120)
+      .default(25),
+    SEOUL_SUBWAY_POSITION_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(120)
+      .default(30),
     TAGO_BUS_STOP_SERVICE_KEY: optionalSecret,
     TAGO_BUS_ROUTE_SERVICE_KEY: optionalSecret,
     TAGO_BUS_ARRIVAL_SERVICE_KEY: optionalSecret,
@@ -166,7 +192,7 @@ const environmentSchema = z
       .number()
       .int()
       .positive()
-      .default(300),
+      .default(21_600),
     TRANSIT_MAX_NEARBY_STOP_DISTANCE_METERS: z.coerce
       .number()
       .int()
@@ -183,8 +209,11 @@ const environmentSchema = z
       .number()
       .int()
       .min(0)
-      .max(1)
-      .default(1),
+      .max(2)
+      .default(2),
+    TRANSIT_ROUTER_MODE: z
+      .enum(["legacy", "shadow", "multimodal"])
+      .default("multimodal"),
     TRANSIT_WALK_SPEED_KMH: z.coerce.number().positive().default(4.5),
     TRANSIT_BUS_AVERAGE_SPEED_KMH: z.coerce.number().positive().default(20),
     TRANSIT_STOP_DWELL_SECONDS: z.coerce
@@ -329,6 +358,17 @@ const environmentSchema = z
           "추천 경로 정류장 탐색 상한은 기본 주변 정류장 반경보다 작을 수 없습니다.",
       });
     }
+    if (
+      environment.SEOUL_SUBWAY_ENABLED === "1" &&
+      environment.SEOUL_SUBWAY_API_KEY === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["SEOUL_SUBWAY_API_KEY"],
+        message:
+          "서울 지하철 실시간 연동을 켜려면 SEOUL_SUBWAY_API_KEY가 필요합니다.",
+      });
+    }
   });
 
 export type TagoServiceKind =
@@ -398,6 +438,14 @@ export type AppConfig = {
   };
   liveApiTest: boolean;
   dataGoKrServiceKey?: string;
+  seoulSubway: {
+    enabled: boolean;
+    apiKey?: string;
+    baseUrl: string;
+    timeoutMs: number;
+    arrivalCacheTtlSeconds: number;
+    positionCacheTtlSeconds: number;
+  };
   tagoServiceKeys: Partial<Record<TagoServiceKind, string>>;
   tagoBaseUrl: string;
   tagoResponseType: "json";
@@ -418,7 +466,8 @@ export type AppConfig = {
   transit: {
     maxNearbyStopDistanceMeters: number;
     routeSearchMaxDistanceMeters: number;
-    maxTransferCount: 0 | 1;
+    maxTransferCount: 0 | 1 | 2;
+    routerMode: "legacy" | "shadow" | "multimodal";
     walkSpeedKmh: number;
     busAverageSpeedKmh: number;
     stopDwellSeconds: number;
@@ -546,6 +595,18 @@ export function loadConfig(
     ...(parsed.DATA_GO_KR_SERVICE_KEY === undefined
       ? {}
       : { dataGoKrServiceKey: parsed.DATA_GO_KR_SERVICE_KEY }),
+    seoulSubway: {
+      enabled: parsed.SEOUL_SUBWAY_ENABLED === "1",
+      ...(parsed.SEOUL_SUBWAY_API_KEY === undefined
+        ? {}
+        : { apiKey: parsed.SEOUL_SUBWAY_API_KEY }),
+      baseUrl: parsed.SEOUL_SUBWAY_BASE_URL.replace(/\/+$/u, ""),
+      timeoutMs: parsed.SEOUL_SUBWAY_HTTP_TIMEOUT_MS,
+      arrivalCacheTtlSeconds:
+        parsed.SEOUL_SUBWAY_ARRIVAL_CACHE_TTL_SECONDS,
+      positionCacheTtlSeconds:
+        parsed.SEOUL_SUBWAY_POSITION_CACHE_TTL_SECONDS,
+    },
     tagoServiceKeys,
     tagoBaseUrl: parsed.TAGO_BASE_URL.replace(/\/+$/u, ""),
     tagoResponseType: parsed.TAGO_RESPONSE_TYPE,
@@ -574,7 +635,8 @@ export function loadConfig(
         parsed.TRANSIT_MAX_NEARBY_STOP_DISTANCE_METERS,
       routeSearchMaxDistanceMeters:
         parsed.TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS,
-      maxTransferCount: parsed.TRANSIT_MAX_TRANSFER_COUNT as 0 | 1,
+      maxTransferCount: parsed.TRANSIT_MAX_TRANSFER_COUNT as 0 | 1 | 2,
+      routerMode: parsed.TRANSIT_ROUTER_MODE,
       walkSpeedKmh: parsed.TRANSIT_WALK_SPEED_KMH,
       busAverageSpeedKmh: parsed.TRANSIT_BUS_AVERAGE_SPEED_KMH,
       stopDwellSeconds: parsed.TRANSIT_STOP_DWELL_SECONDS,

@@ -243,12 +243,25 @@ function serviceLabel(station: SubwayRoutingStation): string {
     : `${station.regionName} ${station.lineName}`;
 }
 
-function subwayCoreLegs(candidate: SubwayPathCandidate): RouteLeg[] {
+function subwayStationRef(station: SubwayRoutingStation) {
+  return {
+    stationLineId: station.stationLineId,
+    sourceStationKey: station.sourceStationKey,
+    name: station.stationName,
+    location: coordinate(station),
+  };
+}
+
+function subwayCoreLegs(
+  candidate: SubwayPathCandidate,
+  departureAt: Date,
+): RouteLeg[] {
   const stationByNode = new Map(
     candidate.stations.map((station) => [station.nodeId, station]),
   );
   const legs: RouteLeg[] = [];
   let index = 0;
+  let elapsedSeconds = 0;
   while (index < candidate.edges.length) {
     const edge = candidate.edges[index]!;
     const from = stationByNode.get(edge.fromNodeId)!;
@@ -264,7 +277,15 @@ function subwayCoreLegs(candidate: SubwayPathCandidate): RouteLeg[] {
         coordinates: [coordinate(from), coordinate(to)],
         isExerciseSegment: false,
         walkingRole: "TRANSFER",
+        transfer: {
+          transferType: "SUBWAY_TO_SUBWAY",
+          fromServiceId:
+            candidate.edges[index - 1]?.serviceLineId ?? from.serviceLineId,
+          toServiceId:
+            candidate.edges[index + 1]?.serviceLineId ?? to.serviceLineId,
+        },
       });
+      elapsedSeconds += edge.durationSeconds;
       index += 1;
       continue;
     }
@@ -285,22 +306,47 @@ function subwayCoreLegs(candidate: SubwayPathCandidate): RouteLeg[] {
     const boarding = rideStations[0]!;
     const alighting = rideStations.at(-1)!;
     const waitingSeconds = rideEdges[0]?.expectedWaitSeconds ?? 300;
+    const rideDurationSeconds = rideEdges.reduce(
+      (total, ride) => total + ride.durationSeconds,
+      0,
+    );
+    const plannedBoardingAt = new Date(
+      departureAt.getTime() + elapsedSeconds * 1000,
+    ).toISOString();
     legs.push({
       id: `subway-${serviceLineId}-${boarding.sourceStationKey}-${alighting.sourceStationKey}`,
       mode: "SUBWAY",
       name: serviceLabel(boarding),
-      guidance: `${boarding.stationName}역에서 ${serviceLabel(boarding)} 탑승 · ${alighting.stationName}역 하차 (TAGO 시간표 기반 예상)`,
+      guidance: `${boarding.stationName}역에서 ${serviceLabel(boarding)} 탑승 · ${alighting.stationName}역 하차 (배차간격 기반 예상)`,
       distanceMeters: rideEdges.reduce(
         (total, ride) => total + ride.distanceMeters,
         0,
       ),
-      durationSeconds:
-        waitingSeconds +
-        rideEdges.reduce((total, ride) => total + ride.durationSeconds, 0),
+      durationSeconds: waitingSeconds + rideDurationSeconds,
       stops: rideStations.map((station) => station.stationName),
       coordinates: rideStations.map(coordinate),
       isExerciseSegment: false,
+      timing: {
+        waitSeconds: waitingSeconds,
+        timingSource: "SUBWAY_HEADWAY_FALLBACK",
+        isRealtime: false,
+        plannedBoardingAt,
+        updatedAt: null,
+        stale: false,
+      },
+      subway: {
+        serviceLineId,
+        lineName: serviceLabel(boarding),
+        boardingStation: subwayStationRef(boarding),
+        alightingStation: subwayStationRef(alighting),
+        stationCount: rideStations.length - 1,
+        rideDurationSeconds,
+        direction: "UNKNOWN",
+        destinationName: null,
+        intermediateStations: rideStations.slice(1, -1).map(subwayStationRef),
+      },
     });
+    elapsedSeconds += waitingSeconds + rideDurationSeconds;
   }
   return legs;
 }
@@ -390,7 +436,8 @@ export class SubwayRoutePlanner {
   public async getRoutes(
     request: TransitRouteRequest,
   ): Promise<NormalizedRoute[]> {
-    const graph = await this.#graph(new Date());
+    const departureAt = new Date();
+    const graph = await this.#graph(departureAt);
     const candidates = findSubwayPathCandidates(
       graph,
       request.origin.location,
@@ -414,7 +461,18 @@ export class SubwayRoutePlanner {
             request.signal,
           ),
         ]);
-        const legs = [...access, ...subwayCoreLegs(candidate), ...egress];
+        const accessDurationSeconds = access.reduce(
+          (total, leg) => total + leg.durationSeconds,
+          0,
+        );
+        const legs = [
+          ...access,
+          ...subwayCoreLegs(
+            candidate,
+            new Date(departureAt.getTime() + accessDurationSeconds * 1000),
+          ),
+          ...egress,
+        ];
         const distanceMeters = legs.reduce(
           (total, leg) => total + leg.distanceMeters,
           0,
@@ -428,7 +486,7 @@ export class SubwayRoutePlanner {
           .slice(0, 12);
         return normalizedRouteSchema.parse({
           id: `tago-subway-${hash}`,
-          source: "TAGO",
+          source: "MULTIMODAL",
           durationSeconds: legs.reduce(
             (total, leg) => total + leg.durationSeconds,
             0,
@@ -443,7 +501,7 @@ export class SubwayRoutePlanner {
           ridingDurationSeconds: candidate.ridingDurationSeconds,
           isRealtime: false,
           estimationNotes: [
-            "지하철 운행 시간은 TAGO 시간표와 검증된 구간 소요시간을 기반으로 한 예상이며 실시간 지연은 반영하지 않습니다.",
+            "지하철 운행 시간은 배차간격 fallback과 검증된 구간 소요시간을 기반으로 한 예상이며 실시간 지연은 반영하지 않습니다.",
           ],
           legs,
         });

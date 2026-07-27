@@ -68,6 +68,38 @@ const baseline: NormalizedRoute = {
         { lng: 127.434217, lat: 36.332338 },
       ],
       isExerciseSegment: false,
+      bus: {
+        routeId: "route-108",
+        cityCode: "25",
+        routeNo: "108",
+        routeType: null,
+        boardingStop: {
+          id: "stop-1", cityCode: "25", nodeId: "node-1",
+          sourceStopNo: null, arsId: null, name: "한국과학기술원본관",
+          latitude: 36.369938, longitude: 127.36063, source: "database",
+        },
+        alightingStop: {
+          id: "stop-2", cityCode: "25", nodeId: "node-2",
+          sourceStopNo: null, arsId: null, name: "대전역",
+          latitude: 36.332338, longitude: 127.434217, source: "database",
+        },
+        stopCount: 1,
+        boardingNodeOrder: 1,
+        alightingNodeOrder: 2,
+        expectedArrivalSeconds: 300,
+        expectedRideSeconds: 2740,
+        vehicleNo: null,
+        vehicleType: null,
+        isArrivalRealtime: false,
+        polyline: [
+          { lng: 127.36063, lat: 36.369938 },
+          { lng: 127.434217, lat: 36.332338 },
+        ],
+        stops: [
+          { routeId: "route-108", stopId: "stop-1", nodeId: "node-1", cityCode: "25", stopName: "한국과학기술원본관", latitude: 36.369938, longitude: 127.36063, nodeOrder: 1, direction: null },
+          { routeId: "route-108", stopId: "stop-2", nodeId: "node-2", cityCode: "25", stopName: "대전역", latitude: 36.332338, longitude: 127.434217, nodeOrder: 2, direction: null },
+        ],
+      },
     },
   ],
 };

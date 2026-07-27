@@ -279,6 +279,9 @@ docker compose run --rm api node dist/cli/transit.js stats
 docker compose run --rm api node dist/cli/transit.js sync-subway-stations \
   --concurrency 4
 docker compose run --rm api node dist/cli/transit.js import-subway-topology
+docker compose run --rm api node dist/cli/transit.js import-subway-provider-map
+docker compose run --rm api node dist/cli/transit.js build-bus-subway-transfers \
+  --concurrency 2
 docker compose run --rm api node dist/cli/transit.js stats
 ```
 
@@ -287,6 +290,25 @@ docker compose run --rm api node dist/cli/transit.js stats
 `DATA_GO_KR_SERVICE_KEY`가 없어야 하며 시간표 UI는 반드시
 `TAGO 시간표 기반 예상`으로 표시합니다. 토폴로지 import 뒤에는 대표 경로에서
 SUBWAY leg와 버스↔지하철 혼합 leg를 각각 확인합니다.
+
+멀티모달 배포 순서는 `backup → migration 9 → station/topology import → provider
+map import → TAGO mapping sync → transfer edge build → readiness/smoke`입니다.
+환승 간선 배치는 route-linked 정류장만 역 반경 500m에서 가까운 10개까지 골라
+Kakao 실제 보행 경로가 500m 이하인 결과만 upsert합니다. 실패한 run은
+`bus_subway_transfer_build_runs`에 남으며 성공 run 전에는
+`TRANSIT_ROUTER_MODE=legacy`로 되돌릴 수 있습니다.
+
+서울 실시간 연동은 다음 조건을 모두 확인한 뒤에만 켭니다.
+
+```bash
+# 키를 출력하지 않는 별도 HTTPS smoke 후 설정
+SEOUL_SUBWAY_ENABLED=1
+```
+
+- `SEOUL_SUBWAY_BASE_URL`이 `https://`로 시작함
+- 실시간 도착 endpoint가 TLS로 응답함
+- 로그와 browser bundle에 인증키/전체 요청 URL이 없음
+- 장애 시 TAGO 시간표와 headway fallback으로 추천이 유지됨
 
 ## 7. 배포 전 백업
 

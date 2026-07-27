@@ -7,11 +7,16 @@ import type {
   Coordinate,
   SubwayDeparture,
   SubwayStation,
+  TransitTiming,
 } from "@chimap/contracts";
 import type { Logger } from "pino";
 
 import type { AppConfig, TagoServiceKind } from "../config.js";
 import { MemoryCache } from "../services/cache.js";
+import {
+  adjustedSeoulWaitSeconds,
+  SeoulSubwayClient,
+} from "./seoul-subway-client.js";
 import {
   TagoApiError,
   TagoClient,
@@ -78,6 +83,19 @@ function sameSubwayLine(csvName: string, tagoName: string): boolean {
   );
 }
 
+function seoulSubwayId(lineName: string): string | null {
+  const normalized = normalizedLineName(lineName).replace(/선$/u, "");
+  return ({
+    "1호": "1001", "2호": "1002", "3호": "1003",
+    "4호": "1004", "5호": "1005", "6호": "1006",
+    "7호": "1007", "8호": "1008", "9호": "1009",
+    경의중앙: "1063", 공항: "1065", 경춘: "1067",
+    경강: "1081", 수인분당: "1075", 신분당: "1077",
+    우이신설: "1092", 서해: "1093", 신림: "1094",
+    gtxa: "1032",
+  } as Record<string, string | undefined>)[normalized] ?? null;
+}
+
 function kstParts(at: Date): {
   date: string;
   day: number;
@@ -137,6 +155,7 @@ type SubwayMetricsObserver = (input: {
 
 export class TransitService {
   public readonly client: TagoClient;
+  public readonly seoulSubwayClient: SeoulSubwayClient;
   public readonly repository: TransitRepository;
 
   readonly #config: AppConfig;
@@ -154,6 +173,7 @@ export class TransitService {
     this.#config = options.config;
     this.#logger = options.logger;
     this.client = options.client ?? new TagoClient(options.config);
+    this.seoulSubwayClient = new SeoulSubwayClient(options.config);
     this.repository =
       options.repository ??
       new TransitRepository(options.config.database);
@@ -290,6 +310,7 @@ export class TransitService {
             await this.repository.updateSubwayStationMapping({
               id: station.id,
               status: "MAPPED",
+              canonicalStatus: "MAPPED",
               tagoStationId: match.stationId,
               tagoRouteName: match.routeName,
             });
@@ -298,6 +319,8 @@ export class TransitService {
             await this.repository.updateSubwayStationMapping({
               id: station.id,
               status: "UNRESOLVED",
+              canonicalStatus:
+                matches.length > 1 ? "AMBIGUOUS" : "NOT_FOUND",
               tagoStationId: null,
               tagoRouteName: null,
             });
@@ -398,6 +421,215 @@ export class TransitService {
         items.length === 0 ? "NO_UPCOMING_DEPARTURES" : null,
       fetchedAt: new Date().toISOString(),
     };
+  }
+
+  public async resolveBusTiming(input: {
+    cityCode: string;
+    nodeId: string;
+    routeId: string;
+    plannedBoardingAt: Date;
+    fallbackWaitSeconds: number;
+    signal?: AbortSignal;
+  }): Promise<TransitTiming> {
+    const now = new Date();
+    const futureSeconds = Math.max(
+      0,
+      Math.round((input.plannedBoardingAt.getTime() - now.getTime()) / 1_000),
+    );
+    if (futureSeconds <= 600) {
+      try {
+        const arrivals = await this.getArrivalsForRoute(
+          input.cityCode,
+          input.nodeId,
+          input.routeId,
+          input.signal,
+        );
+        const arrival = arrivals
+          .filter((item) => item.routeId === input.routeId)
+          .sort((first, second) => first.arrivalSeconds - second.arrivalSeconds)[0];
+        if (arrival !== undefined) {
+          return {
+            waitSeconds: Math.max(0, arrival.arrivalSeconds - futureSeconds),
+            timingSource: "TAGO_BUS_ARRIVAL",
+            isRealtime: arrival.isRealtime,
+            plannedBoardingAt: input.plannedBoardingAt.toISOString(),
+            updatedAt: arrival.fetchedAt,
+            stale: false,
+          };
+        }
+      } catch {
+        // 외부 장애는 노선 배차간격 fallback으로 격리한다.
+      }
+    }
+    return {
+      waitSeconds: input.fallbackWaitSeconds,
+      timingSource: "BUS_INTERVAL_FALLBACK",
+      isRealtime: false,
+      plannedBoardingAt: input.plannedBoardingAt.toISOString(),
+      updatedAt: null,
+      stale: false,
+    };
+  }
+
+  public async resolveSubwayTiming(input: {
+    serviceLineId: string;
+    stationLineId: string;
+    fromSourceStationKey: string;
+    toSourceStationKey: string;
+    plannedBoardingAt: Date;
+    fallbackWaitSeconds: number;
+    signal?: AbortSignal;
+  }): Promise<TransitTiming & { direction: "U" | "D" | "UNKNOWN" }> {
+    const context = await this.repository.getSubwayTimingContext(input);
+    const fallback = (direction: "U" | "D" | "UNKNOWN") => ({
+      waitSeconds: input.fallbackWaitSeconds,
+      timingSource: "SUBWAY_HEADWAY_FALLBACK" as const,
+      isRealtime: false,
+      plannedBoardingAt: input.plannedBoardingAt.toISOString(),
+      updatedAt: null,
+      stale: false,
+      direction,
+    });
+    if (context === null) {
+      return fallback("UNKNOWN");
+    }
+    const tagoDirection = context.directionMappings.find(
+      (mapping) =>
+        mapping.provider === "TAGO" && mapping.mappingStatus === "MAPPED",
+    )?.externalDirectionCode;
+    const direction = tagoDirection === "U" || tagoDirection === "D"
+      ? tagoDirection
+      : context.toStationOrder > context.fromStationOrder
+        ? "D" as const
+        : context.toStationOrder < context.fromStationOrder
+          ? "U" as const
+          : "UNKNOWN" as const;
+    if (direction === "UNKNOWN") {
+      return fallback(direction);
+    }
+    const now = new Date();
+    const futureSeconds = Math.max(
+      0,
+      Math.round((input.plannedBoardingAt.getTime() - now.getTime()) / 1_000),
+    );
+    const seoul = context.mappings.find(
+      (mapping) =>
+        mapping.provider === "SEOUL" && mapping.mappingStatus !== "DISABLED",
+    );
+    if (
+      futureSeconds <= 600 &&
+      context.roadAddress?.includes("서울") === true &&
+      seoul !== undefined &&
+      this.seoulSubwayClient.enabled
+    ) {
+      try {
+        const arrivals = await this.#cache.getOrLoad(
+          `seoul:subway:arrival:${seoul.queryStationName}:${seoul.externalLineId ?? context.lineName}:${direction}`,
+          this.#config.seoulSubway.arrivalCacheTtlSeconds * 1_000,
+          () => this.seoulSubwayClient.getArrivals(
+            seoul.queryStationName,
+            input.signal,
+          ),
+        );
+        const directionName = context.directionMappings.find(
+          (mapping) =>
+            mapping.provider === "SEOUL" && mapping.mappingStatus === "MAPPED",
+        )?.externalDirectionCode ?? (direction === "U" ? "상행" : "하행");
+        const expectedLineId =
+          seoul.externalLineId ?? seoulSubwayId(context.lineName);
+        const matching = arrivals
+          .filter((arrival) =>
+            arrival.directionName.includes(directionName) &&
+            expectedLineId !== null && arrival.subwayId === expectedLineId,
+          )
+          .map((arrival) => ({
+            arrival,
+            wait: adjustedSeoulWaitSeconds(
+              arrival.remainingSeconds,
+              arrival.receivedAt,
+              now,
+            ),
+          }))
+          .sort((first, second) => first.wait - second.wait)[0];
+        if (matching !== undefined) {
+          const rawReceived = matching.arrival.receivedAt.trim().replace(" ", "T");
+          const received = Date.parse(
+            /(?:Z|[+-]\d\d:\d\d)$/u.test(rawReceived)
+              ? rawReceived
+              : `${rawReceived}+09:00`,
+          );
+          return {
+            waitSeconds: Math.max(0, matching.wait - futureSeconds),
+            timingSource: "SEOUL_REALTIME_ARRIVAL",
+            isRealtime: true,
+            plannedBoardingAt: input.plannedBoardingAt.toISOString(),
+            updatedAt: Number.isFinite(received)
+              ? new Date(received).toISOString()
+              : now.toISOString(),
+            stale: false,
+            direction,
+          };
+        }
+      } catch {
+        // TAGO 시간표와 정적 headway fallback을 계속 시도한다.
+      }
+    }
+    const tago = context.mappings.find(
+      (mapping) =>
+        mapping.provider === "TAGO" &&
+        mapping.mappingStatus === "MAPPED" &&
+        mapping.externalStationId !== null,
+    );
+    if (tago !== undefined) {
+      try {
+        const parts = kstParts(input.plannedBoardingAt);
+        const dailyTypeCode = parts.day === 0 ? "03" : parts.day === 6 ? "02" : "01";
+        const schedules = await this.#cache.getOrLoadWithTtl(
+          `tago:subway:timetable:${tago.externalStationId}:${dailyTypeCode}:${direction}`,
+          async () => ({
+            value: await this.#observeSubwayRequest("station_schedule", () =>
+              this.client.getSubwaySchedules(
+                tago.externalStationId!,
+                dailyTypeCode,
+                direction,
+                input.signal,
+              )),
+            ttlMilliseconds: Math.min(
+              6 * 60 * 60 * 1_000,
+              Math.max(
+                60_000,
+                Date.parse(`${parts.date}T23:59:59+09:00`) - Date.now(),
+              ),
+            ),
+          }),
+        );
+        const next = schedules
+          .map((schedule) => scheduleTimestamp(
+            parts.date,
+            schedule.departureTime,
+            input.plannedBoardingAt,
+          ))
+          .filter((timestamp) => timestamp >= input.plannedBoardingAt.getTime())
+          .sort((first, second) => first - second)[0];
+        if (next !== undefined) {
+          return {
+            waitSeconds: Math.max(
+              0,
+              Math.round((next - input.plannedBoardingAt.getTime()) / 1_000),
+            ),
+            timingSource: "TAGO_SUBWAY_TIMETABLE",
+            isRealtime: false,
+            plannedBoardingAt: input.plannedBoardingAt.toISOString(),
+            updatedAt: now.toISOString(),
+            stale: false,
+            direction,
+          };
+        }
+      } catch {
+        // 정적 headway가 최종 fallback이다.
+      }
+    }
+    return fallback(direction);
   }
 
   public async getNearbyStops(

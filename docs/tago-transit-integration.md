@@ -206,7 +206,9 @@ pnpm bus:stats
 
 pnpm subway:import-stations
 pnpm subway:import-topology
+pnpm subway:import-provider-map
 pnpm subway:sync-stations -- --concurrency 4
+pnpm transit:build-transfers -- --concurrency 2
 pnpm subway:test-departures -- \
   --stationId <database-station-id> --direction U
 pnpm subway:stats
@@ -246,7 +248,26 @@ CLI는 root `.env`를 Node `process.loadEnvFile`로 읽고 DB pool을 최대
 - `chimap_tago_subway_request_duration_seconds` 요청 지연
 - `chimap_tago_subway_unmapped_stations` 활성 미매핑 역 수
 
-## 12. 공식 자료
+## 12. 요청 범위 멀티모달 추천
+
+`TRANSIT_ROUTER_MODE=multimodal`은 출발·도착 주변에서 실제 운행 노선을 먼저
+고른 뒤, 해당 버스 노선 전체 정류장과 `is_route_ready=true` 지하철 방향성
+구간, 사전 계산한 버스↔지하철 보행 간선을 하나의 요청 그래프로 합칩니다.
+상태는 현재 노드·탑승 중 서비스·마지막 탑승 서비스·환승 횟수를 포함하며 새
+서비스에 탑승할 때만 대기시간을 한 번 더합니다. 최대 환승은
+`TRANSIT_MAX_TRANSFER_COUNT`로 제어하며 기본값은 2입니다.
+
+대기시간 우선순위는 버스의 경우 TAGO 도착→배차간격, 지하철의 경우 서울 주소
+역에서 서울 실시간 도착→TAGO 시간표→headway, 그 밖의 역에서 TAGO 시간표→
+headway입니다. 예정 승차가 현재보다 10분 이후이면 현재 실시간 값을 사용하지
+않습니다. 모든 결과 leg에는 `timingSource`, `isRealtime`, `stale`이 들어갑니다.
+
+서울 API base URL은 HTTPS만 허용합니다. 운영 환경에서 HTTPS smoke가 확인되기
+전에는 `SEOUL_SUBWAY_ENABLED=0`을 유지하며, 이때 TAGO/정적 fallback이 경로를
+계속 제공합니다. `shadow` 모드는 기존 결과를 반환하면서 새 그래프만 실행하고,
+`legacy`는 즉시 기존 탐색기로 되돌리는 롤백 스위치입니다.
+
+## 13. 공식 자료
 
 - [TAGO 버스정류소정보](https://www.data.go.kr/data/15098534/openapi.do)
 - [TAGO 버스노선정보](https://www.data.go.kr/data/15098529/openapi.do)
