@@ -212,6 +212,7 @@ import해도 `source_identity` 기준으로 중복되지 않습니다.
 | `pnpm bus:sync-areas -- --path <file> --statusPath <file>` | 여러 운영 지역 동기화와 상태 기록 |
 | `pnpm bus:stats` | 정류장·연결·노선·관계 수 확인 |
 | `pnpm subway:import-stations` | 15열 전국 지하철역 CSV 원자적 import |
+| `pnpm subway:import-topology` | 노선 순서·구간 시간·배차·환승 CSV 원자적 import |
 | `pnpm subway:sync-stations` | CSV 역과 TAGO 역 ID의 단일 정확 후보 매핑 |
 | `pnpm subway:test-departures -- --stationId <id> --direction U` | TAGO 시간표 기반 다음 출발 확인 |
 | `pnpm subway:stats` | 전체·활성·TAGO 매핑 지하철역 수 확인 |

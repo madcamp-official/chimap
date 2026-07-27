@@ -169,16 +169,16 @@ CSV import는 UTF-8 BOM과 15개 고정 한글 header를 검사합니다. 역명
 
 TAGO 지하철 API는 실시간 열차 위치나 지연 데이터를 제공하지 않습니다.
 서버 응답은 항상 `scheduleBased=true`, `realtimeAvailable=false`이며 조회 시각을
-함께 제공합니다. 지하철역 간 연결 순서가 없는 CSV이므로 이 데이터는 현재
-추천 그래프에 포함하지 않습니다.
+함께 제공합니다. 별도 토폴로지 CSV의 역 순서·방향별 구간 시간·환승 간선과
+시간표 기반 배차 대기를 추천 그래프에 적재하며, 실제 지연 반영 ETA로 표시하지
+않습니다.
 
 Web 추천 결과는 출발·도착 각각 2km 안에서 최대 3개 역을 조회하고, 거리순
 결과 중 TAGO에 매핑된 가장 가까운 역을 우선 표시합니다. 선택된 두 역의
 U/D 시간표는 station ID를 중복 제거한 뒤 병렬 조회합니다. 한쪽 역 또는 한
-방향이 실패해도 다른 결과와 버스·도보 추천을 유지하며, 359px 이하에서는
-두 역 카드를 한 열로 표시합니다. UI에는 `TAGO 시간표 기반 예상`, `실시간
-지연 미반영`, `현재 추천 소요시간에는 지하철 시간표가 합산되지 않습니다`를
-항상 명시합니다.
+방향이 실패해도 다른 결과와 추천을 유지하며, 359px 이하에서는 두 역 카드를
+한 열로 표시합니다. UI와 추천 상세에는 `TAGO 시간표 기반 예상`, `실시간 지연
+미반영`을 항상 명시합니다.
 
 ## 9. CLI
 
@@ -200,6 +200,7 @@ pnpm bus:sync-areas -- \
 pnpm bus:stats
 
 pnpm subway:import-stations
+pnpm subway:import-topology
 pnpm subway:sync-stations -- --concurrency 4
 pnpm subway:test-departures -- \
   --stationId <database-station-id> --direction U

@@ -129,6 +129,7 @@ const environmentSchema = z
     TAGO_DEFAULT_CITY_CODE: z.string().trim().min(1).default("25"),
     BUS_STOPS_DATA_PATH: optionalSecret,
     SUBWAY_STATIONS_DATA_PATH: optionalSecret,
+    SUBWAY_TOPOLOGY_DATA_DIR: optionalSecret,
     TAGO_HTTP_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -403,6 +404,7 @@ export type AppConfig = {
   tagoDefaultCityCode: string;
   busStopsDataPath?: string;
   subwayStationsDataPath?: string;
+  subwayTopologyDataDir?: string;
   tagoHttpTimeoutMs: number;
   tagoHttpRetryCount: number;
   tagoCacheTtlSeconds: {
@@ -554,6 +556,9 @@ export function loadConfig(
     ...(parsed.SUBWAY_STATIONS_DATA_PATH === undefined
       ? {}
       : { subwayStationsDataPath: parsed.SUBWAY_STATIONS_DATA_PATH }),
+    ...(parsed.SUBWAY_TOPOLOGY_DATA_DIR === undefined
+      ? {}
+      : { subwayTopologyDataDir: parsed.SUBWAY_TOPOLOGY_DATA_DIR }),
     tagoHttpTimeoutMs: parsed.TAGO_HTTP_TIMEOUT_MS,
     tagoHttpRetryCount: parsed.TAGO_HTTP_RETRY_COUNT,
     tagoCacheTtlSeconds: {

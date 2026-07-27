@@ -103,7 +103,7 @@ export class RecommendationService {
         {
           code: "CURRENT_TIME_ESTIMATE",
           message:
-            "TAGO 도착정보와 버스 경로는 미래 예약이 아닌 지금 출발 기준입니다.",
+            "TAGO 버스 도착정보와 지하철 시간표는 미래 예약이 아닌 지금 출발 기준입니다.",
         },
       ];
       if (
@@ -114,7 +114,7 @@ export class RecommendationService {
         warnings.push({
           code: "REALTIME_UNAVAILABLE",
           message:
-            "일부 버스는 실시간 도착정보가 없어 배차간격과 경유 정류장 기반 예상값을 사용했습니다.",
+            "일부 대중교통은 실시간 위치가 없어 TAGO 시간표·배차간격 기반 예상값을 사용했습니다.",
         });
       }
       if (

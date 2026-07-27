@@ -26,6 +26,7 @@ import type {
   TransitRouteRequest,
   WalkRouteRequest,
 } from "./types.js";
+import { SubwayRoutePlanner } from "./subway-route-planner.js";
 
 type StopRoutes = {
   stop: BusStop;
@@ -237,6 +238,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
   readonly #config: AppConfig;
   readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
   readonly #roadGeometryCache = new MemoryCache(64 * 1024 * 1024);
+  readonly #subwayRoutePlanner: SubwayRoutePlanner;
 
   public constructor(options: {
     baseProvider: MobilityProvider & RoadGeometryProvider;
@@ -246,6 +248,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     this.#baseProvider = options.baseProvider;
     this.#transitService = options.transitService;
     this.#config = options.config;
+    this.#subwayRoutePlanner = new SubwayRoutePlanner(options);
   }
 
   public searchPlaces(
@@ -260,6 +263,43 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
   }
 
   public async getTransitRoutes(
+    request: TransitRouteRequest,
+  ): Promise<NormalizedRoute[]> {
+    const busPromise = this.#getBusTransitRoutes(request);
+    const subwayPromise = this.#subwayRoutePlanner.getRoutes(request);
+    const mixedPromise = busPromise.then((routes) =>
+      this.#mixedSubwayRoutes(request, routes),
+    );
+    const settled = await Promise.allSettled([
+      busPromise,
+      subwayPromise,
+      mixedPromise,
+    ]);
+    const routes = settled.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+    if (routes.length > 0) {
+      return routes
+        .sort(
+          (first, second) =>
+            first.durationSeconds - second.durationSeconds,
+        )
+        .slice(0, 8);
+    }
+    const failure = settled.find(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected",
+    );
+    if (failure !== undefined) {
+      throw toProviderError(failure.reason);
+    }
+    throw new ProviderError({
+      kind: "NO_TRANSIT_CONNECTION",
+      message: "버스 또는 지하철 연결 경로가 없습니다.",
+    });
+  }
+
+  async #getBusTransitRoutes(
     request: TransitRouteRequest,
   ): Promise<NormalizedRoute[]> {
     try {
@@ -344,6 +384,191 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     } catch (error) {
       throw toProviderError(error);
     }
+  }
+
+  async #mixedSubwayRoutes(
+    request: TransitRouteRequest,
+    busRoutes: NormalizedRoute[],
+  ): Promise<NormalizedRoute[]> {
+    const mixedTimeout = AbortSignal.timeout(3_500);
+    const mixedSignal =
+      request.signal === undefined
+        ? mixedTimeout
+        : AbortSignal.any([request.signal, mixedTimeout]);
+    const tasks: Array<Promise<NormalizedRoute | undefined>> = [];
+    for (const busRoute of busRoutes.slice(0, 2)) {
+      const busIndexes = busRoute.legs.flatMap((leg, index) =>
+        leg.mode === "BUS" && leg.bus !== undefined ? [index] : [],
+      );
+      const firstBusIndex = busIndexes[0];
+      const lastBusIndex = busIndexes.at(-1);
+      if (
+        firstBusIndex === undefined ||
+        lastBusIndex === undefined ||
+        firstBusIndex === lastBusIndex
+      ) {
+        continue;
+      }
+      const firstBus = busRoute.legs[firstBusIndex]!.bus!;
+      tasks.push(
+        this.#subwayRoutePlanner
+          .getRoutes({
+            origin: {
+              id: `bus-subway:${firstBus.alightingStop.nodeId}`,
+              name: firstBus.alightingStop.name,
+              address: "",
+              roadAddress: "",
+              category: "버스·지하철 환승",
+              location: {
+                lat: firstBus.alightingStop.latitude,
+                lng: firstBus.alightingStop.longitude,
+              },
+            },
+            destination: request.destination,
+            signal: mixedSignal,
+          })
+          .then((routes) => routes[0])
+          .then((subwayRoute) =>
+            subwayRoute === undefined
+              ? undefined
+              : this.#combineBusAndSubway({
+                  busRoute,
+                  busLegs: busRoute.legs.slice(0, firstBusIndex + 1),
+                  subwayRoute,
+                  subwayLegs: subwayRoute.legs,
+                  busBeforeSubway: true,
+                }),
+          )
+          .catch(() => undefined),
+      );
+
+      const lastBus = busRoute.legs[lastBusIndex]!.bus!;
+      tasks.push(
+        this.#subwayRoutePlanner
+          .getRoutes({
+            origin: request.origin,
+            destination: {
+              id: `subway-bus:${lastBus.boardingStop.nodeId}`,
+              name: lastBus.boardingStop.name,
+              address: "",
+              roadAddress: "",
+              category: "지하철·버스 환승",
+              location: {
+                lat: lastBus.boardingStop.latitude,
+                lng: lastBus.boardingStop.longitude,
+              },
+            },
+            signal: mixedSignal,
+          })
+          .then((routes) => routes[0])
+          .then((subwayRoute) =>
+            subwayRoute === undefined
+              ? undefined
+              : this.#combineBusAndSubway({
+                  busRoute,
+                  busLegs: busRoute.legs.slice(lastBusIndex),
+                  subwayRoute,
+                  subwayLegs: subwayRoute.legs,
+                  busBeforeSubway: false,
+                }),
+          )
+          .catch(() => undefined),
+      );
+    }
+
+    const unique = new Map<string, NormalizedRoute>();
+    for (const route of await Promise.all(tasks)) {
+      if (route !== undefined) {
+        const signature = route.legs
+          .filter((leg) => leg.mode !== "WALK")
+          .map((leg) => `${leg.mode}:${leg.name ?? ""}`)
+          .join(">");
+        unique.set(signature, route);
+      }
+    }
+    return [...unique.values()];
+  }
+
+  #combineBusAndSubway(input: {
+    busRoute: NormalizedRoute;
+    busLegs: RouteLeg[];
+    subwayRoute: NormalizedRoute;
+    subwayLegs: RouteLeg[];
+    busBeforeSubway: boolean;
+  }): NormalizedRoute {
+    const busLegs = input.busLegs.map((leg, index) => ({
+      ...leg,
+      id: `mixed-bus-${index}-${leg.id}`,
+    }));
+    const firstSubwayIndex = input.subwayLegs.findIndex(
+      (leg) => leg.mode === "SUBWAY",
+    );
+    const lastSubwayIndex = input.subwayLegs.findLastIndex(
+      (leg) => leg.mode === "SUBWAY",
+    );
+    const subwayLegs = input.subwayLegs.map((leg, index) => {
+      const isTransferWalk =
+        leg.mode === "WALK" &&
+        (input.busBeforeSubway
+          ? index < firstSubwayIndex
+          : index > lastSubwayIndex);
+      return {
+        ...leg,
+        id: `mixed-subway-${index}-${leg.id}`,
+        ...(isTransferWalk ? { walkingRole: "TRANSFER" as const } : {}),
+      };
+    });
+    const legs = input.busBeforeSubway
+      ? [...busLegs, ...subwayLegs]
+      : [...subwayLegs, ...busLegs];
+    const distanceMeters = legs.reduce(
+      (total, leg) => total + leg.distanceMeters,
+      0,
+    );
+    const walkDistanceMeters = legs
+      .filter((leg) => leg.mode === "WALK")
+      .reduce((total, leg) => total + leg.distanceMeters, 0);
+    const transitLegCount = legs.filter(
+      (leg) => leg.mode === "BUS" || leg.mode === "SUBWAY",
+    ).length;
+    return normalizedRouteSchema.parse({
+      id: `tago-mixed-${input.busBeforeSubway ? "bus-subway" : "subway-bus"}-${input.busRoute.id}-${input.subwayRoute.id}`,
+      source: "TAGO",
+      durationSeconds: legs.reduce(
+        (total, leg) => total + leg.durationSeconds,
+        0,
+      ),
+      distanceMeters,
+      walkDistanceMeters,
+      transitDistanceMeters: distanceMeters - walkDistanceMeters,
+      transferCount: Math.max(0, transitLegCount - 1),
+      ...(input.busRoute.fareWon === undefined
+        ? {}
+        : { fareWon: input.busRoute.fareWon }),
+      waitingDurationSeconds:
+        busLegs.reduce(
+          (total, leg) =>
+            total + (leg.bus?.expectedArrivalSeconds ?? 0),
+          0,
+        ) +
+        (input.subwayRoute.waitingDurationSeconds ?? 0),
+      ridingDurationSeconds:
+        busLegs.reduce(
+          (total, leg) => total + (leg.bus?.expectedRideSeconds ?? 0),
+          0,
+        ) +
+        (input.subwayRoute.ridingDurationSeconds ?? 0),
+      isRealtime: false,
+      isPartial:
+        input.busRoute.isPartial === true ||
+        input.subwayRoute.isPartial === true,
+      estimationNotes: [
+        ...(input.busRoute.estimationNotes ?? []),
+        ...(input.subwayRoute.estimationNotes ?? []),
+        "버스와 지하철 환승 보행을 포함한 혼합 경로입니다.",
+      ],
+      legs,
+    });
   }
 
   async #expandRouteStopSearch(

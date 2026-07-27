@@ -551,9 +551,9 @@ export function normalizeKakaoWalkResponse(
   });
 }
 
-export function normalizeKakaoDrivingGeometry(
+export function normalizeKakaoDrivingSections(
   input: unknown,
-): Coordinate[] {
+): Coordinate[][] {
   const response = kakaoDrivingResponseSchema.parse(input);
   const route = response.routes[0];
   if (route === undefined || route.result_code !== 0) {
@@ -564,8 +564,8 @@ export function normalizeKakaoDrivingGeometry(
     });
   }
 
-  const coordinates: Coordinate[] = [];
-  for (const section of route.sections) {
+  const sections = route.sections.map((section) => {
+    const coordinates: Coordinate[] = [];
     for (const road of section.roads) {
       for (let index = 0; index < road.vertexes.length - 1; index += 2) {
         const parsed = coordinateSchema.safeParse({
@@ -577,12 +577,25 @@ export function normalizeKakaoDrivingGeometry(
         }
       }
     }
-  }
-  if (coordinates.length < 2) {
+    return coordinates;
+  });
+  if (!sections.some((coordinates) => coordinates.length >= 2)) {
     throw new ProviderError({
       kind: "NO_ROUTE",
       message: "Kakao 도로 매칭 응답에 표시할 좌표가 없습니다.",
     });
+  }
+  return sections;
+}
+
+export function normalizeKakaoDrivingGeometry(
+  input: unknown,
+): Coordinate[] {
+  const coordinates: Coordinate[] = [];
+  for (const section of normalizeKakaoDrivingSections(input)) {
+    for (const coordinate of section) {
+      pushUniqueCoordinate(coordinates, coordinate);
+    }
   }
   return coordinates;
 }

@@ -218,7 +218,8 @@ docker compose run --rm api node dist/cli/transit.js stats
 
 ### 지하철 CSV import와 TAGO 매핑
 
-지하철 파일은 Compose에 `/data/subway_data.csv`로 read-only mount됩니다.
+호스트의 `data/`에 둔 지하철 파일은 Compose 컨테이너의
+`/data/subway_data.csv`와 `/data/subway-topology/`에 read-only mount됩니다.
 운영 DB 백업 후 새 이미지를 올려 migration 7을 적용하고, 아래 순서로 실행합니다.
 
 ```bash
@@ -227,14 +228,15 @@ docker compose run --rm api node dist/cli/transit.js import-subway-stations
 docker compose run --rm api node dist/cli/transit.js stats
 docker compose run --rm api node dist/cli/transit.js sync-subway-stations \
   --concurrency 4
+docker compose run --rm api node dist/cli/transit.js import-subway-topology
 docker compose run --rm api node dist/cli/transit.js stats
 ```
 
 첫 통계에서 `subwayStations=1097`, `activeSubwayStations=1097`을 확인합니다.
 매핑은 중단 후 재실행해도 `MAPPED` row를 건너뜁니다. 공개 bundle과 로그에는
 `DATA_GO_KR_SERVICE_KEY`가 없어야 하며 시간표 UI는 반드시
-`TAGO 시간표 기반 예상`으로 표시합니다. CSV에 역 간 연결 순서가 없으므로
-이 배포만으로 지하철 혼합 경로 추천을 활성화하지 않습니다.
+`TAGO 시간표 기반 예상`으로 표시합니다. 토폴로지 import 뒤에는 대표 경로에서
+SUBWAY leg와 버스↔지하철 혼합 leg를 각각 확인합니다.
 
 ## 7. 배포 전 백업
 

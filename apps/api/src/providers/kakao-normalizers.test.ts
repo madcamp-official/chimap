@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeKakaoAddressResponse,
   normalizeKakaoDrivingGeometry,
+  normalizeKakaoDrivingSections,
   normalizeKakaoPlaceResponse,
   normalizeKakaoReverseGeocodeResponse,
   normalizeKakaoWalkResponse,
@@ -119,6 +120,9 @@ describe("실제 Kakao 응답 정규화", () => {
     const coordinates = normalizeKakaoDrivingGeometry(
       recorded.response,
     );
+    const sections = normalizeKakaoDrivingSections(recorded.response);
+    expect(sections.length).toBeGreaterThan(1);
+    expect(sections.every((section) => section.length >= 2)).toBe(true);
     expect(coordinates.length).toBeGreaterThan(40);
     expect(
       coordinates.some(

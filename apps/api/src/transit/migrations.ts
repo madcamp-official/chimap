@@ -198,4 +198,85 @@ export const TRANSIT_MIGRATIONS: ReadonlyArray<{
         ON subway_station_lines(mapping_status, active);
     `,
   },
+  {
+    version: 8,
+    name: "subway_routing_topology",
+    sql: `
+      CREATE TABLE IF NOT EXISTS subway_service_lines (
+        service_line_id varchar(32) PRIMARY KEY,
+        region_code varchar(10) NOT NULL,
+        region_name varchar(50) NOT NULL,
+        operator_name varchar(100) NOT NULL,
+        service_line_name varchar(100) NOT NULL,
+        station_count integer NOT NULL CHECK (station_count >= 1),
+        matched_station_count integer NOT NULL CHECK (matched_station_count >= 0),
+        segment_count integer NOT NULL CHECK (segment_count >= 0),
+        fallback_headway_count integer NOT NULL CHECK (fallback_headway_count >= 0),
+        is_branching boolean NOT NULL,
+        is_route_ready boolean NOT NULL,
+        timing_provider_default varchar(30) NOT NULL,
+        imported_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS subway_line_stations (
+        service_line_id varchar(32) NOT NULL
+          REFERENCES subway_service_lines(service_line_id) ON DELETE CASCADE,
+        station_order integer NOT NULL CHECK (station_order > 0),
+        order_conflict boolean NOT NULL,
+        source_line_id varchar(50) NOT NULL,
+        source_station_id varchar(50) NOT NULL,
+        source_station_key varchar(120) NOT NULL,
+        station_name varchar(120) NOT NULL,
+        PRIMARY KEY(service_line_id, source_station_key),
+        UNIQUE(service_line_id, station_order, source_station_key)
+      );
+      CREATE INDEX IF NOT EXISTS subway_line_stations_station_index
+        ON subway_line_stations(source_station_key);
+
+      CREATE TABLE IF NOT EXISTS subway_segments (
+        service_line_id varchar(32) NOT NULL
+          REFERENCES subway_service_lines(service_line_id) ON DELETE CASCADE,
+        from_source_station_key varchar(120) NOT NULL,
+        to_source_station_key varchar(120) NOT NULL,
+        duration_seconds integer NOT NULL CHECK (duration_seconds > 0),
+        average_duration_seconds integer NOT NULL CHECK (average_duration_seconds > 0),
+        straight_distance_meters integer NOT NULL CHECK (straight_distance_meters >= 0),
+        sample_count integer NOT NULL CHECK (sample_count >= 0),
+        duration_method varchar(40) NOT NULL,
+        PRIMARY KEY(service_line_id, from_source_station_key, to_source_station_key)
+      );
+      CREATE INDEX IF NOT EXISTS subway_segments_from_index
+        ON subway_segments(from_source_station_key);
+
+      CREATE TABLE IF NOT EXISTS subway_headways_fallback (
+        service_line_id varchar(32) NOT NULL
+          REFERENCES subway_service_lines(service_line_id) ON DELETE CASCADE,
+        source_station_key varchar(120) NOT NULL,
+        next_source_station_key varchar(120) NOT NULL,
+        day_group varchar(30) NOT NULL,
+        time_period varchar(30) NOT NULL,
+        median_headway_seconds integer NOT NULL CHECK (median_headway_seconds > 0),
+        expected_wait_seconds integer NOT NULL CHECK (expected_wait_seconds >= 0),
+        departure_count integer NOT NULL CHECK (departure_count >= 0),
+        interval_sample_count integer NOT NULL CHECK (interval_sample_count >= 0),
+        PRIMARY KEY(
+          service_line_id, source_station_key, next_source_station_key,
+          day_group, time_period
+        )
+      );
+
+      CREATE TABLE IF NOT EXISTS subway_transfer_edges (
+        from_source_station_key varchar(120) NOT NULL,
+        to_source_station_key varchar(120) NOT NULL,
+        transfer_duration_seconds integer NOT NULL
+          CHECK (transfer_duration_seconds > 0),
+        straight_distance_meters integer NOT NULL
+          CHECK (straight_distance_meters >= 0),
+        duration_is_estimated boolean NOT NULL,
+        PRIMARY KEY(from_source_station_key, to_source_station_key)
+      );
+      CREATE INDEX IF NOT EXISTS subway_transfer_edges_from_index
+        ON subway_transfer_edges(from_source_station_key);
+    `,
+  },
 ];

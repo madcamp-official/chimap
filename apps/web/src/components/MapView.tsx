@@ -281,50 +281,72 @@ function vehicleMarkerTitle(vehicle: RelevantVehiclePosition): string {
     );
     return `${vehicle.routeNo}번 · ${minutes}분 후 도착${vehicleLabel}`;
   }
-  return `${vehicle.routeNo}번 · 이동 구간 운행 중${vehicleLabel}`;
+  return `${vehicle.routeNo}번 · 방금 승차 정류장을 지난 버스${vehicleLabel}`;
 }
 
 export function transitMarkers(
   route: Recommendation | undefined,
 ): TransitMarker[] {
-  const busLegs = route?.legs.filter((leg) => leg.bus !== undefined) ?? [];
-  if (busLegs.length === 0) {
+  const transitLegs =
+    route?.legs.flatMap((leg) => {
+      if (leg.mode === "BUS" && leg.bus !== undefined) {
+        return [{
+          start: {
+            lat: leg.bus.boardingStop.latitude,
+            lng: leg.bus.boardingStop.longitude,
+          },
+          end: {
+            lat: leg.bus.alightingStop.latitude,
+            lng: leg.bus.alightingStop.longitude,
+          },
+          startName: leg.bus.boardingStop.name,
+          endName: leg.bus.alightingStop.name,
+          label: `${leg.bus.routeNo}번`,
+        }];
+      }
+      if (leg.mode === "SUBWAY") {
+        const start = leg.coordinates[0];
+        const end = leg.coordinates.at(-1);
+        if (start !== undefined && end !== undefined) {
+          return [{
+            start,
+            end,
+            startName: leg.stops?.[0] ?? "지하철역",
+            endName: leg.stops?.at(-1) ?? "지하철역",
+            label: leg.name ?? "지하철",
+          }];
+        }
+      }
+      return [];
+    }) ?? [];
+  if (transitLegs.length === 0) {
     return [];
   }
-  const firstBus = busLegs[0]!.bus!;
-  const lastBus = busLegs.at(-1)!.bus!;
+  const first = transitLegs[0]!;
+  const last = transitLegs.at(-1)!;
   const markers: TransitMarker[] = [
     {
-      coordinate: {
-        lat: firstBus.boardingStop.latitude,
-        lng: firstBus.boardingStop.longitude,
-      },
+      coordinate: first.start,
       label: "탑승",
       tone: "boarding",
-      title: `${firstBus.boardingStop.name} · ${firstBus.routeNo}번 탑승`,
+      title: `${first.startName} · ${first.label} 탑승`,
     },
   ];
-  for (let index = 1; index < busLegs.length; index += 1) {
-    const previous = busLegs[index - 1]!.bus!;
-    const current = busLegs[index]!.bus!;
+  for (let index = 1; index < transitLegs.length; index += 1) {
+    const previous = transitLegs[index - 1]!;
+    const current = transitLegs[index]!;
     markers.push({
-      coordinate: {
-        lat: current.boardingStop.latitude,
-        lng: current.boardingStop.longitude,
-      },
+      coordinate: current.start,
       label: "환승",
       tone: "transfer",
-      title: `${current.boardingStop.name} · ${previous.routeNo}번에서 ${current.routeNo}번으로 환승`,
+      title: `${current.startName} · ${previous.label}에서 ${current.label}으로 환승`,
     });
   }
   markers.push({
-    coordinate: {
-      lat: lastBus.alightingStop.latitude,
-      lng: lastBus.alightingStop.longitude,
-    },
+    coordinate: last.end,
     label: "하차",
     tone: "alighting",
-    title: `${lastBus.alightingStop.name} · ${lastBus.routeNo}번 하차`,
+    title: `${last.endName} · ${last.label} 하차`,
   });
   return markers;
 }

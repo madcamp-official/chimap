@@ -7,6 +7,7 @@ import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
 import { importBusStopsFile } from "../transit/csv-importer.js";
 import { importSubwayStationsFile } from "../transit/subway-csv-importer.js";
+import { importSubwayTopologyDirectory } from "../transit/subway-topology-importer.js";
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
 
@@ -420,6 +421,31 @@ async function run(): Promise<void> {
       });
       break;
     }
+    case "import-subway-topology": {
+      const directory =
+        argument("directory") ?? config.subwayTopologyDataDir;
+      if (directory === undefined) {
+        throw new Error(
+          "SUBWAY_TOPOLOGY_DATA_DIR 또는 --directory를 설정해 주세요.",
+        );
+      }
+      const result = await importSubwayTopologyDirectory(
+        directory,
+        transit.repository,
+      );
+      printJson({
+        directory,
+        serviceLines: result.serviceLines.length,
+        routeReadyLines: result.serviceLines.filter(
+          (line) => line.isRouteReady,
+        ).length,
+        lineStations: result.lineStations.length,
+        segments: result.segments.length,
+        headways: result.headways.length,
+        transfers: result.transfers.length,
+      });
+      break;
+    }
     case "sync-subway-stations": {
       const concurrency = Math.min(
         Math.max(Number(argument("concurrency") ?? 4), 1),
@@ -448,7 +474,7 @@ async function run(): Promise<void> {
       break;
     default:
       throw new Error(
-        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, sync-areas, import-stops, import-subway-stations, sync-subway-stations, subway-departures, stats 중 하나여야 합니다.",
+        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, sync-areas, import-stops, import-subway-stations, import-subway-topology, sync-subway-stations, subway-departures, stats 중 하나여야 합니다.",
       );
   }
 }

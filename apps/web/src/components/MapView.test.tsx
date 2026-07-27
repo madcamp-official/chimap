@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
-import { MapView } from "./MapView.js";
+import { MapView, transitMarkers } from "./MapView.js";
 
 const origin: Place = {
   id: "kakao:place:10491355",
@@ -108,6 +108,56 @@ const vehicle: RelevantVehiclePosition = {
 describe("MapView", () => {
   afterEach(() => {
     delete (window as Window & { naver?: unknown }).naver;
+  });
+  it("지하철 탑승·노선 환승·하차 마커를 만든다", () => {
+    const subwayRoute: Recommendation = {
+      ...route,
+      id: "subway-transfer-route",
+      transferCount: 1,
+      legs: [
+        {
+          id: "subway-one",
+          mode: "SUBWAY",
+          name: "대전 1호선",
+          distanceMeters: 2_000,
+          durationSeconds: 400,
+          stops: ["월평", "정부청사"],
+          coordinates: [
+            { lat: 36.358, lng: 127.364 },
+            { lat: 36.357, lng: 127.381 },
+          ],
+          isExerciseSegment: false,
+        },
+        {
+          id: "subway-two",
+          mode: "SUBWAY",
+          name: "대전 2호선",
+          distanceMeters: 3_000,
+          durationSeconds: 500,
+          stops: ["정부청사", "대전"],
+          coordinates: [
+            { lat: 36.357, lng: 127.381 },
+            { lat: 36.331, lng: 127.433 },
+          ],
+          isExerciseSegment: false,
+        },
+      ],
+    };
+
+    expect(transitMarkers(subwayRoute)).toEqual([
+      expect.objectContaining({
+        label: "탑승",
+        title: "월평 · 대전 1호선 탑승",
+      }),
+      expect.objectContaining({
+        label: "환승",
+        title: "정부청사 · 대전 1호선에서 대전 2호선으로 환승",
+      }),
+      expect.objectContaining({
+        label: "하차",
+        title: "대전 · 대전 2호선 하차",
+      }),
+    ]);
   });
   it("지도 키가 없어도 경로 카드 기능과 대체 경로선을 유지한다", () => {
     render(

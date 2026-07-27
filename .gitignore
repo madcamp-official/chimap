@@ -35,3 +35,13 @@ data/
 *.sqlite-wal
 .idea/
 .vscode/
+
+# Runtime subway datasets live under data/. Keep other generated/review CSVs local.
+!data/
+data/*
+!data/subway_data.csv
+!data/subway_service_lines.csv
+!data/subway_line_stations.csv
+!data/subway_segments.csv
+!data/subway_headways_fallback.csv
+!data/subway_transfer_edges.csv

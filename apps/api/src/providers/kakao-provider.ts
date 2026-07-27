@@ -6,7 +6,7 @@ import {
 } from "@chimap/contracts";
 
 import {
-  normalizeKakaoDrivingGeometry,
+  normalizeKakaoDrivingSections,
   normalizeKakaoTransitResponse,
   normalizeKakaoWalkResponse,
 } from "./kakao-normalizers.js";
@@ -60,6 +60,73 @@ function chunkRoadPoints(points: Coordinate[]): Coordinate[][] {
     start = end;
   }
   return chunks;
+}
+
+function polylineDistanceMeters(points: readonly Coordinate[]): number {
+  let distance = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    distance += haversineDistanceMeters(points[index]!, points[index + 1]!);
+  }
+  return distance;
+}
+
+/**
+ * Kakao 자동차 길찾기는 버스 정류장 좌표를 자동차 경유지로 스냅하면서
+ * 가까운 두 정류장 사이에 불필요한 U턴·블록 우회를 만들 수 있다. 응답을
+ * 정류장 구간별로 검증해 과도한 우회나 잘못 연결된 구간을 걸러낸다.
+ */
+export function isPlausibleRoadSection(
+  section: readonly Coordinate[],
+  from: Coordinate,
+  to: Coordinate,
+): boolean {
+  if (section.length < 2) {
+    return false;
+  }
+  const straightDistance = Math.max(1, haversineDistanceMeters(from, to));
+  const pathDistance = polylineDistanceMeters(section);
+  const endpointTolerance = Math.min(
+    200,
+    Math.max(60, straightDistance * 0.45),
+  );
+  const detourLimit = Math.max(
+    straightDistance + 150,
+    straightDistance * 1.5,
+  );
+  return (
+    haversineDistanceMeters(from, section[0]!) <= endpointTolerance &&
+    haversineDistanceMeters(to, section.at(-1)!) <= endpointTolerance &&
+    pathDistance <= detourLimit
+  );
+}
+
+export function roadGeometryForWaypoints(
+  sections: readonly (readonly Coordinate[])[],
+  waypoints: readonly Coordinate[],
+): Coordinate[] {
+  const joined: Coordinate[] = [];
+  const append = (coordinate: Coordinate) => {
+    const previous = joined.at(-1);
+    if (
+      previous === undefined ||
+      previous.lng !== coordinate.lng ||
+      previous.lat !== coordinate.lat
+    ) {
+      joined.push(coordinate);
+    }
+  };
+  const sectionsMatchWaypoints = sections.length === waypoints.length - 1;
+  for (let index = 0; index < waypoints.length - 1; index += 1) {
+    const from = waypoints[index]!;
+    const to = waypoints[index + 1]!;
+    const section = sectionsMatchWaypoints ? sections[index] ?? [] : [];
+    append(from);
+    if (isPlausibleRoadSection(section, from, to)) {
+      section.forEach(append);
+    }
+    append(to);
+  }
+  return joined;
 }
 
 export class KakaoMobilityProvider
@@ -167,7 +234,10 @@ export class KakaoMobilityProvider
               : { signal: request.signal }),
           },
         );
-        return normalizeKakaoDrivingGeometry(response);
+        return roadGeometryForWaypoints(
+          normalizeKakaoDrivingSections(response),
+          chunk,
+        );
       }),
     );
     const joined: Coordinate[] = [];

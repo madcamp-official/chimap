@@ -10,7 +10,7 @@ const header =
 describe("지하철역 CSV importer", () => {
   it("제공된 전국 파일의 BOM과 최신 중복행을 정규화한다", () => {
     const parsed = parseSubwayStationsCsvBuffer(
-      readFileSync(resolve(process.cwd(), "../../subway_data.csv")),
+      readFileSync(resolve(process.cwd(), "../../data/subway_data.csv")),
     );
 
     expect(parsed.sourceRowCount).toBe(1_099);

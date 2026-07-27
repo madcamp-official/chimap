@@ -15,7 +15,7 @@ const source = readFileSync(
   ),
 );
 const subwaySource = readFileSync(
-  new URL("../../../../subway_data.csv", import.meta.url),
+  new URL("../../../../data/subway_data.csv", import.meta.url),
 );
 const actualRoute: BusRoute = {
   id: "25:DJB30300043",

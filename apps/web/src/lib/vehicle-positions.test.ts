@@ -145,15 +145,15 @@ describe("선택 경로 차량 표시", () => {
     ).toEqual([]);
   });
 
-  it("승차~하차 구간 안의 차량은 도착 ETA와 무관하게 모두 표시한다", () => {
+  it("승차~하차 구간에서는 승차 지점을 방금 지난 차량 한 대만 표시한다", () => {
     const selected = selectRelevantVehiclePositions(
       [busLeg({ alightingNodeOrder: 40 })],
       capture.response.items,
       [arrival(601)],
     );
 
-    expect(selected.map((vehicle) => vehicle.nodeOrder)).toEqual([31, 39]);
-    expect(selected.every((vehicle) => vehicle.displayReason === "ON_ROUTE")).toBe(true);
+    expect(selected.map((vehicle) => vehicle.nodeOrder)).toEqual([31]);
+    expect(selected[0]?.displayReason).toBe("JUST_PASSED");
   });
 
   it("도착정보 호출이 실패해 빈 배열이어도 이동 구간 차량은 유지한다", () => {
@@ -163,9 +163,9 @@ describe("선택 경로 차량 표시", () => {
       [],
     );
 
-    expect(selected.map((vehicle) => vehicle.nodeOrder)).toEqual([31, 39]);
+    expect(selected.map((vehicle) => vehicle.nodeOrder)).toEqual([31]);
     expect(
-      selected.every((vehicle) => vehicle.displayReason === "ON_ROUTE"),
+      selected.every((vehicle) => vehicle.displayReason === "JUST_PASSED"),
     ).toBe(true);
   });
 
@@ -177,6 +177,21 @@ describe("선택 경로 차량 표시", () => {
     );
 
     expect(selected.filter((vehicle) => vehicle.nodeOrder === 31)).toHaveLength(1);
+  });
+
+  it("같은 노선은 오고 있는 차량과 방금 지난 차량을 합쳐 최대 두 대다", () => {
+    const selected = selectRelevantVehiclePositions(
+      [busLeg({ alightingNodeOrder: 40 })],
+      capture.response.items,
+      [arrival(600)],
+    );
+
+    expect(selected).toHaveLength(2);
+    expect(selected.map((vehicle) => vehicle.displayReason)).toEqual([
+      "ARRIVING_SOON",
+      "JUST_PASSED",
+    ]);
+    expect(selected.map((vehicle) => vehicle.nodeOrder)).toEqual([21, 31]);
   });
 
   it("정류장 순서가 없거나 하차 지점을 지난 차량은 제외한다", () => {

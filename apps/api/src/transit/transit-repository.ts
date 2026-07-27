@@ -62,6 +62,89 @@ export type CsvSubwayStation = {
   dataDate: string;
 };
 
+export type CsvSubwayTopology = {
+  serviceLines: Array<{
+    serviceLineId: string;
+    regionCode: string;
+    regionName: string;
+    operatorName: string;
+    serviceLineName: string;
+    stationCount: number;
+    matchedStationCount: number;
+    segmentCount: number;
+    fallbackHeadwayCount: number;
+    isBranching: boolean;
+    isRouteReady: boolean;
+    timingProviderDefault: string;
+  }>;
+  lineStations: Array<{
+    serviceLineId: string;
+    stationOrder: number;
+    orderConflict: boolean;
+    sourceLineId: string;
+    sourceStationId: string;
+    sourceStationKey: string;
+    stationName: string;
+  }>;
+  segments: Array<{
+    serviceLineId: string;
+    fromSourceStationKey: string;
+    toSourceStationKey: string;
+    durationSeconds: number;
+    averageDurationSeconds: number;
+    straightDistanceMeters: number;
+    sampleCount: number;
+    durationMethod: string;
+  }>;
+  headways: Array<{
+    serviceLineId: string;
+    sourceStationKey: string;
+    nextSourceStationKey: string;
+    dayGroup: string;
+    timePeriod: string;
+    medianHeadwaySeconds: number;
+    expectedWaitSeconds: number;
+    departureCount: number;
+    intervalSampleCount: number;
+  }>;
+  transfers: Array<{
+    fromSourceStationKey: string;
+    toSourceStationKey: string;
+    transferDurationSeconds: number;
+    straightDistanceMeters: number;
+    durationIsEstimated: boolean;
+  }>;
+};
+
+export type SubwayRoutingStation = {
+  nodeId: string;
+  serviceLineId: string;
+  sourceStationKey: string;
+  stationOrder: number;
+  stationName: string;
+  lineName: string;
+  regionName: string;
+  operatorName: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type SubwayRoutingEdge = {
+  fromNodeId: string;
+  toNodeId: string;
+  kind: "RIDE" | "TRANSFER";
+  durationSeconds: number;
+  distanceMeters: number;
+  expectedWaitSeconds: number;
+  serviceLineId: string | null;
+  durationIsEstimated: boolean;
+};
+
+export type SubwayRoutingGraph = {
+  stations: SubwayRoutingStation[];
+  edges: SubwayRoutingEdge[];
+};
+
 function normalizeName(value: string): string {
   return value
     .normalize("NFKC")
@@ -917,6 +1000,129 @@ export class TransitRepository {
     }
   }
 
+  public async importSubwayTopology(data: CsvSubwayTopology): Promise<void> {
+    const client = await this.pool.connect();
+    const copy = async (statement: string, rows: string[]) => {
+      const stream = client.query(copyFrom(statement));
+      Readable.from(rows).pipe(stream);
+      await finished(stream);
+    };
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = '10min'");
+      await client.query(`
+        DELETE FROM subway_transfer_edges;
+        DELETE FROM subway_headways_fallback;
+        DELETE FROM subway_segments;
+        DELETE FROM subway_line_stations;
+        DELETE FROM subway_service_lines;
+      `);
+      await copy(
+        `COPY subway_service_lines(
+           service_line_id, region_code, region_name, operator_name,
+           service_line_name, station_count, matched_station_count,
+           segment_count, fallback_headway_count, is_branching,
+           is_route_ready, timing_provider_default
+         ) FROM STDIN WITH (FORMAT csv)`,
+        data.serviceLines.map((row) =>
+          [
+            csvField(row.serviceLineId),
+            csvField(row.regionCode),
+            csvField(row.regionName),
+            csvField(row.operatorName),
+            csvField(row.serviceLineName),
+            row.stationCount,
+            row.matchedStationCount,
+            row.segmentCount,
+            row.fallbackHeadwayCount,
+            row.isBranching,
+            row.isRouteReady,
+            csvField(row.timingProviderDefault),
+          ].join(",") + "\n",
+        ),
+      );
+      await copy(
+        `COPY subway_line_stations(
+           service_line_id, station_order, order_conflict, source_line_id,
+           source_station_id, source_station_key, station_name
+         ) FROM STDIN WITH (FORMAT csv)`,
+        data.lineStations.map((row) =>
+          [
+            csvField(row.serviceLineId),
+            row.stationOrder,
+            row.orderConflict,
+            csvField(row.sourceLineId),
+            csvField(row.sourceStationId),
+            csvField(row.sourceStationKey),
+            csvField(row.stationName),
+          ].join(",") + "\n",
+        ),
+      );
+      await copy(
+        `COPY subway_segments(
+           service_line_id, from_source_station_key,
+           to_source_station_key, duration_seconds,
+           average_duration_seconds, straight_distance_meters,
+           sample_count, duration_method
+         ) FROM STDIN WITH (FORMAT csv)`,
+        data.segments.map((row) =>
+          [
+            csvField(row.serviceLineId),
+            csvField(row.fromSourceStationKey),
+            csvField(row.toSourceStationKey),
+            row.durationSeconds,
+            row.averageDurationSeconds,
+            row.straightDistanceMeters,
+            row.sampleCount,
+            csvField(row.durationMethod),
+          ].join(",") + "\n",
+        ),
+      );
+      await copy(
+        `COPY subway_headways_fallback(
+           service_line_id, source_station_key, next_source_station_key,
+           day_group, time_period, median_headway_seconds,
+           expected_wait_seconds, departure_count, interval_sample_count
+         ) FROM STDIN WITH (FORMAT csv)`,
+        data.headways.map((row) =>
+          [
+            csvField(row.serviceLineId),
+            csvField(row.sourceStationKey),
+            csvField(row.nextSourceStationKey),
+            csvField(row.dayGroup),
+            csvField(row.timePeriod),
+            row.medianHeadwaySeconds,
+            row.expectedWaitSeconds,
+            row.departureCount,
+            row.intervalSampleCount,
+          ].join(",") + "\n",
+        ),
+      );
+      await copy(
+        `COPY subway_transfer_edges(
+           from_source_station_key, to_source_station_key,
+           transfer_duration_seconds, straight_distance_meters,
+           duration_is_estimated
+         ) FROM STDIN WITH (FORMAT csv)`,
+        data.transfers.map((row) =>
+          [
+            csvField(row.fromSourceStationKey),
+            csvField(row.toSourceStationKey),
+            row.transferDurationSeconds,
+            row.straightDistanceMeters,
+            row.durationIsEstimated,
+          ].join(",") + "\n",
+        ),
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async searchSubwayStations(
     query: string,
     limit: number,
@@ -958,6 +1164,131 @@ export class TransitRepository {
       [coordinate.lng, coordinate.lat, radiusMeters, limit],
     );
     return result.rows.map(rowToSubwayStation);
+  }
+
+  public async getSubwayRoutingGraph(
+    dayGroup: "WEEKDAY" | "WEEKEND_HOLIDAY",
+    timePeriod:
+      | "EARLY_MORNING"
+      | "MORNING_PEAK"
+      | "DAYTIME"
+      | "EVENING_PEAK"
+      | "LATE_NIGHT",
+  ): Promise<SubwayRoutingGraph> {
+    const [stationResult, rideResult, transferResult] = await Promise.all([
+      this.pool.query(`
+        SELECT
+          line_station.service_line_id,
+          line_station.source_station_key,
+          line_station.station_order,
+          line_station.station_name,
+          service_line.service_line_name,
+          service_line.region_name,
+          service_line.operator_name,
+          ST_Y(station.location::geometry) AS latitude,
+          ST_X(station.location::geometry) AS longitude
+        FROM subway_line_stations AS line_station
+        JOIN subway_service_lines AS service_line
+          ON service_line.service_line_id = line_station.service_line_id
+         AND service_line.is_route_ready = true
+        JOIN subway_station_lines AS station
+          ON station.line_code = line_station.source_line_id
+         AND station.station_code = line_station.source_station_id
+         AND station.active = true
+        ORDER BY line_station.service_line_id, line_station.station_order
+      `),
+      this.pool.query(
+        `SELECT
+           segment.service_line_id,
+           segment.from_source_station_key,
+           segment.to_source_station_key,
+           segment.duration_seconds,
+           segment.straight_distance_meters,
+           COALESCE(headway.expected_wait_seconds, 300) AS expected_wait_seconds
+         FROM subway_segments AS segment
+         JOIN subway_service_lines AS service_line
+           ON service_line.service_line_id = segment.service_line_id
+          AND service_line.is_route_ready = true
+         LEFT JOIN subway_headways_fallback AS headway
+           ON headway.service_line_id = segment.service_line_id
+          AND headway.source_station_key = segment.from_source_station_key
+          AND headway.next_source_station_key = segment.to_source_station_key
+          AND headway.day_group = $1
+          AND headway.time_period = $2`,
+        [dayGroup, timePeriod],
+      ),
+      this.pool.query(`
+        SELECT
+          from_source_station_key,
+          to_source_station_key,
+          transfer_duration_seconds,
+          straight_distance_meters,
+          duration_is_estimated
+        FROM subway_transfer_edges
+      `),
+    ]);
+    const stations = stationResult.rows.map((row): SubwayRoutingStation => ({
+      nodeId: `${String(row.service_line_id)}:${String(row.source_station_key)}`,
+      serviceLineId: String(row.service_line_id),
+      sourceStationKey: String(row.source_station_key),
+      stationOrder: Number(row.station_order),
+      stationName: String(row.station_name),
+      lineName: String(row.service_line_name),
+      regionName: String(row.region_name),
+      operatorName: String(row.operator_name),
+      latitude: Number(row.latitude),
+      longitude: Number(row.longitude),
+    }));
+    const nodesByKey = new Map<string, SubwayRoutingStation[]>();
+    for (const station of stations) {
+      const nodes = nodesByKey.get(station.sourceStationKey) ?? [];
+      nodes.push(station);
+      nodesByKey.set(station.sourceStationKey, nodes);
+    }
+    const edges: SubwayRoutingEdge[] = [];
+    for (const row of rideResult.rows) {
+      const serviceLineId = String(row.service_line_id);
+      const fromNodeId = `${serviceLineId}:${String(row.from_source_station_key)}`;
+      const toNodeId = `${serviceLineId}:${String(row.to_source_station_key)}`;
+      if (
+        !stations.some((station) => station.nodeId === fromNodeId) ||
+        !stations.some((station) => station.nodeId === toNodeId)
+      ) {
+        continue;
+      }
+      edges.push({
+        fromNodeId,
+        toNodeId,
+        kind: "RIDE",
+        durationSeconds: Number(row.duration_seconds),
+        distanceMeters: Number(row.straight_distance_meters),
+        expectedWaitSeconds: Number(row.expected_wait_seconds),
+        serviceLineId,
+        durationIsEstimated: false,
+      });
+    }
+    for (const row of transferResult.rows) {
+      const fromNodes = nodesByKey.get(String(row.from_source_station_key)) ?? [];
+      const toNodes = nodesByKey.get(String(row.to_source_station_key)) ?? [];
+      for (const from of fromNodes) {
+        for (const to of toNodes) {
+          if (from.nodeId === to.nodeId) {
+            continue;
+          }
+          edges.push({
+            fromNodeId: from.nodeId,
+            toNodeId: to.nodeId,
+            kind: "TRANSFER",
+            durationSeconds: Number(row.transfer_duration_seconds),
+            distanceMeters: Number(row.straight_distance_meters),
+            expectedWaitSeconds: 0,
+            serviceLineId: null,
+            durationIsEstimated: row.duration_is_estimated === true,
+          });
+        }
+      }
+    }
+    return { stations, edges };
   }
 
   public async getSubwayStation(id: string): Promise<SubwayStation | null> {
