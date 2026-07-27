@@ -610,6 +610,33 @@ production의 마지막 전체 strict E2E·백업·restore는 앞선 14:29 KST �
   HTTPS endpoint 연결을 검증하지 못해 `SEOUL_SUBWAY_ENABLED=0` 유지. 운영
   ETA는 TAGO 시간표 또는 배차간격 기반임을 응답에 명시
 
+### 2026-07-27 서울 지하철 실시간 활성화 기록
+
+- source commits: `ffe80d6`, `e16684b`
+- production image: `sha256:77f4de84c4baaa11d0c865d6b95bde3ae928b8bc8404dcfeb24d09ff94040887`
+- API container commit: `e16684b`, local/public health와 readiness HTTP 200
+- 원인: 공식 host의 443/TLS는 connect timeout이고 80/HTTP만 정상. 운영 Docker
+  bridge에서는 Node `fetch`도 timeout되어 공식 HTTP 경로를 `node:http`,
+  `Connection: close`로 분리
+- 보안 경계: exact host·80번 port·명시적 opt-in, redirect 차단, 응답 5MiB 제한,
+  KST 일일 900회 process-local guard, 오류·로그에 key/전체 URL 미포함
+- 실제 upstream smoke: 서울역 도착 20건, 1호선 위치 81건, HTTP 200/`INFO-000`
+- 실제 추천 smoke: 서울역→강남역 HTTP 200, 세 후보 모두 첫 4호선 leg에서
+  `SEOUL_REALTIME_ARRIVAL=true`, 이후 환승은 TAGO 시간표 fallback
+- 역명 보정: CSV의 `서울역`처럼 끝에 `역`이 붙은 query는 서울 API 요청 전에
+  접미사를 제거
+- 외부 알림: `EXTERNAL_ALERTS_ENABLED=0`, relay health `disabled`, POST 202,
+  `ChimapAlertDeliveryNotConfigured` 활성 경보 0개
+- tests/build: API 114개 통과·8개 환경 통합 테스트 skip, relay 4개 통과,
+  TypeScript/API/Web production build와 Prometheus 20개 rule 검증 통과
+- security: 공개 asset `/assets/index-DVyoPrrl.js`에서 서버 key 이름·값 0건,
+  최근 API log에서 key·전체 서울 요청 URL·error 0건
+- monitoring: API/relay/Alertmanager target 3개 `up`, 경보 rule 20개 모두 `ok`
+- 배포 전 backup: `chimap-daily-20260727T122539Z.dump`, 17,725,228 bytes,
+  SHA-256 `12f5ec6f8f63193edff33f71c699d28e75ce3a28f20730f4d72cfbf55750e579`
+- 배포 후 backup: `chimap-daily-20260727T123937Z.dump`, 17,736,605 bytes,
+  SHA-256 `8ce86625ec1632eedf35a4af509e67854d3e34b441e74fc5554ac56feedc9b0e`
+
 ## 12. 공개 번들 비밀값 검사
 
 배포 후 HTML의 JavaScript asset을 받아 서버 Client Secret이 포함되지

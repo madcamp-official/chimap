@@ -114,15 +114,16 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:ce1caaca…`, 기능 commit `43b71a1`), 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:77f4de84…`, commit `e16684b`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, migration 9, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
-| 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
+| 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
 | 장소·주소 | Kakao 우선, NAVER 주소 보완 |
 | 도보 | Kakao Routing |
 | 버스 표시선 | Kakao Mobility Directions 도로 geometry |
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
+| 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
 | 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
@@ -358,7 +359,8 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 교통 정기 동기화 | 45개 성공·0개 실패, 성공 시각과 실패 수 지표 확인 |
 | 정류장 병합 migration | 1,173쌍→0쌍, 관계 유지, migration 2 적용 |
 | 알림 릴레이 형식 | 격리 HTTP 수신처에 Slack 형식 긴급 메시지·상태 버튼 전달 |
-| 외부 운영 채널 | webhook 미입력, 구성 지표 `0`과 설정 필요 경보 발생 확인 |
+| 서울 실시간 추천 | 서울역→강남역 3개 후보의 첫 4호선 leg가 `SEOUL_REALTIME_ARRIVAL`, 이후 leg는 TAGO 시간표 fallback |
+| 외부 운영 채널 | 명시적 비활성화, relay `202 disabled`, 설정 필요 경보 0개 |
 | 공개 번들 서버 비밀값 검사 | NAVER·Kakao OAuth·session 비밀값 미검출 |
 | 폐기 대상 용어·설정 내용 검색 | 0건 |
 | `git diff --check` | code commit과 최신 문서 점검 통과. 원본 CRLF 지하철 CSV는 importer 검증·checksum으로 별도 확인 |
@@ -475,11 +477,14 @@ production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KS
   timeout을 함께 관찰해야 합니다.
 - 정류장 탐색은 최대 1.2km와 1회 환승까지만 지원하므로 이 범위 밖의
   연결은 구체적인 위치 선택 안내 또는 연결 범위 안내와 함께 404가 됩니다.
-- Alertmanager와 relay는 배포됐지만 외부 webhook URL은 아직 비어 있습니다.
-  Alertmanager 라우팅 설정과 relay 메시지 형식은 격리 수신처로 검증됐고
-  `ChimapAlertDeliveryNotConfigured` 경보가 의도대로 발생 중입니다.
-  [배포 운영서](./deployment.md)의 장애 알림 절차에 따라 webhook을 입력하고
-  실제 점검·복구 알림을 확인해야 운영 채널 전달이 활성화됩니다.
+- Alertmanager와 relay는 배포됐지만 외부 알림은 현재 사용하지 않습니다.
+  `EXTERNAL_ALERTS_ENABLED=0`에서 webhook 호출과 설정 누락 경보를 모두 막습니다.
+  나중에 사용할 때만 [배포 운영서](./deployment.md)의 절차에 따라 flag와 URL을
+  함께 설정하고 실제 점검·복구 알림을 확인합니다.
+- 서울시 실시간 지하철 API는 공식 host가 HTTP만 제공하므로 key가 네트워크
+  구간에서 평문 전송되는 잔여 위험이 있습니다. exact-host opt-in, redirect
+  차단, 일일 900회 guard와 서버 전용 호출을 유지하고 공식 TLS 제공 여부를
+  정기적으로 재확인해야 합니다.
 - 기존 시간 제약 추천 요청은 전환 릴리스 동안만 유지합니다. 사용 현황과
   downstream 전환을 확인한 뒤 `deadline`, `maxExtraMinutes`,
   `safetyBufferMinutes` 계약과 기존 warning을 제거해야 합니다.
