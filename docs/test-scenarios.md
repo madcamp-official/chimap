@@ -46,16 +46,16 @@ git diff --check
 
 현재 일반 test 구성:
 
-- contracts: 11개
+- contracts: 12개
 - app-core: 3개
 - alert-relay: 3개
-- API: 77개
-- web: 43개
+- API: 96개
+- web: 54개
 - mobile: 14개
-- 합계: 151개
+- 합계: 182개
 
-PostgreSQL 전용 7개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
-건너뜁니다. 격리 PostGIS까지 포함한 전체는 158개입니다.
+PostgreSQL 전용 8개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
+건너뜁니다. 격리 PostGIS까지 포함한 전체는 190개입니다.
 
 ## 3. 공급자 테스트
 
@@ -96,6 +96,10 @@ PostgreSQL 전용 7개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
 - `nodeid` parameter
 - result code `99` 제한 재시도
 - 키 누락·timeout·공급자 오류 mapping
+- 지하철 역 검색 단일/배열 item, pagination과 키 마스킹
+- 대전역 실제 fixture의 SHA-256 checksum
+- 평일·토요일·일요일과 U/D 시간표 정규화
+- 정확한 역명·노선 단일 후보만 매핑, 복수 후보는 `UNRESOLVED`
 
 ## 4. PostgreSQL/PostGIS 통합
 
@@ -154,10 +158,19 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 도로 굴곡을 따르는 버스 geometry
 - 첫 승차 1개·버스 수−1개 환승·최종 하차 1개 overlay
 - 중간 버스 정류장 마커 0개
-- 선택 구간과 같은 city/route, 탑승 순서 이전 차량만 허용
-- 탑승 정류장에 가장 가까운 차량 1대 선택과 차량번호 중복 제거
+- 선택 구간과 같은 city/route 중 ETA 600초 이하인 승차 전 최근접 차량 1대와
+  승차~하차 정류장 순서 안의 모든 차량만 허용
+- 접근·구간 운행 조건이 겹친 차량의 차량번호 또는 순서+좌표 중복 제거
 - 차량 좌표를 map bounds에서 제외
 - 지도 cleanup과 SDK 재시도
+- `bus_icon.webp` 중앙 흰 전광판의 검은 노선번호와 빈 이미지 alt
+- ETA 599·600·601초 경계, 구간 내 차량 전체 포함과 중복 제거
+- 차량 배열만 바뀔 때 `fitBounds`·중심·줌 호출 수가 증가하지 않음
+- 선택 경로 변경 때만 `fitBounds`가 정확히 한 번 증가
+- SVG fallback도 같은 이미지와 노선번호 사용
+- 추천 결과에서 출발·도착 주변 지하철역 각각 조회
+- TAGO 매핑 역의 U/D 다음 출발과 시간표 기반·지연 미반영 문구 표시
+- 미매핑 역과 한쪽 역 조회 실패가 버스·도보 추천을 차단하지 않음
 
 ## 7. 추천 엔진
 
@@ -165,7 +178,7 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 간소화 요청 허용, 알 수 없는 필드와 새·기존 형식 혼합 거절
 - 기존 마감 요청의 최대 6시간·안전 여유시간 검증과 `Deprecation: true` header
 - 자동 추가시간의 15분 하한·일반 계산·90분 상한
-- 목표 달성 시 운동 우회 없이 빠른 경로만 제공
+- 목표 달성 시 운동 우회는 만들지 않되 기본 후보가 충분하면 고유한 3개 제공
 - 실제 TAGO 직행/1회 환승
 - TAGO 정류장 순서를 Kakao 도로 geometry로 변환
 - 운행 노선 0건 정류장 제외
@@ -179,7 +192,7 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 자동 추천 범위 밖 후보 필터와 자동 범위 전용 목표 미달 warning
 - 기존 요청의 마감·추가시간 필터
 - route 중복 제거
-- FAST/BALANCED/GOAL ID·타입 중복 금지
+- FAST/2배 걸음/목표 근접 경로의 선정 기준과 ID·타입 중복 금지
 - 부분 후보 실패 warning
 
 ## 8. 공개 E2E
@@ -205,17 +218,19 @@ UI 전체 흐름:
 6. 대전역 검색·직접 선택
 7. 시간 조건을 추가로 묻지 않는 `건강 경로 찾기` 한 번으로 추천 요청
 8. 요청 본문에 `deadline`, `maxExtraMinutes`, `safetyBufferMinutes`가 없음을 확인
-9. 목표 추천 기본 선택, 빠른·균형·목표 달성 간략 카드와 기본 상세 닫힘 확인
+9. 목표 추천 기본 선택, 빠른·2배 걸음·목표 근접 간략 카드와 기본 상세 닫힘 확인
 10. 빠른 경로 `자세히`와 `aria-expanded/controls`, 텍스트 단계 확인
 11. NAVER 지도 인증, 지도 공급자 칩 부재와 왼쪽 최하단 데이터 제공 안내 확인
 12. 탑승 1·환승 버스 수−1·하차 1·중간 정류장 0 확인
-13. 차량 API 완료 후 마커 수≤선택 버스 구간 수
-14. 차량 마커 title의 탑승 접근 정류장 수 확인
-15. 균형 경로 선택 시 기존 상세 닫힘 확인
-16. 균형 경로 `자세히`를 열어 텍스트 단계를 확인한 뒤 상세의 `간략히`
-17. localStorage v3에 필수 프로필·목표·현재 걸음의 한국 날짜·장소 저장
-18. 당일 새로고침 후 프로필·장소·현재 걸음 복구
-19. 1440/768/390/320px 가로 overflow 없음
+13. 차량 API 완료 후 ETA 10분 이하 접근 차량과 구간 운행 차량만 표시
+14. WebP marker의 흰 전광판·검은 노선번호와 도착 분/구간 운행 접근성 title 확인
+15. 21초 이상 차량 갱신 뒤에도 사용자가 바꾼 중심·줌 유지
+16. 주변 월평·대전역과 U/D 시간표 기반 다음 출발·지연 미반영 문구 확인
+17. 2배 걸음 경로 선택 시 기존 상세 닫힘 확인
+18. 2배 걸음 경로 `자세히`를 열어 텍스트 단계를 확인한 뒤 상세의 `간략히`
+19. localStorage v3에 필수 프로필·목표·현재 걸음의 한국 날짜·장소 저장
+20. 당일 새로고침 후 프로필·장소·현재 걸음 복구
+21. 1440/768/390/320px 가로 overflow 없음
 
 개인화·후보 생성 회귀:
 
@@ -389,3 +404,26 @@ lockfile과 외부 package를 제외한 1차 코드·설정·문서에서 폐기
 확인했습니다. 실제 mobile Kakao/Apple 계정, HealthKit/Health Connect,
 SecureStore 재실행은 provider credential과 실제 기기가 필요한 다음 release
 gate입니다.
+
+2026-07-27 14:28~14:29 KST 버스·지하철 UI 공개·운영 스냅샷:
+
+- workspace 경계·format·typecheck와 Web/API/iOS/Android `build:all` 통과
+- 결정적 테스트 182개 통과: contracts 12, app-core 3, alert-relay 3,
+  API 96, web 54, mobile 14
+- 격리 PostGIS에서 교통·migration 6개와 mobile auth 2개, 전체 190개 통과
+- 공개 기본 추천·주변 역·NAVER 지도·버스 WebP·10초 갱신·카메라 보존 E2E와
+  1440/768/390/320px layout 통과
+- 확장 정류장 시나리오는 외부 공급자 응답 1회 실패 후 API 진단과 단독
+  Playwright 재실행 통과
+- 대전역 U방향·다른 매핑 역 D방향 시간표에서
+  `scheduleBased=true`, `realtimeAvailable=false` 확인
+- readiness `227225/2844/134/5731`, 지하철 `1097/1097/706`
+- 공개 asset `index-BjbF61pt.js`, `index-CQVn3DWd.css`,
+  `bus_icon-DB1cEqjH.webp`(9,464 bytes) 확인
+- Prometheus target 3개 `up`, rule 20개 healthy, Alertmanager ready,
+  지하철 미매핑 gauge 391 확인
+- 추적 파일·공개 bundle·최근 운영 log에서 실제 서버 비밀값 0건
+- 배포 후 백업 `chimap-daily-20260727T052848Z.dump`, 17,448,666 bytes,
+  SHA-256 `40fdf6b44cef23f56954f9213e6ac045c3f1dcc19a3404330b0ed063a7acea8c`
+- 별도 PostGIS 18 전체 restore에서 `migration=7`, 버스 통계와 지하철 table·
+  index 확인

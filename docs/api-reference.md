@@ -73,12 +73,15 @@ DB를 조회하지 않습니다.
     "stops": 227225,
     "linkedStops": 2844,
     "routes": 134,
-    "routeStops": 5731
+    "routeStops": 5731,
+    "subwayStations": 1097,
+    "activeSubwayStations": 1097,
+    "mappedSubwayStations": 706
   }
 }
 ```
 
-위 응답은 2026-07-27 11:01 KST 공개 재확인 예시이며 실제 데이터 동기화에
+위 응답은 2026-07-27 migration 7·CSV import·TAGO 매핑 후 예시이며 실제 데이터 동기화에
 따라 시각과 통계가 달라질 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
@@ -86,8 +89,11 @@ DB를 조회하지 않습니다.
 - PostgreSQL 연결
 - PostGIS extension
 - 모든 migration의 최신 checksum
-- Kakao, NAVER, TAGO 필수 키
-- 네 교통 통계가 모두 0보다 큼
+- Kakao, NAVER, 버스 4종과 지하철 TAGO 필수 키
+- 버스 정류장·연결 정류장·노선·노선정류장 네 통계가 모두 0보다 큼
+
+지하철 전체·활성·매핑 수는 readiness와 운영 지표에 항상 포함되지만, 기존
+버스 추천의 availability를 지하철 import 상태와 결합하지는 않습니다.
 
 하나라도 실패하면 HTTP 503과 `not_ready`입니다.
 
@@ -395,9 +401,9 @@ type RecommendationRequest = {
 자동 추가시간 = clamp(ceil(부족 도보시간 × 1.25 + 5분), 15분, 90분)
 ```
 
-목표를 이미 달성했다면 운동을 위한 우회 후보를 만들지 않고 빠른 경로만
-반환합니다. 그렇지 않으면 자동 추가시간 안에서 `FAST`, `BALANCED`, `GOAL`
-후보를 선별하며, 균형 점수의 시간 페널티도 같은 범위로 정규화합니다.
+목표를 이미 달성했다면 운동을 위한 새 우회 후보는 만들지 않지만, 공급자가
+반환한 고유 기본 후보가 충분하면 세 경로를 비교할 수 있습니다. 자동
+추가시간 안에서 `FAST`, `BALANCED`, `GOAL` 후보를 선별합니다.
 
 이번 전환 릴리스 동안에는 기존의 `deadline`, `maxExtraMinutes`,
 `safetyBufferMinutes`를 모두 포함한 strict 요청도 같은 endpoint에서
@@ -440,8 +446,11 @@ type RecommendationResponse = {
 };
 ```
 
-추천 타입은 `FAST`, `BALANCED`, `GOAL`입니다. 모든 경로 좌표와 거리는
-정규화된 Kakao/TAGO 응답에서 가져옵니다.
+추천 타입은 `FAST`, `BALANCED`, `GOAL`입니다. `BALANCED`는 호환성을 위해
+유지하며 화면 의미는 FAST 예상 걸음의 2배에 가장 가까운 `2배 걸음 경로`입니다.
+`GOAL`은 남은 목표 걸음에 가장 가까운 `목표 근접 경로`입니다. 세 타입에는
+서로 다른 route ID만 배정합니다. 모든 경로 좌표와 거리는 정규화된
+Kakao/TAGO 응답에서 가져옵니다.
 
 각 추천은 `stepDifference`와
 `goalFit: "WITHIN_TOLERANCE" | "UNDER" | "OVER"`를 포함합니다.
@@ -527,11 +536,36 @@ strict schema이므로 검색어, 좌표, 장소·노선 ID, 신체정보, 사�
 | `GET /bus/routes/:routeId` | `cityCode` | 노선 기본정보 |
 | `GET /bus/routes/:routeId/stops` | `cityCode` | 노선 정류장 순서 |
 | `GET /bus/routes/:routeId/vehicles` | `cityCode` | 차량 위치, 실시간 여부 |
+| `GET /subway/stations/search` | `query`, `limit?` | 활성 역·노선 검색 결과 |
+| `GET /subway/stations/nearby` | `lat`, `lng`, `radiusMeters?`, `limit?` | 거리순 활성 역·노선 결과 |
+| `GET /subway/stations/:id/departures` | `direction=U\|D`, `at?`, `limit?` | 다음 시간표 출발편 |
 | `POST /recommendations` | 추천 요청 body | 추천 응답 |
 
 위 표의 경로 앞에 `/api/v1/transit`을 붙입니다. 기존 클라이언트를 위한
 `/api/transit` prefix도 현재 같은 router에 연결되어 있지만 신규 코드는
 versioned prefix를 사용합니다.
+
+지하철 출발 응답은 실제 열차 GPS나 지연 반영 ETA가 아닙니다. 항상
+`scheduleBased: true`, `realtimeAvailable: false`, `fetchedAt`을 포함하며 UI는
+`TAGO 시간표 기반 예상`으로 표시해야 합니다. CSV 역이 TAGO ID에 매핑되지
+않았으면 404 대신 다음과 같이 명시적인 빈 결과를 반환합니다.
+
+```json
+{
+  "items": [],
+  "scheduleAvailable": false,
+  "unavailableReason": "TAGO_STATION_UNRESOLVED",
+  "scheduleBased": true,
+  "realtimeAvailable": false,
+  "fetchedAt": "2026-07-27T03:00:00.000Z"
+}
+```
+
+Web은 추천 응답을 받은 뒤 출발지와 도착지마다 `nearby`를 반경 2,000m,
+최대 3개로 호출합니다. 각 위치에서 TAGO 매핑 역을 우선 선택하고 U/D
+`departures`를 최대 2개씩 병렬 조회합니다. 일부 요청 실패는 추천 응답을
+실패시키지 않습니다. 이 별도 조회 결과는 현재 추천의 소요시간·도보거리·
+도착시각을 변경하지 않습니다.
 
 ## 10. 오류 코드
 

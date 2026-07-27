@@ -5,10 +5,13 @@ origin은 `http://127.0.0.1:3000`입니다. 명령은 저장소 루트에서
 실행합니다.
 
 cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그인은
-2026-07-27 11:01 KST 이미지 `sha256:0a2db829...`로 공개 배포했고 11:05 KST
-운영 점검과 migration 6 백업·전체 복원을 마쳤습니다. 아래 UI smoke와
-asset·인증 확인은 이후 모든 이미지 승격에서도 반복합니다. iOS/Android
-스토어 binary 배포는 이 Compose 승격과 별도 release입니다.
+2026-07-27 11:01 KST 이미지 `sha256:0a2db829...`로 공개 배포했습니다.
+버스 marker·지도 시점 안정화, 3종 추천과 TAGO 지하철 API는 같은 날
+14:28 KST code commit `96e2549`의 이미지
+`sha256:f497c9a5...`로 후속 승격하고 migration 7, 주변 지하철 UI,
+백업·전체 복원을 확인했습니다. 아래 UI smoke와 asset·인증 확인은 이후 모든
+이미지 승격에서도 반복합니다. iOS/Android 스토어 binary 배포는 이 Compose
+승격과 별도 release입니다.
 
 ## 1. 사전 조건
 
@@ -213,6 +216,26 @@ docker compose run --rm api node dist/cli/transit.js stats
 
 네 통계가 모두 0보다 커야 합니다.
 
+### 지하철 CSV import와 TAGO 매핑
+
+지하철 파일은 Compose에 `/data/subway_data.csv`로 read-only mount됩니다.
+운영 DB 백업 후 새 이미지를 올려 migration 7을 적용하고, 아래 순서로 실행합니다.
+
+```bash
+./ops/backup-postgres.sh
+docker compose run --rm api node dist/cli/transit.js import-subway-stations
+docker compose run --rm api node dist/cli/transit.js stats
+docker compose run --rm api node dist/cli/transit.js sync-subway-stations \
+  --concurrency 4
+docker compose run --rm api node dist/cli/transit.js stats
+```
+
+첫 통계에서 `subwayStations=1097`, `activeSubwayStations=1097`을 확인합니다.
+매핑은 중단 후 재실행해도 `MAPPED` row를 건너뜁니다. 공개 bundle과 로그에는
+`DATA_GO_KR_SERVICE_KEY`가 없어야 하며 시간표 UI는 반드시
+`TAGO 시간표 기반 예상`으로 표시합니다. CSV에 역 간 연결 순서가 없으므로
+이 배포만으로 지하철 혼합 경로 추천을 활성화하지 않습니다.
+
 ## 7. 배포 전 백업
 
 자동화와 같은 경로로 즉시 백업을 실행합니다.
@@ -339,35 +362,39 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
    `safetyBufferMinutes`가 없는지 확인
 10. 8,000보 목표에서 조기 하차 우선 추천과 목표 오차 확인
 11. 역지오코딩과 NAVER 지도 경로선
-12. 차량 마커 수가 선택 버스 구간 수 이하
-13. 왼쪽 패널 최하단 데이터 제공 안내와 NAVER SDK 기본 저작권 표시 확인
-14. localStorage v3 프로필·장소·당일 현재 걸음 저장과 새로고침 복구,
+12. ETA 10분 이하 승차 전 접근 차량과 승차~하차 구간 운행 차량만 표시되고
+    WebP·흰 전광판·검은 노선번호·상태 title이 일치하는지 확인
+13. 차량 10초 갱신을 두 번 이상 지나도 사용자가 바꾼 지도 중심·줌 유지
+14. 출발·도착 주변 역과 U/D 다음 출발, 시간표 기반·지연 미반영·추천시간
+    미합산 문구 확인
+15. 왼쪽 패널 최하단 TAGO 버스·지하철 제공 안내와 NAVER SDK 기본 저작권 확인
+16. localStorage v3 프로필·장소·당일 현재 걸음 저장과 새로고침 복구,
     v2 프로필·목표·장소 이전
-15. 1440/768/390/320px overflow
-16. 루트 `data-ui-state`가 idle→editing-place→ready→calculating→results→
+17. 1440/768/390/320px overflow, 320px 주변 역 카드 단일 열
+18. 루트 `data-ui-state`가 idle→editing-place→ready→calculating→results→
     route-selected로 전환되고 오류 시 `error`인지 확인
-17. 추천 성공 0~2회 `guided`, 3회부터 `compact`이며 설정에서 자동/자세히/
+19. 추천 성공 0~2회 `guided`, 3회부터 `compact`이며 설정에서 자동/자세히/
     간결하게를 바꿔도 주요 컨트롤 위치가 유지되는지 확인
-18. OS 또는 서비스의 동작 줄이기에서 드로잉·슬라이드·펄스가 제거되는지 확인
-19. 계산 중 가상 단계·퍼센트 없이 단일 요청 표시가 보이고 8초 뒤 지연
+20. OS 또는 서비스의 동작 줄이기에서 드로잉·슬라이드·펄스가 제거되는지 확인
+21. 계산 중 가상 단계·퍼센트 없이 단일 요청 표시가 보이고 8초 뒤 지연
     안내만 추가되는지 확인
-20. 지도 경로 opacity가 비선택 0.18, hover/focus 0.55, 선택 NAVER 0.95·
+22. 지도 경로 opacity가 비선택 0.18, hover/focus 0.55, 선택 NAVER 0.95·
     SVG fallback 1.0인지 확인
-21. 익명 정보 동의 전·거부·철회 시 UI 이벤트 요청이 0건인지 확인
-22. 동의 후 허용 이벤트가 `204 No Content`이고 Prometheus
+23. 익명 정보 동의 전·거부·철회 시 UI 이벤트 요청이 0건인지 확인
+24. 동의 후 허용 이벤트가 `204 No Content`이고 Prometheus
     `chimap_ui_events_total`이 증가하는지 확인
-23. 비로그인 상태에서 `/api/v1/auth/session`이 `authenticated=false`,
+25. 비로그인 상태에서 `/api/v1/auth/session`이 `authenticated=false`,
     `kakaoLoginAvailable=true`인지 확인
-24. `/api/v1/auth/kakao/start`가 Kakao authorize로 302 이동하고 state cookie가
+26. `/api/v1/auth/kakao/start`가 Kakao authorize로 302 이동하고 state cookie가
     HttpOnly·Secure·SameSite=Lax인지 확인
-25. 로그인하지 않아도 검색·추천·지도 전체 흐름이 계속 동작하는지 확인
-26. 실제 계정으로 login→callback→사용자 표시→logout을 확인
-27. 공개 bundle에서 NAVER server, Kakao OAuth, session 비밀값이 모두
+27. 로그인하지 않아도 검색·추천·지도 전체 흐름이 계속 동작하는지 확인
+28. 실제 계정으로 login→callback→사용자 표시→logout을 확인
+29. 공개 bundle에서 NAVER server, Kakao OAuth, session·TAGO 비밀값이 모두
     미검출인지 확인
-28. `/api/v1/mobile-config`의 contract/minimum version/maintenance/region과
+30. `/api/v1/mobile-config`의 contract/minimum version/maintenance/region과
     guest·Kakao·Apple provider flag가 runtime credential 상태와 일치하는지 확인
-29. `schema_migrations`가 1~6 current이고 candidate와 운영 readiness가 모두
-    HTTP 200인지 확인
+31. `schema_migrations`가 1~7 current이고 candidate와 운영 readiness가 모두
+    HTTP 200이며 지하철 전체·활성·매핑 통계가 기대값인지 확인
 
 자동 E2E:
 
@@ -419,6 +446,30 @@ draft PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 reb
   SHA-256 `829a8a6911dc5e9f69091c993405035a4f75afbd12faebd5f2382d69686f4d0f`
 - restore: `PostGIS=1/migration=6/227225/2844/134/5731`
 - monitoring: Prometheus target 3개 `up`, rule 20개 healthy, Alertmanager ready
+
+### 2026-07-27 버스·지하철·3종 추천 승격 기록
+
+- release source: `96e25490d156386f0dc0860363d26fa672509795`
+- image: `sha256:f497c9a50e3791f9d1f3ba72eb7334ac5580b7c6f4048a2a00f9d14c88d5f1bf`
+- rollback image: `chimap:rollback-pre-20260727-webp-marker`
+  (`sha256:08a54820c48feda9ad0499abb864119fe1a71902d16eb85cc2db9cf2dd10412b`)
+- public assets: `/assets/index-BjbF61pt.js`, `/assets/index-CQVn3DWd.css`,
+  `/assets/bus_icon-DB1cEqjH.webp`(9,464 bytes)
+- validation: 결정적 테스트 182개와 격리 PostGIS 8개(전체 190), typecheck,
+  workspace 경계·format, Web/API/iOS/Android `build:all` 통과
+- DB: migration 1~7 current, 지하철 원본 1,099행→활성 1,097개,
+  TAGO 정확 매핑 706개·미해결 391개·대기 0개
+- 공개 API/UI: 대전역 검색·근처 역·U/D 시간표 기반 다음 출발과 추천 결과의
+  출발·도착 주변 역 카드 확인
+- strict E2E: 추천·주변 역·NAVER 지도·차량 10초 갱신·카메라 보존과
+  1440/768/390/320px 통과. 확장 검색은 upstream 일시 실패 후 단독 재실행 통과
+- 배포 후 backup: `chimap-daily-20260727T052848Z.dump`, 17,448,666 bytes,
+  SHA-256 `40fdf6b44cef23f56954f9213e6ac045c3f1dcc19a3404330b0ed063a7acea8c`
+- restore: `PostGIS=1/migration=7/227225/2844/134/5731`, 지하철 table data와
+  모든 index archive 포함 확인
+- security: 추적 파일·공개 bundle·최근 운영 log에서 서버 비밀값 0건
+- monitoring: target 3개 `up`, rule 20개 healthy, Alertmanager ready,
+  지하철 미매핑 gauge 391
 
 ## 12. 공개 번들 비밀값 검사
 

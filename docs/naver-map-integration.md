@@ -67,11 +67,26 @@ https://oapi.map.naver.com/openapi/v3/maps.js
 - 사용자 재시도 시 SDK 재요청
 
 지도에는 추천 경로 polyline, 출발·도착, 운동 구간, 첫 승차·환승·최종
-하차와 탑승 정류장에 가장 가까이 접근 중인 차량을 구간별 최대 1대
-표시합니다. 버스 중간 정류장은 마커로 표시하지 않습니다. 버스 polyline은
+하차를 표시합니다. 차량은 도착 600초 이하일 때 승차 전 가장 가까운 1대와
+승차~하차 정류장 순서 안에서 운행 중인 모든 차량을 중복 없이 표시합니다.
+버스 중간 정류장은 마커로 표시하지 않습니다. 버스 polyline은
 TAGO 정류장 순서를 Kakao Mobility Directions 도로 vertex에 매칭한 좌표를
-사용합니다. 노선 전체 차량과 이미 탑승 순서를 지난 차량은 표시하지 않으며
-차량 좌표는 지도 bounds 계산에서 제외합니다.
+사용합니다. 순서를 모르는 차량, 승차 전 ETA가 600초를 넘는 차량과 하차
+지점을 지난 차량은 표시하지 않으며 차량 좌표는 지도 bounds 계산에서
+제외합니다.
+
+차량 marker는 240×240 RGBA 원본 `bus_icon.webp`를 60×60 CSS marker로
+사용합니다. 중앙에는 흰 전광판을 겹치고 길이에 따라 축소한 검은색 굵은 노선번호를
+겹치고, 이미지 alt는 비우되 marker role/title에는 도착 분 또는 `이동 구간
+운행 중` 상태를 제공합니다. anchor는 이미지 하단 중앙입니다. SVG fallback도
+같은 PNG와 노선번호·title 규칙을 사용합니다.
+
+경로 polyline·출발/도착·승하차 marker와 차량 marker는 별도 overlay 배열로
+관리합니다. 차량 query는 화면이 보일 때 10초마다 다시 조회하지만 차량
+overlay만 교체합니다. camera signature는 추천 request ID, 선택 route ID,
+출발·도착과 route geometry를 포함하며 signature가 바뀌거나 SDK 재시도를 한
+경우에만 `fitBounds`/`setCenter`/`setZoom`을 실행합니다. 카드 hover/focus와
+차량·도착정보 갱신은 사용자가 이동한 중심과 줌을 바꾸지 않습니다.
 
 여러 추천을 동시에 비교할 때 선택하지 않은 경로는 opacity 0.18, 카드
 hover/focus 경로는 0.55, 선택 경로는 0.95로 그립니다. 카드 선택·hover·
@@ -189,8 +204,10 @@ HTTP 200을 다시 확인합니다. host 호출 성공만으로 서버 보완 �
 1. `/v3/auth` 및 SDK load 성공
 2. map instance 생성
 3. 추천 polyline과 marker 표시
-4. `E2E_REQUIRE_NAVER_MAP=1` Playwright 통과
-5. 공개 JavaScript asset에서 서버 Client Secret 미검출
+4. WebP 차량 marker와 흰 전광판·검은 노선번호·접근성 title 표시
+5. 차량을 두 번 이상 갱신해도 camera fit 횟수와 사용자가 바꾼 시점 유지
+6. `E2E_REQUIRE_NAVER_MAP=1` Playwright 통과
+7. 공개 JavaScript asset에서 서버 Client Secret 미검출
 
 ## 8. Client Secret 재발급
 

@@ -1,15 +1,17 @@
 # 데이터베이스 스키마와 저장 계약
 
-기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-27 11:01 KST
-운영 DB에서 migration 1~6, 정류장 227,225개, TAGO 연결 정류장 2,844개,
-노선 134개, 노선-정류장 관계 5,731개를 확인했습니다. 운영 수치는
+기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-27 운영 DB에서
+migration 1~7, 정류장 227,225개, TAGO 연결 정류장 2,844개, 노선 134개,
+노선-정류장 관계 5,731개, 활성 지하철역 1,097개와 TAGO 매핑 706개를
+확인했습니다. 운영 수치는
 [구현·운영 현황](./current-state.md)에서 갱신합니다.
 
 ## 1. 경계와 원칙
 
 CHIMap은 PostgreSQL 18과 PostGIS를 사용합니다. DB에는 전국 버스 정류장,
 TAGO 식별자, 노선과 노선-정류장 순서 같은 정적 교통 데이터와, 사용자가
-선택적으로 로그인한 경우의 최소 계정·web/mobile session, refresh token
+지하철역·노선과 TAGO 역 ID 같은 정적 교통 데이터, 사용자가 선택적으로
+로그인한 경우의 최소 계정·web/mobile session, refresh token
 family와 암호화된 retry credential만 저장합니다.
 
 다음 정보는 영구 저장하지 않습니다.
@@ -19,6 +21,7 @@ family와 암호화된 retry credential만 저장합니다.
 - 현재·목표 걸음과 자동 추천 요청
 - 만 나이에서 파생한 출생연도, 신장, 체중, 생물학적 성별과 개인화 프로필
 - TAGO 도착·차량의 실시간 응답
+- TAGO 지하철 시간표 응답
 - Kakao·NAVER·TAGO 원문 응답
 - API 자격 증명
 - 카카오 access token과 refresh token
@@ -88,6 +91,9 @@ migration 5는 `oauth_accounts.provider` 허용값에 `APPLE`을 추가합니다
 AES-256-GCM ciphertext/IV/tag와 마지막 Apple 검증 시각을 보관할 column을
 추가합니다. Kakao account는 네 column이 모두 NULL이어야 하고 Apple credential은
 네 값이 모두 존재해야 하는 check constraint를 둡니다.
+
+migration 7은 CSV의 역·노선 row와 TAGO 매핑 상태를 보존하는
+`subway_station_lines`를 추가합니다. 기존 버스·인증 row는 변경하지 않습니다.
 
 전역 실행 registry는 `apps/api/src/migrations.ts`입니다. 교통 migration 1~3은
 `apps/api/src/transit/migrations.ts`, 인증 migration 4는
@@ -197,7 +203,45 @@ CREATE INDEX bus_route_stops_stop_index
 transaction 전체만 최대 두 번 다시 실행합니다. 다른 DB 오류는 재시도하지
 않습니다.
 
-### 4.4 사용자와 로그인 세션
+### 4.4 subway_station_lines
+
+```sql
+CREATE TABLE subway_station_lines (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  station_code varchar(50) NOT NULL,
+  station_name varchar(200) NOT NULL,
+  line_code varchar(50) NOT NULL,
+  line_name varchar(200) NOT NULL,
+  english_name varchar(200),
+  hanja_name varchar(200),
+  transfer_type varchar(100),
+  transfer_line_code varchar(200),
+  transfer_line_name varchar(500),
+  location geography(Point, 4326) NOT NULL,
+  operator_name varchar(200) NOT NULL,
+  road_address varchar(500),
+  phone_number varchar(100),
+  data_date text NOT NULL,
+  tago_station_id varchar(100),
+  tago_route_name varchar(200),
+  mapping_status varchar(20) NOT NULL,
+  mapping_checked_at timestamptz,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
+  UNIQUE(station_code, line_code, line_name, operator_name)
+);
+
+CREATE INDEX subway_station_lines_location_gist
+  ON subway_station_lines USING gist(location);
+```
+
+CSV import는 임시 staging table에 검증된 1,097개 row를 먼저 넣고 하나의
+transaction에서 전체 기존 row를 비활성화한 다음 자연키 upsert로 현재 파일의
+row만 다시 활성화합니다. TAGO ID와 매핑 상태는 conflict update 대상에서
+제외하므로 재import와 원본 누락에도 보존됩니다.
+
+### 4.5 사용자와 로그인 세션
 
 ```sql
 CREATE TABLE app_users (
@@ -575,7 +619,7 @@ systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합
 - 주간 최근 4개 보관
 - 월 1회 digest가 고정된 별도 PostGIS 18 컨테이너에 restore 검증
 - PostGIS 이미지 초기화 후 `template0` 기반 빈 DB에 `pg_restore`
-- 복구 시험 후 extension, migration과 네 가지 통계 확인
+- 복구 시험 후 extension, migration, 버스 네 가지 통계와 지하철 table/index 확인
 - `restore-latest.json`에 검증 완료시각과 통계 기록
 - volume 장애 시 최신 검증 백업으로 새 volume을 만든 뒤 readiness 확인
 

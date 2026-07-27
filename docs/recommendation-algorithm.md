@@ -189,24 +189,13 @@ autoExtraMinutes = clamp(ceil(missingWalkMinutes × 1.25 + 5), 15, 90)
 기존 요청만 `deadline - safetyBufferMinutes`와 `maxExtraMinutes`를 종전대로
 적용하며 조건을 만족하는 후보가 없으면 `NO_ROUTE_WITHIN_DEADLINE`입니다.
 
-## 8. 걸음과 점수
+## 8. 걸음 계산
 
 ```text
 estimatedSteps = round(walkDistanceMeters / stepLengthMeters)
 expectedTotalSteps = currentSteps + estimatedSteps
 ```
 
-균형 점수는 낮을수록 좋습니다.
-
-```text
-0.60 × stepError
-+ 0.30 × timePenalty
-+ 0.10 × transferPenalty
-```
-
-- `stepError`: 목표에 필요한 걸음과 후보 걸음의 오차
-- `timePenalty`: 허용 추가시간 대비 실제 추가시간
-- `transferPenalty`: 환승 횟수/3, 최대 1
 ## 9. 중복 제거와 최종 선택
 
 다음 조건을 모두 만족하면 같은 경로로 봅니다.
@@ -220,15 +209,16 @@ expectedTotalSteps = currentSteps + estimatedSteps
 선택 순서:
 
 1. `FAST`: 유효 후보 중 총 소요시간 최소
-2. `GOAL`: 남은 걸음과 예상 걸음 차이 최소
-3. `BALANCED`: 균형 점수 최소
+2. `BALANCED`: FAST 예상 걸음의 2배와 예상 걸음 차이 최소
+3. `GOAL`: 남은 걸음과 예상 걸음 차이 최소
 4. 응답 정렬은 FAST→BALANCED→GOAL
 
-같은 route ID를 두 타입에 중복 배정하지 않습니다. 이미 목표 걸음을 채운
-사용자에게는 baseline 후보만 사용하므로 경로 수가 1개일 수 있습니다.
-남은 걸음이 있으면 `primaryRecommendationId`는 GOAL, GOAL이 없으면
-BALANCED를 가리키며 UI가 이 경로를 처음부터 선택합니다. 목표를 이미
-달성한 경우 FAST가 기본입니다.
+`BALANCED`는 기존 API 호환을 위해 유지하는 타입 이름이며 화면에는
+`2배 걸음 경로`로 표시합니다. 같은 route ID를 두 타입에 중복 배정하지
+않으며 유효한 고유 후보가 3개 이상이면 세 타입을 모두 반환합니다. 실제
+후보가 부족하면 경로를 복제하지 않고 1~2개만 반환합니다. 남은 걸음이 있으면
+`primaryRecommendationId`는 GOAL, GOAL이 없으면 BALANCED를 가리키며 UI가
+이 경로를 처음부터 선택합니다. 목표를 이미 달성한 경우 FAST가 기본입니다.
 
 브라우저의 추천 성공 횟수는 성공 응답을 받은 뒤 안내 밀도를 조절하는 데만
 사용합니다. 이 값은 추천 요청에 포함하지 않고 서버나 PostgreSQL에 저장하지

@@ -59,6 +59,7 @@ React Web
   │    캠퍼스 중심/주소/출입구    │
   ├─ RecommendationCard          │ HTTPS
   ├─ RouteDetails                │
+  ├─ NearbySubwayPanel           │ 주변 역 + U/D 시간표
   └─ MapView                     │
                                   ↓
 Express API
@@ -81,6 +82,7 @@ Express API
   │              ├─ Kakao road geometry
   │              └─ TransitService
   │                   ├─ TAGO client
+  │                   ├─ Subway CSV importer
   │                   └─ TransitRepository
   │
   ├─ AppMetrics
@@ -92,6 +94,12 @@ Express API
 
 외부 응답은 provider 경계에서 Zod로 검증하고 WGS84 내부 모델로
 정규화합니다. API 응답도 공유 계약 패키지로 다시 검증합니다.
+
+Web의 추천 계산과 주변 지하철 안내는 의도적으로 분리합니다. 추천은 현재
+버스 topology와 Kakao 도보/도로 geometry를 사용하고, 추천 성공 뒤 Web이
+출발·도착 주변 역과 TAGO 시간표 API를 별도 조회합니다. 지하철 CSV에는 역
+간 연결 순서가 없으므로 시간표를 추천 duration이나 geometry에 합산하지
+않습니다.
 
 ### Mobile application 경계
 
@@ -247,7 +255,7 @@ RecommendationRequest
        └─ 여전히 없음: 늦은 탑승+조기 하차 조합 상위 1개
   → 마감/추가시간 필터
   → 중복 제거
-  → FAST/BALANCED/GOAL 선택
+  → FAST/FAST 대비 2배 걸음/목표 근접 후보를 고유 route로 선택
   → 남은 목표가 있으면 GOAL을 primaryRecommendationId로 지정
   → RecommendationResponse
 ```

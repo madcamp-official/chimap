@@ -4,19 +4,20 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 웹 애플리케이션입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 공개 health/readiness 재확인: 2026-07-27 11:01 KST
-- 전체 운영 검증 스냅샷: 2026-07-27 11:05 KST
+- 공개 health/readiness 재확인: 2026-07-27 14:29 KST
+- 전체 운영 검증 스냅샷: 2026-07-27 14:29 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`f624e9b`)
+- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`96e2549`)
 - cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
-- cross-platform Web/API·migration 4~6 운영 배포: 2026-07-27 11:01 KST
+- 버스 위치·지도 시점·TAGO 지하철·migration 7 운영 배포: 2026-07-27 14:28 KST
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
 현재 공개 readiness는 정류장 227,225개, TAGO 연결 정류장 2,844개,
-노선 134개, 노선-정류장 관계 5,731개입니다. 추천 요청이 새 지역의 실제
-노선을 동기화하면 이 수치는 증가할 수 있습니다.
+노선 134개, 노선-정류장 관계 5,731개, 활성 지하철역 1,097개와 TAGO 매핑
+706개입니다. 추천 요청이 새 지역의 실제 노선을 동기화하면 버스 관련 수치는
+증가할 수 있습니다.
 
 Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 이벤트, 자동
 건강 경로 UX와 선택형 카카오 로그인이 공개 asset에 반영되어 있습니다.
@@ -42,11 +43,14 @@ Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
    계산하고 TAGO 버스, Kakao 도보와 도로 매칭 geometry를 조합합니다.
 6. 목표 경로는 먼저 내려 걷는 후보를 우선하고, 필요할 때 더 뒤의
    정류장에서 탑승하는 후보를 결합합니다.
-7. 빠른 경로, 균형 경로, 목표 달성 경로의 시간·수단·도보·환승을 간단히
+7. 빠른 경로, 빠른 경로 대비 약 2배 걸음 경로, 목표 근접 경로의
+   시간·수단·도보·환승을 간단히
    비교합니다.
 8. 카드를 선택해 NAVER 지도 경로를 바꾸고, 필요한 경로만 `자세히`를
    열어 전체 텍스트 이동 단계와 승하차 정보를 확인합니다.
-9. 화면 설정에서 안내 밀도와 움직임을 조절하고 익명 사용성 정보 공유 여부를
+9. 추천 아래에서 출발·도착 주변 역과 TAGO 시간표 기반 U/D 다음 출발을
+   확인합니다. 지연을 반영한 실시간 ETA가 아니며 추천 시간에는 합산하지 않습니다.
+10. 화면 설정에서 안내 밀도와 움직임을 조절하고 익명 사용성 정보 공유 여부를
    언제든 바꿀 수 있습니다.
 
 추천 계산 중에는 가상 퍼센트나 완료된 것처럼 보이는 단계를 만들지 않고 실제
@@ -66,14 +70,15 @@ Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
 
 | 영역 | 공급자/저장소 | 역할 |
 | --- | --- | --- |
-| 지도 | NAVER Web Dynamic Map | 지도, 경로선, 승하차와 접근 차량 마커 |
+| 지도 | NAVER Web Dynamic Map | 지도, 경로선, 승하차와 선별 차량 마커 |
 | 장소 | Kakao Local | 키워드·주소 검색 |
 | 주소 보완 | NAVER Geocoding | Kakao 0건 또는 복구 가능한 장애 시 주소 검색 |
 | 역지오코딩 | Kakao→NAVER | GPS 좌표를 주소로 변환 |
 | 도보 | Kakao Routing | 실제 도보 거리·시간·좌표 |
 | 버스 선 | Kakao Mobility Directions | TAGO 정류장 순서를 보존한 도로 매칭 geometry |
 | 버스 | 국토교통부 TAGO | 정류장·노선·도착·차량 |
-| 정적 교통 데이터 | PostgreSQL 18 + PostGIS | 전국 정류장, TAGO 연결, 노선 순서 |
+| 지하철 | 국토교통부 TAGO | 역 검색·역별 시간표 기반 다음 출발 |
+| 정적 교통 데이터 | PostgreSQL 18 + PostGIS | 전국 정류장·노선 순서·지하철역과 TAGO 매핑 |
 
 경로 추천은 외부 공급자 응답과 전국 공개 정류장 자료만 사용합니다. 지도 SDK가
 준비되지 않으면 같은 추천 응답의 실제 좌표를 SVG로 표시합니다.
@@ -182,6 +187,10 @@ docker compose run --rm api node dist/cli/transit.js sync-area \
 docker compose run --rm api node dist/cli/transit.js sync-area \
   --lat 36.3321 --lng 127.4342 --radiusMeters 500 --maxRoutes 40
 
+docker compose run --rm api node dist/cli/transit.js import-subway-stations
+docker compose run --rm api node dist/cli/transit.js sync-subway-stations \
+  --concurrency 4
+
 docker compose run --rm api node dist/cli/transit.js stats
 ```
 
@@ -202,6 +211,10 @@ import해도 `source_identity` 기준으로 중복되지 않습니다.
 | `pnpm bus:sync-area -- --lat <lat> --lng <lng>` | 주변 노선 동기화 |
 | `pnpm bus:sync-areas -- --path <file> --statusPath <file>` | 여러 운영 지역 동기화와 상태 기록 |
 | `pnpm bus:stats` | 정류장·연결·노선·관계 수 확인 |
+| `pnpm subway:import-stations` | 15열 전국 지하철역 CSV 원자적 import |
+| `pnpm subway:sync-stations` | CSV 역과 TAGO 역 ID의 단일 정확 후보 매핑 |
+| `pnpm subway:test-departures -- --stationId <id> --direction U` | TAGO 시간표 기반 다음 출발 확인 |
+| `pnpm subway:stats` | 전체·활성·TAGO 매핑 지하철역 수 확인 |
 | `./ops/backup-postgres.sh` | 즉시 백업·checksum·보존 정책 실행 |
 | `./ops/verify-postgres-backup.sh` | 최신 백업을 별도 PostGIS에 복원 검증 |
 | `./ops/sync-transit.sh` | 운영 지역 TAGO 노선과 관계 즉시 갱신 |
@@ -223,6 +236,9 @@ GET  /api/v1/places?query=카이스트&scope=resolve&x=127.36&y=36.37&limit=8
 GET  /api/v1/places/reverse?x=127.36&y=36.37
 POST /api/v1/recommendations
 POST /api/v1/ui-events
+GET  /api/v1/transit/subway/stations/search?query=대전&limit=10
+GET  /api/v1/transit/subway/stations/nearby?lat=36.3315&lng=127.4331
+GET  /api/v1/transit/subway/stations/223/departures?direction=U
 ```
 
 검색 중심 좌표는 전국 검색 범위를 제한하지 않고 결과 순서에만 사용합니다.
@@ -242,9 +258,9 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-현재 일반 결정적 테스트는 contracts 11개, app-core 3개, alert-relay 3개,
-API 77개, web 43개, mobile 14개로 총 151개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 7개까지 포함하면 총 158개입니다.
+현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 3개,
+API 96개, web 54개, mobile 14개로 총 182개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 190개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \

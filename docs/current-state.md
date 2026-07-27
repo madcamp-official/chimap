@@ -4,17 +4,17 @@
 
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
   계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
-  포함합니다. 2026-07-27에 결정적 테스트 151개, 격리 PostGIS 7개, 전체
+  포함합니다. 2026-07-27에 결정적 테스트 182개, 격리 PostGIS 8개, 전체
   typecheck/build, Android arm64 native compile과 GitHub의 iOS simulator·Android
   전체 ABI compile을 통과했습니다. 실제 iPhone/Android Development Build와
   store archive는 외부 release gate로 남습니다.
-- **현재 공개 배포**: 2026-07-27 11:01 KST에 commit `f624e9b`, 이미지
-  `sha256:0a2db829…`로 API/웹·alert relay 컨테이너를 교체했습니다. 공개 asset
-  `index-GVl8ucg8.js`, 선택형 웹 로그인, guest mobile config, migration 4~6,
-  health/readiness와 strict E2E를 확인했습니다.
-- **마지막 전체 운영 점검**: 2026-07-27 11:05 KST에 컨테이너, PostgreSQL,
-  migration 6, 배포 후 백업·전체 복원, 모니터링, 공개 E2E와 인증·mobile config
-  smoke를 대조했습니다.
+- **현재 공개 배포**: 2026-07-27 14:28 KST에 commit `96e2549` 소스의 이미지
+  `sha256:f497c9a5…`로 API/웹·alert relay를 교체했습니다. 공개 asset
+  `index-BjbF61pt.js`, WebP 버스 marker·지도 시점 안정화, 주변 지하철 안내,
+  migration 7과 TAGO 지하철 API를 health/readiness와 strict E2E로 확인했습니다.
+- **마지막 전체 운영 점검**: 2026-07-27 14:29 KST에 컨테이너, PostgreSQL,
+  migration 7, 지하철 1,097개 import·706개 TAGO 매핑, 배포 후 백업·전체 복원,
+  모니터링, 공개 E2E와 인증·mobile config smoke를 대조했습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -61,8 +61,16 @@
 - TAGO 정류장 직선 연결을 Kakao 다중 경유지 도로 geometry로 교체
 - 지도 버스 마커를 첫 승차·환승·최종 하차만 표시하도록 정리
 - 선택 경로와 무관해 보이던 노선 전체 차량 표시를 제거
-- 각 버스 구간의 탑승 정류장에 가장 가까이 접근 중인 차량만 최대 1대 표시
-- 차량 좌표가 지도 자동 확대 범위를 바꾸지 않도록 분리
+- 도착 10분 이하일 때 탑승 정류장에 가장 가까운 접근 차량과 승차~하차
+  정류장 순서 안에서 운행 중인 차량을 중복 없이 표시
+- `bus_icon.webp` 중앙에 흰 전광판과 검은 노선번호를 겹쳐 NAVER·SVG 지도에서 통일
+- 차량 10초 갱신을 경로 overlay와 분리해 사용자 중심·줌과 bounds를 보존
+- 전국 지하철역 CSV 1,099행을 자연키 기준 1,097개로 원자적 import
+- CSV 지하철역 706개를 TAGO 역 ID에 정확 매핑하고 391개는 임의 fuzzy
+  matching 없이 `UNRESOLVED`로 보존
+- 지하철 검색·근처 역·TAGO 시간표 기반 다음 출발 API 제공
+- 추천 결과에서 출발·도착 2km 내 매핑 역과 상·하행 다음 출발을 조회해
+  `TAGO 시간표 기반 예상`으로 표시하며 실제 지연 미반영과 추천시간 미합산을 명시
 
 ### 데이터·운영
 
@@ -96,8 +104,8 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:0a2db829…`, commit `f624e9b`), 단일 Node.js 프로세스, healthy |
-| DB | PostgreSQL 18 + PostGIS 3.6, healthy |
+| API | `chimap:actual-data` (`sha256:f497c9a5…`, code commit `96e2549`), 단일 Node.js 프로세스, healthy |
+| DB | PostgreSQL 18 + PostGIS 3.6, migration 7, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
@@ -110,15 +118,15 @@
 | 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
 | 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
 | foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
-| 공개 웹 asset | `index-GVl8ucg8.js`, 380,779 bytes |
+| 공개 웹 asset | `index-BjbF61pt.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | `/mobile-config` guest enabled, 운영 Kakao/Apple credential 입력 전이라 두 provider disabled |
 | 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
-| 공개 번들 비밀값 검사 | NAVER·Kakao OAuth·CHIMap session 비밀값 미검출 |
+| 공개 번들 비밀값 검사 | NAVER·Kakao·TAGO·DB·CHIMap session 서버 비밀값 미검출 |
 
 ## 3. readiness 스냅샷
 
-2026-07-27 11:01 KST 공개 재확인 결과:
+2026-07-27 14:29 KST 공개 재확인 결과:
 
 ```json
 {
@@ -137,13 +145,16 @@
     "stops": 227225,
     "linkedStops": 2844,
     "routes": 134,
-    "routeStops": 5731
+    "routeStops": 5731,
+    "subwayStations": 1097,
+    "activeSubwayStations": 1097,
+    "mappedSubwayStations": 706
   }
 }
 ```
 
-readiness timestamp는 `2026-07-27T02:01:44.813Z`였습니다. 위 JSON에서는
-가독성을 위해 timestamp를 생략했습니다. 네 교통 통계가 모두 0보다 크고
+readiness timestamp는 `2026-07-27T05:29:23.205Z`였습니다. 위 JSON에서는
+가독성을 위해 timestamp를 생략했습니다. 필수 교통 통계가 준비되고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
 노선을 저장하므로 이 수치는 백업 시점보다 증가할 수 있습니다.
@@ -175,19 +186,23 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
   한국 날짜별 현재 걸음 사용
 - 기본 경로 도보거리와 남은 목표 거리로 15~90분 자동 추가시간을 계산하고
   자동 범위 밖 후보를 제외
-- 목표를 이미 달성한 경우 운동 우회 후보 없이 빠른 경로만 제공
+- 목표를 이미 달성한 경우 운동 우회 후보는 만들지 않되, 기본 후보가
+  충분하면 빠른·2배 걸음·목표 근접 경로 3개를 제공
 - 같은 추천 endpoint에서 간소화 요청과 기존 시간 제약 요청을 strict union으로
   구분하고 기존 요청에는 `Deprecation: true` 응답 header 제공
 - 마지막 버스의 조기 하차 후보를 우선하고 부족하면 늦은 탑승·양쪽 조합
 - TAGO 정류장 순서를 최대 30개 경유지 단위로 Kakao 도로에 매칭
-- 빠른·균형·목표 달성 최대 3개 추천
+- 빠른·빠른 경로 대비 약 2배 걸음·목표 근접 최대 3개 추천
 - 남은 목표가 있으면 목표에 가장 가까운 추천을 기본 선택
 - NAVER 지도에 도로 매칭 경로와 첫 승차·환승·최종 하차만 표시
 - 운동 시작 마커를 제거하고 모든 도보 구간을 주황색 실선으로 통일
 - 지도는 비선택 0.18, 카드 hover/focus 0.55, 선택 0.95
   불투명도를 사용하고 SVG 복구 지도의 선택 경로는 1.0으로 표시
-- 선택한 각 버스 구간에서 탑승 정류장에 가장 가까이 접근 중인 차량 최대 1대
-- 차량은 노선번호 중심의 작은 마커로 표시하고 지도 bounds 계산에서는 제외
+- 도착 600초 이하 승차 전 최근접 차량 1대와 승차~하차 구간 운행 차량 전체를
+  중복 제거해 표시하고, 순서 없음·ETA 초과·하차 통과 차량 제외
+- 차량은 `bus_icon.webp` 중앙 흰 전광판 위 검은 노선번호와 상태 title로 표시하고
+  지도 bounds 계산에서는 제외
+- 차량·도착 10초 갱신은 차량 overlay만 바꾸며 경로와 사용자 중심·줌 보존
 - NAVER SDK 장애 시 동일 추천 좌표 SVG 표시
 - 첫 방문 3초 인트로와 `prefers-reduced-motion` 처리
 - 추천 카드의 이동수단별 시간 비중 막대와 간략 이동수단 순서
@@ -206,6 +221,7 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 ### PostgreSQL/PostGIS
 
 - `schema_migrations`, `bus_stops`, `bus_routes`, `bus_route_stops`
+- `subway_station_lines`, 위치 GiST와 TAGO 매핑 상태 인덱스
 - migration advisory lock과 SHA-256 checksum 검증
 - CSV 임시 테이블/COPY/upsert
 - `geography(Point,4326)` + GiST 반경 검색
@@ -261,8 +277,8 @@ process eviction과 TestFlight/Play release E2E입니다.
 
 ## 5. 검증 기록
 
-로컬 foundation 검증과 최신 공개 검증은 2026-07-27 구현과 11:01 KST에
-배포된 Web/API 이미지를 대상으로 합니다.
+로컬 검증은 2026-07-27 code commit `96e2549`, 최신 공개 검증은 14:28 KST에
+배포된 같은 commit의 Web/API 이미지를 대상으로 합니다.
 
 | 검증 | 결과 |
 | --- | --- |
@@ -271,12 +287,14 @@ process eviction과 TestFlight/Play release E2E입니다.
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| cross-platform foundation 로컬 검사 | 경계·format·typecheck, 결정적 테스트 151개, PostGIS 7개 통과 |
-| cross-platform build | Web production 및 iOS·Android Hermes bundle export 통과 |
+| 최신 전체 로컬 검사 | 경계·format·typecheck, 결정적 테스트 182개, 격리 PostGIS 8개 통과 |
+| cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |
-| PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 교통 5개와 migration 4~6·mobile auth 2개 통과 |
+| PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 교통·migration 6개와 mobile auth 2개 통과 |
 | 공개 strict 지도 E2E | 기본 추천·NAVER 지도·레이아웃 통과. 확장 정류장 1회 upstream 504 후 단독 재실행 통과 |
+| 2026-07-27 14:27 KST 공개 strict E2E | 기본 추천·주변 역·NAVER 지도·버스 갱신·카메라 보존과 4개 viewport 통과. 확장 검색은 upstream 일시 실패 후 단독 재실행 통과 |
+| TAGO 지하철 공개 API | 대전역 검색·근처 역·U/D 다음 출발, `scheduleBased=true`·`realtimeAvailable=false` 확인 |
 | 공개 반응형 Chromium smoke | 로그인 포함 1440/768/390/320px 통과; 768px 겹침 수정 후 재검증 |
 | 공개 공급자 회귀 | 전체 실행 중 20초 timeout 후 같은 시나리오 단독 재실행 5.5초 통과 |
 | 공개 카카오 인증 smoke | session available, start 302, state cookie 보안 속성, Kakao authorize 302 통과 |
@@ -289,7 +307,7 @@ process eviction과 TestFlight/Play release E2E입니다.
 | 지도 교통 마커 | 탑승 1·환승 1·하차 1·중간 정류장 0 육안/E2E 확인 |
 | 지도 도보 표현 | 모든 도보 주황색 실선·운동 시작 마커 0·0.18/0.55/0.95 opacity 구현 |
 | NAVER 서버 API | Geocoding 200 1건, Reverse Geocoding 200 4건 |
-| 차량 마커 E2E | 마커 수≤선택 버스 구간 수, 탑승 접근 차량 title 확인 |
+| 차량 마커 E2E | ETA 접근·구간 운행 선별, WebP·흰 전광판·검은 번호·상태 title, 10초 갱신 중 카메라 보존 확인 |
 | Prometheus | API/relay/Alertmanager target `up`, 20개 rule healthy |
 | 교통 정기 동기화 | 45개 성공·0개 실패, 성공 시각과 실패 수 지표 확인 |
 | 정류장 병합 migration | 1,173쌍→0쌍, 관계 유지, migration 2 적용 |
@@ -297,23 +315,25 @@ process eviction과 TestFlight/Play release E2E입니다.
 | 외부 운영 채널 | webhook 미입력, 구성 지표 `0`과 설정 필요 경보 발생 확인 |
 | 공개 번들 서버 비밀값 검사 | NAVER·Kakao OAuth·session 비밀값 미검출 |
 | 폐기 대상 용어·설정 내용 검색 | 0건 |
-| `git diff --check` | 2026-07-27 foundation 문서 점검 통과 |
+| `git diff --check` | code commit과 최신 문서 점검 통과. 원본 CRLF 지하철 CSV는 importer 검증·checksum으로 별도 확인 |
 
 ## 6. 백업·복구 기록
 
-2026-07-27 11:04 KST migration 6 배포 후 실제 운영 DB의 custom-format 백업을
+2026-07-27 14:28 KST migration 7과 지하철 import·매핑 후 실제 운영 DB의
+custom-format 백업을
 생성하고 checksum과 전체 복원을 확인했습니다.
 
 ```text
-파일: /var/backups/chimap/chimap-daily-20260727T020434Z.dump
-크기: 17,350,161 bytes
-SHA-256: 829a8a6911dc5e9f69091c993405035a4f75afbd12faebd5f2382d69686f4d0f
+파일: /var/backups/chimap/chimap-daily-20260727T052848Z.dump
+크기: 17,448,666 bytes
+SHA-256: 40fdf6b44cef23f56954f9213e6ac045c3f1dcc19a3404330b0ed063a7acea8c
 ```
 
 별도 PostgreSQL/PostGIS 18 컨테이너의 `template0` 기반 빈 DB로 restore한
-뒤 `PostGIS=1`, `migration=6`, `227225/2844/134/5731` 통계를 다시
-확인했습니다. web 계정, mobile token family와 Apple credential schema까지
-복원됩니다. 성공 상태는
+뒤 `PostGIS=1`, `migration=7`, `227225/2844/134/5731` 통계를 다시
+확인했습니다. archive 목록에는 `subway_station_lines` table data·sequence·
+constraint·index가 모두 포함됩니다. web 계정, mobile token family와 Apple
+credential schema까지 복원됩니다. 성공 상태는
 `/var/backups/chimap/latest.json`과 `restore-latest.json`에 기록합니다.
 
 설치된 timer:
@@ -372,6 +392,11 @@ commit으로 공통 feature, CI와 계획 문서를 분리했습니다.
 GitHub Actions run `30230011225`에서 Web/API quality, Mobile JavaScript, iOS
 native, Android native, PostGIS의 다섯 독립 job이 모두 성공했습니다. 같은
 commit의 이미지 `sha256:0a2db829…`를 2026-07-27 11:01 KST 공개 승격했습니다.
+
+버스 위치 선별·WebP marker·카메라 보존·TAGO 지하철 적재/시간표 API와 주변 역
+UI의 운영 소스는 `96e2549 Add live transit tracking and subway schedules`로
+같은 foundation 브랜치에 push했습니다. 동일 소스 이미지
+`sha256:f497c9a5…`를 2026-07-27 14:28 KST 공개 승격했습니다.
 
 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
 있습니다. `feat/tago-transit`→`main` draft PR #1이 열려 있으며, 검토·병합,
