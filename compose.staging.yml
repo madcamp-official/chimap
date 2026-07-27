@@ -70,6 +70,7 @@ services:
       - ./data/subway_segments.csv:/data/subway-topology/subway_segments.csv:ro
       - ./data/subway_headways_fallback.csv:/data/subway-topology/subway_headways_fallback.csv:ro
       - ./data/subway_transfer_edges.csv:/data/subway-topology/subway_transfer_edges.csv:ro
+      - ./data/subway_provider_station_map_template.csv:/data/subway-topology/subway_provider_station_map_template.csv:ro
     networks:
       - internal
 

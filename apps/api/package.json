@@ -20,6 +20,8 @@
     "bus:stats": "tsx src/cli/transit.ts stats",
     "subway:import-stations": "tsx src/cli/transit.ts import-subway-stations",
     "subway:import-topology": "tsx src/cli/transit.ts import-subway-topology",
+    "subway:import-provider-map": "tsx src/cli/transit.ts import-subway-provider-map",
+    "transit:build-transfers": "tsx src/cli/transit.ts build-bus-subway-transfers",
     "subway:sync-stations": "tsx src/cli/transit.ts sync-subway-stations",
     "subway:test-departures": "tsx src/cli/transit.ts subway-departures",
     "subway:stats": "tsx src/cli/transit.ts stats",

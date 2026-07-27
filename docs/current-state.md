@@ -3,24 +3,22 @@
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
-  계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
-  포함합니다. 2026-07-27에 결정적 테스트 191개, 격리 PostGIS 8개, 전체
-  typecheck/build, Android arm64 native compile과 GitHub의 iOS simulator·Android
-  전체 ABI compile을 통과했습니다. 실제 iPhone/Android Development Build와
-  store archive는 외부 release gate로 남습니다.
-- **현재 공개 배포**: 2026-07-27 15:51 KST에 commit `7a99e03` 소스의 이미지
-  `sha256:6cbd51c8…`로 API/웹·alert relay를 교체했습니다. 이 이미지에는 지하철
-  routing 안정화와 보정 경로의 시간표 metadata 보존 수정이 포함됩니다. 16:48
-  KST production health HTTP 200을 재확인했고, 아래 전체 DB·E2E·복구 기록은
-  별도로 명시한 14:29 KST 검증 스냅샷을 기준으로 합니다.
-- **마지막 전체 운영 점검**: 2026-07-27 14:29 KST에 컨테이너, PostgreSQL,
-  migration 7, 지하철 1,097개 import·706개 TAGO 매핑, 배포 후 백업·전체 복원,
-  모니터링, 공개 E2E와 인증·mobile config smoke를 대조했습니다.
+  계약과 Expo 앱에 더해 migration 9, 요청 범위 버스·지하철 멀티모달 그래프,
+  최대 2회 환승, TAGO 시간표 timing과 사전 계산 버스↔지하철 보행 연결을
+  포함합니다. 현재 API 결정적 테스트 114개와 relay 4개, 전체 production
+  build를 통과했고 DB 통합 테스트 8개는 별도 PostGIS 환경에서 실행합니다.
+- **현재 공개 배포**: 2026-07-27 21:39 KST에 commit `e16684b`의 이미지
+  `sha256:77f4de84…`로 API/웹을 교체했습니다. `TRANSIT_ROUTER_MODE=multimodal`이며
+  서울역→강남역 추천에서 첫 4호선 leg가 `SEOUL_REALTIME_ARRIVAL`, 이후 환승
+  leg가 TAGO 시간표 fallback으로 반환됩니다.
+- **마지막 전체 운영 점검**: 2026-07-27 21:45 KST에 컨테이너, PostgreSQL,
+  migration 9, 멀티모달 seed, 공개 health/readiness와 실제 추천, 모니터링,
+  공개 bundle·로그 비밀값과 배포 후 백업을 대조했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
-  정류장 227,054개만 우선 적재됐고 노선·관계·지하철이 없어 readiness는 아직
-  HTTP 503입니다.
+  commit `55fec7c`의 timeout 격리 이미지를 배포하고 버스·지하철 seed를 완료해
+  readiness HTTP 200과 KAIST 본원→대전역 추천 3건을 확인했습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -77,6 +75,12 @@
 - 지하철 검색·근처 역·TAGO 시간표 기반 다음 출발 API 제공
 - 추천 결과에서 출발·도착 2km 내 매핑 역과 상·하행 다음 출발을 조회해
   `TAGO 시간표 기반 예상`으로 표시하며 실제 지연 미반영과 추천시간 미합산을 명시
+- 전체 route-ready 지하철 그래프와 요청 출발·도착 주변 버스 노선만 조합해
+  버스 단독·지하철 단독·버스→지하철·지하철→버스·버스→지하철→버스를 탐색
+- 버스↔지하철 500m 이내 실제 Kakao 보행 경로 182개를 사전 계산하고,
+  서비스 승차 전환 기준 최대 2회 환승과 중복 경로 제거 적용
+- 버스는 TAGO 도착정보, 지하철은 TAGO 시간표, 없으면 검증된 배차간격을
+  사용하며 실제 실시간 여부와 timing source를 구간별 공개
 
 ### 데이터·운영
 
@@ -110,21 +114,22 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:6cbd51c8…`, code commit `7a99e03`), 단일 Node.js 프로세스, healthy |
-| DB | PostgreSQL 18 + PostGIS 3.6, migration 7, healthy |
+| API | `chimap:actual-data` (`sha256:77f4de84…`, commit `e16684b`), 단일 Node.js 프로세스, healthy |
+| DB | PostgreSQL 18 + PostGIS 3.6, migration 9, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
-| 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
+| 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
 | 장소·주소 | Kakao 우선, NAVER 주소 보완 |
 | 도보 | Kakao Routing |
 | 버스 표시선 | Kakao Mobility Directions 도로 geometry |
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
+| 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
 | 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
 | 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
 | foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
-| 공개 웹 asset | `index-BjbF61pt.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
+| 공개 웹 asset | `index-DVyoPrrl.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | production 14:29 snapshot은 guest만 enabled, staging 16:48 snapshot은 guest/Kakao enabled·Apple disabled |
 | 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
@@ -132,7 +137,7 @@
 
 ## 3. readiness 스냅샷
 
-2026-07-27 14:29 KST 공개 재확인 결과:
+2026-07-27 21:45 KST 공개 재확인 결과:
 
 ```json
 {
@@ -148,18 +153,22 @@
     "tago": true
   },
   "transit": {
-    "stops": 227225,
-    "linkedStops": 2844,
-    "routes": 134,
-    "routeStops": 5731,
+    "stops": 227308,
+    "linkedStops": 3271,
+    "routes": 156,
+    "routeStops": 6398,
     "subwayStations": 1097,
     "activeSubwayStations": 1097,
-    "mappedSubwayStations": 706
+    "mappedSubwayStations": 706,
+    "subwayServiceLines": 46,
+    "routeReadySubwayLines": 30,
+    "providerMappedStations": 697,
+    "busSubwayTransferEdges": 182
   }
 }
 ```
 
-readiness timestamp는 `2026-07-27T05:29:23.205Z`였습니다. 위 JSON에서는
+readiness timestamp는 `2026-07-27T12:45:48.159Z`였습니다. 위 JSON에서는
 가독성을 위해 timestamp를 생략했습니다. 필수 교통 통계가 준비되고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
@@ -184,7 +193,8 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - 출발·도착 500m에서 시작해 실제 연결 경로가 없으면 800m, 최대
   1.2km까지 정류장 탐색
 - 노선 0건 정류장은 승하차 후보에서 제외
-- 직행 또는 최대 1회 환승 버스 후보 생성
+- 요청 주변 버스 노선과 전체 route-ready 지하철 그래프에서 최대 2회 환승 후보 생성
+- 사전 계산한 버스↔지하철 보행 엣지로 버스·지하철 혼합 경로를 한 번에 탐색
 - TAGO 도착정보 우선, 없으면 실제 노선의 배차·정류장 정보로 추정
 - Kakao 도보 경로를 버스 전후와 운동 구간에 사용
 - 만 나이·신장·체중·필수 생물학적 성별로 개인화 한 걸음 길이 추정
@@ -227,7 +237,9 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 ### PostgreSQL/PostGIS
 
 - `schema_migrations`, `bus_stops`, `bus_routes`, `bus_route_stops`
-- `subway_station_lines`, 위치 GiST와 TAGO 매핑 상태 인덱스
+- `subway_station_lines`, 노선·역순서·구간·환승·배차간격과 위치 GiST
+- provider 역·방향 매핑, dataset version, transfer build run,
+  PostGIS LineString 기반 `bus_subway_transfer_edges`
 - migration advisory lock과 SHA-256 checksum 검증
 - CSV 임시 테이블/COPY/upsert
 - `geography(Point,4326)` + GiST 반경 검색
@@ -273,15 +285,18 @@ process eviction과 TestFlight/Play release E2E입니다.
 - Compose project: `chimap-staging`
 - PostgreSQL volume: `chimap-staging-postgres`
 - production의 `chimap` project·network·DB volume과 분리
-- API image source: `7a99e03`, image `sha256:7befecd1…`
+- API image source: `55fec7c`, image `sha256:02971772…`
 - database connected, PostGIS·migration current
 - Kakao/NAVER/TAGO provider configured
 - mobile config: guest/Kakao true, Apple false
-- 정류장 227,054개·TAGO 연결 7개, 노선/관계/지하철 0으로 readiness 503
+- 정류장 227,207개·TAGO 연결 2,144개, 노선 50개·관계 4,178개
+- 지하철역 1,097개·TAGO 매핑 706개, readiness 200
+- 외부 KAIST 본원→대전역 추천 `FAST/BALANCED/GOAL` 3건 HTTP 200
 
 같은 staging API를 Web, iOS, Android가 사용하므로 server account와 기준 데이터를
 공유하되, UI persistence와 token은 environment·OS·user namespace를 유지합니다.
-교통 seed 완료와 readiness 200 전에는 실제 추천 E2E를 완료로 처리하지 않습니다.
+교통 seed와 외부 추천 smoke를 완료했으며 이후 새 지원 지역은 같은 절차로
+노선을 점진 동기화합니다.
 [staging 환경 운영서](./staging-environment.md)에 기동·적재·중지 절차를
 기록합니다.
 
@@ -319,7 +334,7 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| 최신 전체 로컬 검사 | 17:01 KST 경계·format·typecheck, 결정적 테스트 191개, 격리 PostGIS 8개 통과 |
+| 최신 현재 코드 검사 | API 114개·relay 4개, TypeScript/API/Web production build 통과. 서울 도착·위치 upstream과 서울역→강남역 실제 추천 검증 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |
@@ -344,7 +359,8 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 교통 정기 동기화 | 45개 성공·0개 실패, 성공 시각과 실패 수 지표 확인 |
 | 정류장 병합 migration | 1,173쌍→0쌍, 관계 유지, migration 2 적용 |
 | 알림 릴레이 형식 | 격리 HTTP 수신처에 Slack 형식 긴급 메시지·상태 버튼 전달 |
-| 외부 운영 채널 | webhook 미입력, 구성 지표 `0`과 설정 필요 경보 발생 확인 |
+| 서울 실시간 추천 | 서울역→강남역 3개 후보의 첫 4호선 leg가 `SEOUL_REALTIME_ARRIVAL`, 이후 leg는 TAGO 시간표 fallback |
+| 외부 운영 채널 | 명시적 비활성화, relay `202 disabled`, 설정 필요 경보 0개 |
 | 공개 번들 서버 비밀값 검사 | NAVER·Kakao OAuth·session 비밀값 미검출 |
 | 폐기 대상 용어·설정 내용 검색 | 0건 |
 | `git diff --check` | code commit과 최신 문서 점검 통과. 원본 CRLF 지하철 CSV는 importer 검증·checksum으로 별도 확인 |
@@ -445,9 +461,9 @@ production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KS
 
 ## 9. 현재 한계와 확장 조건
 
-- staging은 HTTPS/API/auth와 정류장 import까지 준비됐지만 노선·노선 관계·지하철
-  seed가 없어 readiness 503입니다. 실제 추천과 iPhone E2E 전에
-  [staging 환경 운영서](./staging-environment.md)의 적재 절차를 완료해야 합니다.
+- staging은 HTTPS/API/auth, 버스·지하철 seed, readiness 200과 외부 실제 추천까지
+  준비됐습니다. TAGO timeout으로 보류된 지하철역 3개는 다음 mapping 실행에서
+  재시도하며 iPhone 실기기 E2E는 별도 release gate입니다.
 - iOS는 CNG/CI 기반이 구현됐지만 iPhone 12 Pro 실기기, Light 고정,
   deployment target 17.0, staging App Store Connect/EAS store profile 검증이
   남았습니다. [iOS 개발 운영서](./ios-development.md)를 release gate로 사용합니다.
@@ -461,11 +477,14 @@ production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KS
   timeout을 함께 관찰해야 합니다.
 - 정류장 탐색은 최대 1.2km와 1회 환승까지만 지원하므로 이 범위 밖의
   연결은 구체적인 위치 선택 안내 또는 연결 범위 안내와 함께 404가 됩니다.
-- Alertmanager와 relay는 배포됐지만 외부 webhook URL은 아직 비어 있습니다.
-  Alertmanager 라우팅 설정과 relay 메시지 형식은 격리 수신처로 검증됐고
-  `ChimapAlertDeliveryNotConfigured` 경보가 의도대로 발생 중입니다.
-  [배포 운영서](./deployment.md)의 장애 알림 절차에 따라 webhook을 입력하고
-  실제 점검·복구 알림을 확인해야 운영 채널 전달이 활성화됩니다.
+- Alertmanager와 relay는 배포됐지만 외부 알림은 현재 사용하지 않습니다.
+  `EXTERNAL_ALERTS_ENABLED=0`에서 webhook 호출과 설정 누락 경보를 모두 막습니다.
+  나중에 사용할 때만 [배포 운영서](./deployment.md)의 절차에 따라 flag와 URL을
+  함께 설정하고 실제 점검·복구 알림을 확인합니다.
+- 서울시 실시간 지하철 API는 공식 host가 HTTP만 제공하므로 key가 네트워크
+  구간에서 평문 전송되는 잔여 위험이 있습니다. exact-host opt-in, redirect
+  차단, 일일 900회 guard와 서버 전용 호출을 유지하고 공식 TLS 제공 여부를
+  정기적으로 재확인해야 합니다.
 - 기존 시간 제약 추천 요청은 전환 릴리스 동안만 유지합니다. 사용 현황과
   downstream 전환을 확인한 뒤 `deadline`, `maxExtraMinutes`,
   `safetyBufferMinutes` 계약과 기존 warning을 제거해야 합니다.

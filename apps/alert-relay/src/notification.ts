@@ -2,6 +2,18 @@ export type AlertStatus = "firing" | "resolved";
 export type AlertSeverity = "critical" | "warning" | "info";
 export type NotificationProvider = "slack" | "discord" | "generic";
 
+export function parseExternalAlertsEnabled(
+  value: string | undefined,
+): boolean {
+  if (value === undefined || value === "0") {
+    return false;
+  }
+  if (value === "1") {
+    return true;
+  }
+  throw new Error("EXTERNAL_ALERTS_ENABLED는 0 또는 1이어야 합니다.");
+}
+
 export type AlertmanagerAlert = {
   status?: string;
   labels?: Record<string, string>;

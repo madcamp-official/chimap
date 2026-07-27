@@ -42,6 +42,10 @@ export type TransitStats = {
   subwayStations: number;
   activeSubwayStations: number;
   mappedSubwayStations: number;
+  subwayServiceLines?: number;
+  routeReadySubwayLines?: number;
+  providerMappedStations?: number;
+  busSubwayTransferEdges?: number;
 };
 
 export type CsvSubwayStation = {
@@ -116,8 +120,21 @@ export type CsvSubwayTopology = {
   }>;
 };
 
+export type CsvSubwayProviderMapping = {
+  sourceStationKey: string;
+  stationName: string;
+  lineName: string;
+  regionCode: string;
+  preferredProvider: "SEOUL_REALTIME" | "TAGO_TIMETABLE";
+  tagoStationId: string | null;
+  seoulSubwayId: string | null;
+  seoulStationId: string | null;
+  mappingStatus: string;
+};
+
 export type SubwayRoutingStation = {
   nodeId: string;
+  stationLineId: string;
   serviceLineId: string;
   sourceStationKey: string;
   stationOrder: number;
@@ -143,6 +160,57 @@ export type SubwayRoutingEdge = {
 export type SubwayRoutingGraph = {
   stations: SubwayRoutingStation[];
   edges: SubwayRoutingEdge[];
+};
+
+export type BusSubwayTransferLink = {
+  busStopId: string;
+  subwayNodeId: string;
+  serviceLineId: string;
+  stationLineId: string;
+  sourceStationKey: string;
+  stationName: string;
+  lineName: string;
+  busCoordinate: { lat: number; lng: number };
+  subwayCoordinate: { lat: number; lng: number };
+  walkDistanceMeters: number;
+  walkDurationSeconds: number;
+  coordinates: Array<{ lat: number; lng: number }>;
+  tagoVerified: boolean;
+};
+
+export type BusSubwayTransferCandidate = {
+  busStopId: string;
+  stationLineId: string;
+  busName: string;
+  stationName: string;
+  busCoordinate: { lat: number; lng: number };
+  subwayCoordinate: { lat: number; lng: number };
+  straightDistanceMeters: number;
+  sourceHash: string;
+  needsRefresh: boolean;
+};
+
+export type SubwayTimingContext = {
+  stationLineId: string;
+  stationName: string;
+  lineName: string;
+  roadAddress: string | null;
+  fromStationOrder: number;
+  toStationOrder: number;
+  mappings: Array<{
+    provider: "TAGO" | "SEOUL";
+    queryStationName: string;
+    externalStationId: string | null;
+    externalLineId: string | null;
+    externalLineName: string | null;
+    mappingStatus: string;
+  }>;
+  directionMappings: Array<{
+    provider: "TAGO" | "SEOUL";
+    externalDirectionCode: string | null;
+    destinationName: string | null;
+    mappingStatus: string;
+  }>;
 };
 
 function normalizeName(value: string): string {
@@ -1011,14 +1079,19 @@ export class TransitRepository {
       await client.query("BEGIN");
       await client.query("SET LOCAL statement_timeout = '10min'");
       await client.query(`
-        DELETE FROM subway_transfer_edges;
-        DELETE FROM subway_headways_fallback;
-        DELETE FROM subway_segments;
-        DELETE FROM subway_line_stations;
-        DELETE FROM subway_service_lines;
+        CREATE TEMP TABLE subway_service_lines_import
+          AS SELECT * FROM subway_service_lines WITH NO DATA;
+        CREATE TEMP TABLE subway_line_stations_import
+          AS SELECT * FROM subway_line_stations WITH NO DATA;
+        CREATE TEMP TABLE subway_segments_import
+          AS SELECT * FROM subway_segments WITH NO DATA;
+        CREATE TEMP TABLE subway_headways_fallback_import
+          AS SELECT * FROM subway_headways_fallback WITH NO DATA;
+        CREATE TEMP TABLE subway_transfer_edges_import
+          AS SELECT * FROM subway_transfer_edges WITH NO DATA;
       `);
       await copy(
-        `COPY subway_service_lines(
+        `COPY subway_service_lines_import(
            service_line_id, region_code, region_name, operator_name,
            service_line_name, station_count, matched_station_count,
            segment_count, fallback_headway_count, is_branching,
@@ -1042,7 +1115,7 @@ export class TransitRepository {
         ),
       );
       await copy(
-        `COPY subway_line_stations(
+        `COPY subway_line_stations_import(
            service_line_id, station_order, order_conflict, source_line_id,
            source_station_id, source_station_key, station_name
          ) FROM STDIN WITH (FORMAT csv)`,
@@ -1059,7 +1132,7 @@ export class TransitRepository {
         ),
       );
       await copy(
-        `COPY subway_segments(
+        `COPY subway_segments_import(
            service_line_id, from_source_station_key,
            to_source_station_key, duration_seconds,
            average_duration_seconds, straight_distance_meters,
@@ -1079,7 +1152,7 @@ export class TransitRepository {
         ),
       );
       await copy(
-        `COPY subway_headways_fallback(
+        `COPY subway_headways_fallback_import(
            service_line_id, source_station_key, next_source_station_key,
            day_group, time_period, median_headway_seconds,
            expected_wait_seconds, departure_count, interval_sample_count
@@ -1099,7 +1172,7 @@ export class TransitRepository {
         ),
       );
       await copy(
-        `COPY subway_transfer_edges(
+        `COPY subway_transfer_edges_import(
            from_source_station_key, to_source_station_key,
            transfer_duration_seconds, straight_distance_meters,
            duration_is_estimated
@@ -1114,6 +1187,416 @@ export class TransitRepository {
           ].join(",") + "\n",
         ),
       );
+      await client.query(`
+        UPDATE subway_service_lines
+        SET active = false, updated_at = now();
+
+        INSERT INTO subway_service_lines(
+          service_line_id, region_code, region_name, operator_name,
+          service_line_name, station_count, matched_station_count,
+          segment_count, fallback_headway_count, is_branching,
+          is_route_ready, timing_provider_default, active,
+          imported_at, updated_at
+        )
+        SELECT
+          service_line_id, region_code, region_name, operator_name,
+          service_line_name, station_count, matched_station_count,
+          segment_count, fallback_headway_count, is_branching,
+          is_route_ready, timing_provider_default, true, now(), now()
+        FROM subway_service_lines_import
+        ON CONFLICT(service_line_id) DO UPDATE SET
+          region_code = EXCLUDED.region_code,
+          region_name = EXCLUDED.region_name,
+          operator_name = EXCLUDED.operator_name,
+          service_line_name = EXCLUDED.service_line_name,
+          station_count = EXCLUDED.station_count,
+          matched_station_count = EXCLUDED.matched_station_count,
+          segment_count = EXCLUDED.segment_count,
+          fallback_headway_count = EXCLUDED.fallback_headway_count,
+          is_branching = EXCLUDED.is_branching,
+          is_route_ready = EXCLUDED.is_route_ready,
+          timing_provider_default = EXCLUDED.timing_provider_default,
+          active = true,
+          imported_at = now(),
+          updated_at = now();
+
+        CREATE TEMP TABLE resolved_subway_line_stations AS
+        SELECT
+          imported.*,
+          (
+            SELECT station.id
+            FROM subway_station_lines AS station
+            WHERE station.line_code = imported.source_line_id
+              AND station.station_code = imported.source_station_id
+              AND (
+                (
+                  SELECT COUNT(*)
+                  FROM subway_station_lines AS only_station
+                  WHERE only_station.line_code = imported.source_line_id
+                    AND only_station.station_code = imported.source_station_id
+                ) = 1
+                OR regexp_replace(
+                     lower(station.line_name),
+                     '(도시철도|수도권|광역철도|서울교통공사|코레일|선|\\s)',
+                     '', 'g'
+                   ) = regexp_replace(
+                     lower(service_line.service_line_name),
+                     '(도시철도|수도권|광역철도|서울교통공사|코레일|선|\\s)',
+                     '', 'g'
+                   )
+              )
+            ORDER BY station.active DESC, station.data_date DESC, station.id
+            LIMIT 1
+          ) AS resolved_station_line_id
+        FROM subway_line_stations_import AS imported
+        JOIN subway_service_lines AS service_line
+          ON service_line.service_line_id = imported.service_line_id;
+
+        DO $$
+        DECLARE unresolved_count bigint;
+        BEGIN
+          SELECT COUNT(*) INTO unresolved_count
+          FROM resolved_subway_line_stations
+          WHERE resolved_station_line_id IS NULL;
+          IF unresolved_count > 0 THEN
+            RAISE EXCEPTION
+              'subway topology station mapping unresolved: %',
+              unresolved_count;
+          END IF;
+        END $$;
+
+        UPDATE subway_line_stations
+        SET active = false, updated_at = now();
+        INSERT INTO subway_line_stations(
+          service_line_id, station_order, order_conflict,
+          source_line_id, source_station_id, source_station_key,
+          station_name, station_line_id, active, updated_at
+        )
+        SELECT
+          service_line_id, station_order, order_conflict,
+          source_line_id, source_station_id, source_station_key,
+          station_name, resolved_station_line_id, true, now()
+        FROM resolved_subway_line_stations
+        ON CONFLICT(service_line_id, source_station_key) DO UPDATE SET
+          station_order = EXCLUDED.station_order,
+          order_conflict = EXCLUDED.order_conflict,
+          source_line_id = EXCLUDED.source_line_id,
+          source_station_id = EXCLUDED.source_station_id,
+          station_name = EXCLUDED.station_name,
+          station_line_id = EXCLUDED.station_line_id,
+          active = true,
+          updated_at = now();
+
+        UPDATE subway_segments SET active = false, updated_at = now();
+        INSERT INTO subway_segments(
+          service_line_id, from_source_station_key,
+          to_source_station_key, duration_seconds,
+          average_duration_seconds, straight_distance_meters,
+          sample_count, duration_method, active, updated_at
+        )
+        SELECT
+          service_line_id, from_source_station_key,
+          to_source_station_key, duration_seconds,
+          average_duration_seconds, straight_distance_meters,
+          sample_count, duration_method, true, now()
+        FROM subway_segments_import
+        ON CONFLICT(
+          service_line_id, from_source_station_key, to_source_station_key
+        ) DO UPDATE SET
+          duration_seconds = EXCLUDED.duration_seconds,
+          average_duration_seconds = EXCLUDED.average_duration_seconds,
+          straight_distance_meters = EXCLUDED.straight_distance_meters,
+          sample_count = EXCLUDED.sample_count,
+          duration_method = EXCLUDED.duration_method,
+          active = true,
+          updated_at = now();
+
+        UPDATE subway_headways_fallback SET active = false, updated_at = now();
+        INSERT INTO subway_headways_fallback(
+          service_line_id, source_station_key, next_source_station_key,
+          day_group, time_period, median_headway_seconds,
+          expected_wait_seconds, departure_count, interval_sample_count,
+          active, updated_at
+        )
+        SELECT
+          service_line_id, source_station_key, next_source_station_key,
+          day_group, time_period, median_headway_seconds,
+          expected_wait_seconds, departure_count, interval_sample_count,
+          true, now()
+        FROM subway_headways_fallback_import
+        ON CONFLICT(
+          service_line_id, source_station_key, next_source_station_key,
+          day_group, time_period
+        ) DO UPDATE SET
+          median_headway_seconds = EXCLUDED.median_headway_seconds,
+          expected_wait_seconds = EXCLUDED.expected_wait_seconds,
+          departure_count = EXCLUDED.departure_count,
+          interval_sample_count = EXCLUDED.interval_sample_count,
+          active = true,
+          updated_at = now();
+
+        UPDATE subway_transfer_edges SET active = false, updated_at = now();
+        INSERT INTO subway_transfer_edges(
+          from_source_station_key, to_source_station_key,
+          transfer_duration_seconds, straight_distance_meters,
+          duration_is_estimated, active, updated_at
+        )
+        SELECT
+          from_source_station_key, to_source_station_key,
+          transfer_duration_seconds, straight_distance_meters,
+          duration_is_estimated, true, now()
+        FROM subway_transfer_edges_import
+        ON CONFLICT(from_source_station_key, to_source_station_key)
+        DO UPDATE SET
+          transfer_duration_seconds = EXCLUDED.transfer_duration_seconds,
+          straight_distance_meters = EXCLUDED.straight_distance_meters,
+          duration_is_estimated = EXCLUDED.duration_is_estimated,
+          active = true,
+          updated_at = now();
+
+        INSERT INTO subway_provider_direction_mappings(
+          service_line_id, from_source_station_key,
+          to_source_station_key, provider, external_direction_code,
+          destination_name, mapping_status, mapping_checked_at, updated_at
+        )
+        SELECT
+          segment.service_line_id,
+          segment.from_source_station_key,
+          segment.to_source_station_key,
+          provider.provider,
+          CASE
+            WHEN provider.provider = 'TAGO' THEN
+              CASE WHEN target.station_order > source.station_order
+                THEN 'D' ELSE 'U' END
+            ELSE
+              CASE WHEN target.station_order > source.station_order
+                THEN '하행' ELSE '상행' END
+          END,
+          NULL,
+          'MAPPED',
+          now(),
+          now()
+        FROM subway_segments_import AS segment
+        JOIN subway_line_stations AS source
+          ON source.service_line_id = segment.service_line_id
+         AND source.source_station_key = segment.from_source_station_key
+        JOIN subway_line_stations AS target
+          ON target.service_line_id = segment.service_line_id
+         AND target.source_station_key = segment.to_source_station_key
+        CROSS JOIN (VALUES ('TAGO'), ('SEOUL')) AS provider(provider)
+        ON CONFLICT(
+          service_line_id, from_source_station_key,
+          to_source_station_key, provider
+        ) DO UPDATE SET
+          external_direction_code = EXCLUDED.external_direction_code,
+          mapping_status = 'MAPPED',
+          mapping_checked_at = now(),
+          updated_at = now()
+      `);
+      await client.query(`
+        INSERT INTO transit_dataset_versions(
+          dataset, generation, row_counts, imported_at, updated_at
+        ) VALUES (
+          'subway_topology', 1,
+          jsonb_build_object(
+            'serviceLines', (SELECT COUNT(*) FROM subway_service_lines_import),
+            'lineStations', (SELECT COUNT(*) FROM subway_line_stations_import),
+            'segments', (SELECT COUNT(*) FROM subway_segments_import),
+            'headways', (SELECT COUNT(*) FROM subway_headways_fallback_import),
+            'transfers', (SELECT COUNT(*) FROM subway_transfer_edges_import)
+          ),
+          now(), now()
+        )
+        ON CONFLICT(dataset) DO UPDATE SET
+          generation = transit_dataset_versions.generation + 1,
+          row_counts = EXCLUDED.row_counts,
+          imported_at = now(),
+          updated_at = now();
+      `);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async importSubwayProviderMappings(
+    rows: readonly CsvSubwayProviderMapping[],
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`
+        CREATE TEMP TABLE subway_provider_mapping_import (
+          source_station_key varchar(120) NOT NULL,
+          station_name varchar(200) NOT NULL,
+          line_name varchar(200) NOT NULL,
+          region_code varchar(20) NOT NULL,
+          preferred_provider varchar(30) NOT NULL,
+          tago_station_id varchar(100),
+          seoul_subway_id varchar(100),
+          seoul_station_id varchar(100),
+          mapping_status varchar(30) NOT NULL
+        ) ON COMMIT DROP
+      `);
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO subway_provider_mapping_import VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9
+           )`,
+          [
+            row.sourceStationKey,
+            row.stationName,
+            row.lineName,
+            row.regionCode,
+            row.preferredProvider,
+            row.tagoStationId,
+            row.seoulSubwayId,
+            row.seoulStationId,
+            row.mappingStatus,
+          ],
+        );
+      }
+      await client.query(`
+        CREATE TEMP TABLE resolved_provider_mapping_import AS
+        SELECT DISTINCT ON (
+          line_station.service_line_id, line_station.station_line_id
+        )
+          imported.*,
+          line_station.service_line_id,
+          line_station.station_line_id
+        FROM subway_provider_mapping_import AS imported
+        JOIN subway_line_stations AS line_station
+          ON line_station.source_station_key = imported.source_station_key
+         AND line_station.active = true
+        JOIN subway_service_lines AS service_line
+          ON service_line.service_line_id = line_station.service_line_id
+         AND service_line.active = true
+         AND (
+           regexp_replace(
+             lower(imported.line_name),
+             '(도시철도|수도권|광역철도|서울교통공사|코레일|선|\\s)',
+             '', 'g'
+           ) = regexp_replace(
+             lower(service_line.service_line_name),
+             '(도시철도|수도권|광역철도|서울교통공사|코레일|선|\\s)',
+             '', 'g'
+           )
+           OR (
+             SELECT COUNT(DISTINCT candidate.service_line_id)
+             FROM subway_line_stations AS candidate
+             WHERE candidate.source_station_key = imported.source_station_key
+               AND candidate.active = true
+           ) = 1
+         )
+        ORDER BY
+          line_station.service_line_id,
+          line_station.station_line_id,
+          (regexp_replace(lower(imported.station_name), '[^가-힣a-z0-9]', '', 'g') =
+           regexp_replace(lower(line_station.station_name), '[^가-힣a-z0-9]', '', 'g')) DESC,
+          imported.station_name;
+
+        INSERT INTO subway_provider_station_mappings(
+          service_line_id, station_line_id, provider, query_station_name,
+          external_station_id, external_line_id, external_line_name,
+          mapping_status, priority, mapping_checked_at, updated_at
+        )
+        SELECT
+          imported.service_line_id,
+          imported.station_line_id,
+          'TAGO',
+          imported.station_name,
+          imported.tago_station_id,
+          NULL,
+          imported.line_name,
+          CASE WHEN imported.tago_station_id IS NOT NULL
+            THEN 'MAPPED' ELSE 'PENDING' END,
+          CASE WHEN imported.preferred_provider = 'TAGO_TIMETABLE'
+            THEN 100 ELSE 200 END,
+          CASE WHEN imported.tago_station_id IS NOT NULL THEN now() ELSE NULL END,
+          now()
+        FROM resolved_provider_mapping_import AS imported
+        ON CONFLICT(service_line_id, station_line_id, provider) DO UPDATE SET
+          query_station_name = EXCLUDED.query_station_name,
+          external_station_id = COALESCE(
+            EXCLUDED.external_station_id,
+            subway_provider_station_mappings.external_station_id
+          ),
+          external_line_name = EXCLUDED.external_line_name,
+          mapping_status = CASE
+            WHEN COALESCE(
+              EXCLUDED.external_station_id,
+              subway_provider_station_mappings.external_station_id
+            ) IS NOT NULL THEN 'MAPPED'
+            ELSE subway_provider_station_mappings.mapping_status
+          END,
+          priority = EXCLUDED.priority,
+          updated_at = now();
+
+        INSERT INTO subway_provider_station_mappings(
+          service_line_id, station_line_id, provider, query_station_name,
+          external_station_id, external_line_id, external_line_name,
+          mapping_status, priority, mapping_checked_at, updated_at
+        )
+        SELECT
+          imported.service_line_id,
+          imported.station_line_id,
+          'SEOUL',
+          imported.station_name,
+          imported.seoul_station_id,
+          imported.seoul_subway_id,
+          imported.line_name,
+          CASE
+            WHEN imported.preferred_provider <> 'SEOUL_REALTIME' THEN 'DISABLED'
+            WHEN imported.seoul_station_id IS NOT NULL
+              OR imported.seoul_subway_id IS NOT NULL THEN 'MAPPED'
+            ELSE 'PENDING'
+          END,
+          CASE WHEN imported.preferred_provider = 'SEOUL_REALTIME'
+            THEN 100 ELSE 300 END,
+          CASE WHEN imported.seoul_station_id IS NOT NULL
+            OR imported.seoul_subway_id IS NOT NULL THEN now() ELSE NULL END,
+          now()
+        FROM resolved_provider_mapping_import AS imported
+        ON CONFLICT(service_line_id, station_line_id, provider) DO UPDATE SET
+          query_station_name = EXCLUDED.query_station_name,
+          external_station_id = COALESCE(
+            EXCLUDED.external_station_id,
+            subway_provider_station_mappings.external_station_id
+          ),
+          external_line_id = COALESCE(
+            EXCLUDED.external_line_id,
+            subway_provider_station_mappings.external_line_id
+          ),
+          external_line_name = EXCLUDED.external_line_name,
+          mapping_status = CASE
+            WHEN EXCLUDED.mapping_status = 'DISABLED' THEN 'DISABLED'
+            WHEN COALESCE(
+              EXCLUDED.external_station_id,
+              subway_provider_station_mappings.external_station_id,
+              EXCLUDED.external_line_id,
+              subway_provider_station_mappings.external_line_id
+            ) IS NOT NULL THEN 'MAPPED'
+            ELSE subway_provider_station_mappings.mapping_status
+          END,
+          priority = EXCLUDED.priority,
+          updated_at = now()
+      `);
+      await client.query(`
+        INSERT INTO transit_dataset_versions(
+          dataset, generation, row_counts, imported_at, updated_at
+        ) VALUES (
+          'subway_provider_mappings', 1,
+          jsonb_build_object('sourceRows', $1::integer), now(), now()
+        )
+        ON CONFLICT(dataset) DO UPDATE SET
+          generation = transit_dataset_versions.generation + 1,
+          row_counts = EXCLUDED.row_counts,
+          imported_at = now(),
+          updated_at = now()
+      `, [rows.length]);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1179,6 +1662,7 @@ export class TransitRepository {
       this.pool.query(`
         SELECT
           line_station.service_line_id,
+          line_station.station_line_id,
           line_station.source_station_key,
           line_station.station_order,
           line_station.station_name,
@@ -1191,10 +1675,11 @@ export class TransitRepository {
         JOIN subway_service_lines AS service_line
           ON service_line.service_line_id = line_station.service_line_id
          AND service_line.is_route_ready = true
+         AND service_line.active = true
         JOIN subway_station_lines AS station
-          ON station.line_code = line_station.source_line_id
-         AND station.station_code = line_station.source_station_id
+          ON station.id = line_station.station_line_id
          AND station.active = true
+        WHERE line_station.active = true
         ORDER BY line_station.service_line_id, line_station.station_order
       `),
       this.pool.query(
@@ -1209,12 +1694,15 @@ export class TransitRepository {
          JOIN subway_service_lines AS service_line
            ON service_line.service_line_id = segment.service_line_id
           AND service_line.is_route_ready = true
+          AND service_line.active = true
          LEFT JOIN subway_headways_fallback AS headway
            ON headway.service_line_id = segment.service_line_id
           AND headway.source_station_key = segment.from_source_station_key
           AND headway.next_source_station_key = segment.to_source_station_key
           AND headway.day_group = $1
-          AND headway.time_period = $2`,
+          AND headway.time_period = $2
+          AND headway.active = true
+         WHERE segment.active = true`,
         [dayGroup, timePeriod],
       ),
       this.pool.query(`
@@ -1225,10 +1713,12 @@ export class TransitRepository {
           straight_distance_meters,
           duration_is_estimated
         FROM subway_transfer_edges
+        WHERE active = true
       `),
     ]);
     const stations = stationResult.rows.map((row): SubwayRoutingStation => ({
       nodeId: `${String(row.service_line_id)}:${String(row.source_station_key)}`,
+      stationLineId: String(row.station_line_id),
       serviceLineId: String(row.service_line_id),
       sourceStationKey: String(row.source_station_key),
       stationOrder: Number(row.station_order),
@@ -1291,6 +1781,352 @@ export class TransitRepository {
     return { stations, edges };
   }
 
+  public async getBusSubwayTransferLinks(
+    busStopIds: readonly string[],
+  ): Promise<BusSubwayTransferLink[]> {
+    if (busStopIds.length === 0) {
+      return [];
+    }
+    const result = await this.pool.query(
+      `SELECT
+         edge.bus_stop_id,
+         edge.walk_distance_meters,
+         edge.walk_duration_seconds,
+         edge.tago_verified,
+         ST_AsGeoJSON(edge.walking_geometry)::jsonb AS walking_geometry,
+         ST_Y(bus_stop.location::geometry) AS bus_latitude,
+         ST_X(bus_stop.location::geometry) AS bus_longitude,
+         line_station.service_line_id,
+         line_station.source_station_key,
+         line_station.station_line_id,
+         station.station_name,
+         service_line.service_line_name,
+         ST_Y(station.location::geometry) AS station_latitude,
+         ST_X(station.location::geometry) AS station_longitude
+       FROM bus_subway_transfer_edges AS edge
+       JOIN bus_stops AS bus_stop ON bus_stop.id = edge.bus_stop_id
+       JOIN subway_station_lines AS station
+         ON station.id = edge.station_line_id
+        AND station.active = true
+       JOIN subway_line_stations AS line_station
+         ON line_station.station_line_id = station.id
+        AND line_station.active = true
+       JOIN subway_service_lines AS service_line
+         ON service_line.service_line_id = line_station.service_line_id
+        AND service_line.active = true
+        AND service_line.is_route_ready = true
+       WHERE edge.active = true
+         AND edge.bus_stop_id = ANY($1::bigint[])
+       ORDER BY edge.bus_stop_id, edge.walk_duration_seconds,
+                line_station.service_line_id`,
+      [busStopIds],
+    );
+    return result.rows.flatMap((row): BusSubwayTransferLink[] => {
+      const geometry = row.walking_geometry as {
+        type?: unknown;
+        coordinates?: unknown;
+      } | null;
+      if (
+        geometry?.type !== "LineString" ||
+        !Array.isArray(geometry.coordinates)
+      ) {
+        return [];
+      }
+      const coordinates = geometry.coordinates.flatMap(
+        (coordinate): Array<{ lat: number; lng: number }> =>
+          Array.isArray(coordinate) &&
+          typeof coordinate[0] === "number" &&
+          typeof coordinate[1] === "number"
+            ? [{ lng: coordinate[0], lat: coordinate[1] }]
+            : [],
+      );
+      if (coordinates.length < 2) {
+        return [];
+      }
+      const serviceLineId = String(row.service_line_id);
+      const sourceStationKey = String(row.source_station_key);
+      return [{
+        busStopId: String(row.bus_stop_id),
+        subwayNodeId: `${serviceLineId}:${sourceStationKey}`,
+        serviceLineId,
+        stationLineId: String(row.station_line_id),
+        sourceStationKey,
+        stationName: String(row.station_name),
+        lineName: String(row.service_line_name),
+        busCoordinate: {
+          lat: Number(row.bus_latitude),
+          lng: Number(row.bus_longitude),
+        },
+        subwayCoordinate: {
+          lat: Number(row.station_latitude),
+          lng: Number(row.station_longitude),
+        },
+        walkDistanceMeters: Number(row.walk_distance_meters),
+        walkDurationSeconds: Number(row.walk_duration_seconds),
+        coordinates,
+        tagoVerified: row.tago_verified === true,
+      }];
+    });
+  }
+
+  public async getBusSubwayTransferBuildCandidates(
+    limit = 20_000,
+  ): Promise<BusSubwayTransferCandidate[]> {
+    const result = await this.pool.query(`
+      WITH route_linked_stops AS (
+        SELECT DISTINCT stop_internal_id FROM bus_route_stops
+      ), ranked AS (
+        SELECT
+          bus_stop.id AS bus_stop_id,
+          station.id AS station_line_id,
+          bus_stop.name AS bus_name,
+          station.station_name,
+          ST_Y(bus_stop.location::geometry) AS bus_latitude,
+          ST_X(bus_stop.location::geometry) AS bus_longitude,
+          ST_Y(station.location::geometry) AS station_latitude,
+          ST_X(station.location::geometry) AS station_longitude,
+          round(ST_Distance(bus_stop.location, station.location))::integer
+            AS straight_distance_meters,
+          row_number() OVER (
+            PARTITION BY station.id
+            ORDER BY ST_Distance(bus_stop.location, station.location), bus_stop.id
+          ) AS proximity_rank
+        FROM subway_station_lines AS station
+        JOIN subway_line_stations AS line_station
+          ON line_station.station_line_id = station.id
+         AND line_station.active = true
+        JOIN subway_service_lines AS service_line
+          ON service_line.service_line_id = line_station.service_line_id
+         AND service_line.active = true
+         AND service_line.is_route_ready = true
+        JOIN bus_stops AS bus_stop
+          ON ST_DWithin(bus_stop.location, station.location, 500)
+        JOIN route_linked_stops AS linked
+          ON linked.stop_internal_id = bus_stop.id
+        WHERE station.active = true
+      )
+      SELECT DISTINCT ON (ranked.bus_stop_id, ranked.station_line_id)
+        ranked.bus_stop_id, ranked.station_line_id,
+        ranked.bus_name, ranked.station_name,
+        ranked.bus_latitude, ranked.bus_longitude,
+        ranked.station_latitude, ranked.station_longitude,
+        ranked.straight_distance_meters,
+        existing.source_hash AS existing_source_hash,
+        existing.active AS existing_active
+      FROM ranked
+      LEFT JOIN bus_subway_transfer_edges AS existing
+        ON existing.bus_stop_id = ranked.bus_stop_id
+       AND existing.station_line_id = ranked.station_line_id
+      WHERE proximity_rank <= 10
+      ORDER BY ranked.bus_stop_id, ranked.station_line_id
+      LIMIT $1
+    `, [limit]);
+    return result.rows.map((row): BusSubwayTransferCandidate => {
+      const candidate = {
+        busStopId: String(row.bus_stop_id),
+        stationLineId: String(row.station_line_id),
+        busName: String(row.bus_name),
+        stationName: String(row.station_name),
+        busCoordinate: {
+          lat: Number(row.bus_latitude),
+          lng: Number(row.bus_longitude),
+        },
+        subwayCoordinate: {
+          lat: Number(row.station_latitude),
+          lng: Number(row.station_longitude),
+        },
+        straightDistanceMeters: Number(row.straight_distance_meters),
+      };
+      const sourceHash = createHash("sha256")
+        .update([
+          candidate.busStopId,
+          candidate.stationLineId,
+          candidate.busCoordinate.lat.toFixed(7),
+          candidate.busCoordinate.lng.toFixed(7),
+          candidate.subwayCoordinate.lat.toFixed(7),
+          candidate.subwayCoordinate.lng.toFixed(7),
+        ].join("\u001f"))
+        .digest("hex");
+      return {
+        ...candidate,
+        sourceHash,
+        needsRefresh:
+          row.existing_active !== true ||
+          String(row.existing_source_hash ?? "") !== sourceHash,
+      };
+    });
+  }
+
+  public async getSubwayTimingContext(input: {
+    serviceLineId: string;
+    stationLineId: string;
+    fromSourceStationKey: string;
+    toSourceStationKey: string;
+  }): Promise<SubwayTimingContext | null> {
+    const [stationResult, mappingResult, directionResult] = await Promise.all([
+      this.pool.query(
+        `SELECT
+           station.id, station.station_name, station.road_address,
+           service_line.service_line_name,
+           source.station_order AS from_station_order,
+           target.station_order AS to_station_order
+         FROM subway_line_stations AS source
+         JOIN subway_line_stations AS target
+           ON target.service_line_id = source.service_line_id
+          AND target.source_station_key = $4
+          AND target.active = true
+         JOIN subway_service_lines AS service_line
+           ON service_line.service_line_id = source.service_line_id
+          AND service_line.active = true
+         JOIN subway_station_lines AS station
+           ON station.id = source.station_line_id
+          AND station.active = true
+         WHERE source.service_line_id = $1
+           AND source.station_line_id = $2
+           AND source.source_station_key = $3
+           AND source.active = true`,
+        [
+          input.serviceLineId,
+          input.stationLineId,
+          input.fromSourceStationKey,
+          input.toSourceStationKey,
+        ],
+      ),
+      this.pool.query(
+        `SELECT provider, query_station_name, external_station_id,
+                external_line_id, external_line_name, mapping_status
+         FROM subway_provider_station_mappings
+         WHERE service_line_id = $1 AND station_line_id = $2
+         ORDER BY priority, provider`,
+        [input.serviceLineId, input.stationLineId],
+      ),
+      this.pool.query(
+        `SELECT provider, external_direction_code, destination_name,
+                mapping_status
+         FROM subway_provider_direction_mappings
+         WHERE service_line_id = $1
+           AND from_source_station_key = $2
+           AND to_source_station_key = $3`,
+        [
+          input.serviceLineId,
+          input.fromSourceStationKey,
+          input.toSourceStationKey,
+        ],
+      ),
+    ]);
+    const row = stationResult.rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    return {
+      stationLineId: String(row.id),
+      stationName: String(row.station_name),
+      lineName: String(row.service_line_name),
+      roadAddress: nullableString(row.road_address),
+      fromStationOrder: Number(row.from_station_order),
+      toStationOrder: Number(row.to_station_order),
+      mappings: mappingResult.rows.map((mapping) => ({
+        provider: String(mapping.provider) as "TAGO" | "SEOUL",
+        queryStationName: String(mapping.query_station_name),
+        externalStationId: nullableString(mapping.external_station_id),
+        externalLineId: nullableString(mapping.external_line_id),
+        externalLineName: nullableString(mapping.external_line_name),
+        mappingStatus: String(mapping.mapping_status),
+      })),
+      directionMappings: directionResult.rows.map((mapping) => ({
+        provider: String(mapping.provider) as "TAGO" | "SEOUL",
+        externalDirectionCode: nullableString(
+          mapping.external_direction_code,
+        ),
+        destinationName: nullableString(mapping.destination_name),
+        mappingStatus: String(mapping.mapping_status),
+      })),
+    };
+  }
+
+  public async beginBusSubwayTransferBuild(
+    runId: string,
+    candidateCount: number,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO bus_subway_transfer_build_runs(
+         id, status, candidate_count, started_at, updated_at
+       ) VALUES ($1, 'RUNNING', $2, now(), now())
+       ON CONFLICT(id) DO UPDATE SET
+         status = 'RUNNING', candidate_count = EXCLUDED.candidate_count,
+         completed_at = NULL, updated_at = now()`,
+      [runId, candidateCount],
+    );
+  }
+
+  public async saveBusSubwayTransferEdge(input: {
+    runId: string;
+    candidate: BusSubwayTransferCandidate;
+    walkDistanceMeters: number;
+    walkDurationSeconds: number;
+    coordinates: Array<{ lat: number; lng: number }>;
+    tagoVerified?: boolean;
+  }): Promise<void> {
+    const lineString = JSON.stringify({
+      type: "LineString",
+      coordinates: input.coordinates.map((point) => [point.lng, point.lat]),
+    });
+    await this.pool.query(
+      `INSERT INTO bus_subway_transfer_edges(
+         bus_stop_id, station_line_id, walk_distance_meters,
+         walk_duration_seconds, walking_geometry, tago_verified,
+         active, source_hash, build_run_id, calculated_at, updated_at
+       ) VALUES (
+         $1, $2, $3, $4, ST_SetSRID(ST_GeomFromGeoJSON($5), 4326),
+         $6, true, $7, $8, now(), now()
+       )
+       ON CONFLICT(bus_stop_id, station_line_id) DO UPDATE SET
+         walk_distance_meters = EXCLUDED.walk_distance_meters,
+         walk_duration_seconds = EXCLUDED.walk_duration_seconds,
+         walking_geometry = EXCLUDED.walking_geometry,
+         tago_verified = EXCLUDED.tago_verified,
+         active = true,
+         source_hash = EXCLUDED.source_hash,
+         build_run_id = EXCLUDED.build_run_id,
+         calculated_at = now(),
+         updated_at = now()`,
+      [
+        input.candidate.busStopId,
+        input.candidate.stationLineId,
+        input.walkDistanceMeters,
+        input.walkDurationSeconds,
+        lineString,
+        input.tagoVerified ?? false,
+        input.candidate.sourceHash,
+        input.runId,
+      ],
+    );
+  }
+
+  public async finishBusSubwayTransferBuild(input: {
+    runId: string;
+    processed: number;
+    saved: number;
+    skipped: number;
+    failed: number;
+  }): Promise<void> {
+    await this.pool.query(
+      `UPDATE bus_subway_transfer_build_runs
+       SET status = $2, processed_count = $3, saved_count = $4,
+           skipped_count = $5, failed_count = $6,
+           completed_at = now(), updated_at = now()
+       WHERE id = $1`,
+      [
+        input.runId,
+        input.failed === 0 ? "COMPLETED" : "FAILED",
+        input.processed,
+        input.saved,
+        input.skipped,
+        input.failed,
+      ],
+    );
+  }
+
   public async getSubwayStation(id: string): Promise<SubwayStation | null> {
     const result = await this.pool.query(
       `SELECT ${subwayStationSelect()}
@@ -1320,18 +2156,40 @@ export class TransitRepository {
   public async updateSubwayStationMapping(input: {
     id: string;
     status: SubwayStationMappingStatus;
+    canonicalStatus?: "MAPPED" | "AMBIGUOUS" | "NOT_FOUND";
     tagoStationId: string | null;
     tagoRouteName: string | null;
   }): Promise<void> {
     await this.pool.query(
-      `UPDATE subway_station_lines
-       SET mapping_status = $2,
-           tago_station_id = $3,
-           tago_route_name = $4,
+      `WITH updated_station AS (
+         UPDATE subway_station_lines
+         SET mapping_status = $2,
+             tago_station_id = $3,
+             tago_route_name = $4,
+             mapping_checked_at = now(),
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id
+       )
+       UPDATE subway_provider_station_mappings AS mapping
+       SET external_station_id = $3,
+           external_line_name = $4,
+           mapping_status = $5::varchar,
            mapping_checked_at = now(),
+           last_success_at = CASE WHEN $5::varchar = 'MAPPED'
+             THEN now() ELSE mapping.last_success_at END,
            updated_at = now()
-       WHERE id = $1`,
-      [input.id, input.status, input.tagoStationId, input.tagoRouteName],
+       FROM updated_station
+       WHERE mapping.station_line_id = updated_station.id
+         AND mapping.provider = 'TAGO'`,
+      [
+        input.id,
+        input.status,
+        input.tagoStationId,
+        input.tagoRouteName,
+        input.canonicalStatus ??
+          (input.status === "MAPPED" ? "MAPPED" : "NOT_FOUND"),
+      ],
     );
   }
 
@@ -1344,6 +2202,10 @@ export class TransitRepository {
       subway_stations: string;
       active_subway_stations: string;
       mapped_subway_stations: string;
+      subway_service_lines: string;
+      route_ready_subway_lines: string;
+      provider_mapped_stations: string;
+      bus_subway_transfer_edges: string;
     }>(`
       SELECT
         (SELECT COUNT(*) FROM bus_stops)::text AS stops,
@@ -1360,7 +2222,22 @@ export class TransitRepository {
         (
           SELECT COUNT(*) FROM subway_station_lines
           WHERE active = true AND mapping_status = 'MAPPED'
-        )::text AS mapped_subway_stations
+        )::text AS mapped_subway_stations,
+        (
+          SELECT COUNT(*) FROM subway_service_lines WHERE active = true
+        )::text AS subway_service_lines,
+        (
+          SELECT COUNT(*) FROM subway_service_lines
+          WHERE active = true AND is_route_ready = true
+        )::text AS route_ready_subway_lines,
+        (
+          SELECT COUNT(DISTINCT (service_line_id, station_line_id))
+          FROM subway_provider_station_mappings
+          WHERE mapping_status = 'MAPPED'
+        )::text AS provider_mapped_stations,
+        (
+          SELECT COUNT(*) FROM bus_subway_transfer_edges WHERE active = true
+        )::text AS bus_subway_transfer_edges
     `);
     const row = result.rows[0];
     return {
@@ -1371,6 +2248,10 @@ export class TransitRepository {
       subwayStations: Number(row?.subway_stations ?? 0),
       activeSubwayStations: Number(row?.active_subway_stations ?? 0),
       mappedSubwayStations: Number(row?.mapped_subway_stations ?? 0),
+      subwayServiceLines: Number(row?.subway_service_lines ?? 0),
+      routeReadySubwayLines: Number(row?.route_ready_subway_lines ?? 0),
+      providerMappedStations: Number(row?.provider_mapped_stations ?? 0),
+      busSubwayTransferEdges: Number(row?.bus_subway_transfer_edges ?? 0),
     };
   }
 }

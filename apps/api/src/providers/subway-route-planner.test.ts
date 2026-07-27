@@ -14,6 +14,7 @@ function station(
 ): SubwayRoutingStation {
   return {
     nodeId,
+    stationLineId: `station-${nodeId}`,
     serviceLineId,
     sourceStationKey: nodeId.split(":").at(-1)!,
     stationOrder: 1,

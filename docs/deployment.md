@@ -18,6 +18,9 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
+현재 production 기준선은 21:39 KST의 commit `e16684b`, 이미지
+`sha256:77f4de84...`이며 서울 실시간 지하철과 멀티모달 추천이 활성화되어
+있습니다. 최신 검증은 아래 서울 지하철 실시간 활성화 기록을 기준으로 합니다.
 
 ## 1. 사전 조건
 
@@ -213,7 +216,7 @@ Compose 운영값:
 
 ```bash
 docker compose run --rm \
-  -v "$PWD/bus data.csv:/data/bus-stops.csv:ro" \
+  -v "$PWD/data/bus_data.csv:/data/bus-stops.csv:ro" \
   api node dist/cli/transit.js import-stops --path /data/bus-stops.csv
 ```
 
@@ -279,6 +282,9 @@ docker compose run --rm api node dist/cli/transit.js stats
 docker compose run --rm api node dist/cli/transit.js sync-subway-stations \
   --concurrency 4
 docker compose run --rm api node dist/cli/transit.js import-subway-topology
+docker compose run --rm api node dist/cli/transit.js import-subway-provider-map
+docker compose run --rm api node dist/cli/transit.js build-bus-subway-transfers \
+  --concurrency 2
 docker compose run --rm api node dist/cli/transit.js stats
 ```
 
@@ -287,6 +293,33 @@ docker compose run --rm api node dist/cli/transit.js stats
 `DATA_GO_KR_SERVICE_KEY`가 없어야 하며 시간표 UI는 반드시
 `TAGO 시간표 기반 예상`으로 표시합니다. 토폴로지 import 뒤에는 대표 경로에서
 SUBWAY leg와 버스↔지하철 혼합 leg를 각각 확인합니다.
+
+멀티모달 배포 순서는 `backup → migration 9 → station/topology import → provider
+map import → TAGO mapping sync → transfer edge build → readiness/smoke`입니다.
+환승 간선 배치는 route-linked 정류장만 역 반경 500m에서 가까운 10개까지 골라
+Kakao 실제 보행 경로가 500m 이하인 결과만 upsert합니다. 실패한 run은
+`bus_subway_transfer_build_runs`에 남으며 성공 run 전에는
+`TRANSIT_ROUTER_MODE=legacy`로 되돌릴 수 있습니다.
+
+서울 실시간 연동은 다음 조건을 모두 확인한 뒤에만 켭니다.
+
+```dotenv
+SEOUL_SUBWAY_ENABLED=1
+SEOUL_SUBWAY_ALLOW_INSECURE_HTTP=1
+SEOUL_SUBWAY_BASE_URL=http://swopenAPI.seoul.go.kr
+SEOUL_SUBWAY_DAILY_REQUEST_LIMIT=900
+```
+
+- 공식 host `swopenapi.seoul.go.kr`의 80번 port만 사용함
+- 키를 출력하지 않는 도착·위치 smoke가 각각 `INFO-000`으로 응답함
+- redirect를 따르지 않고 API key가 서버 밖 로그·응답에 노출되지 않음
+- 하루 1,000회 공식 한도보다 낮은 process-local guard를 설정함
+- 로그와 browser bundle에 인증키/전체 요청 URL이 없음
+- 장애 시 TAGO 시간표와 headway fallback으로 추천이 유지됨
+
+이 예외는 CHIMap의 수신 HTTPS나 Certbot 인증과 별개인 outbound 연결입니다.
+서울시 endpoint가 TLS를 제공하기 전까지 API key가 네트워크 구간에서 평문으로
+전송되는 잔여 위험이 있으므로 다른 HTTP host에는 절대 재사용하지 않습니다.
 
 ## 7. 배포 전 백업
 
@@ -536,9 +569,76 @@ draft PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 reb
 - staging transit: 정류장 227,054개·연결 7개, 노선/관계/지하철 0
 - staging readiness: seed 미완료로 HTTP 503
 
+17:44 KST에는 source `55fec7c`의 TAGO timeout 격리 수정을 staging에만
+재배포하고 seed를 완료했습니다.
+
+- staging image: `sha256:02971772…`
+- transit: 정류장 227,207개·연결 2,144개·노선 50개·관계 4,178개
+- subway: 전체/활성 1,097개·TAGO 매핑 706개
+- local/external health·readiness HTTP 200
+- KAIST 본원→대전역 실제 추천 3건(`FAST/BALANCED/GOAL`) HTTP 200
+- mapping timeout 3건은 `PENDING`으로 보존하고 다음 실행에서 재시도
+- seed 전 backup: `chimap-staging-preseed-20260727T080953Z.dump`, 17,293,693 bytes,
+  SHA-256 `e1f387d7504574570186dc0ba8a67e196a3e0ec8ab72f9f17ce46f22873fd594`
+
 production의 마지막 전체 strict E2E·백업·restore는 앞선 14:29 KST 기록을
-유지합니다. staging은 [staging 환경 운영서](./staging-environment.md)의 노선·
-지하철 seed 뒤 readiness 200과 실제 추천을 별도로 검증합니다.
+유지합니다. staging은 production DB를 복사하지 않고 공개 교통 seed만 독립
+적재했으며 자세한 재실행 절차는 [staging 환경 운영서](./staging-environment.md)를
+따릅니다.
+
+### 2026-07-27 요청 범위 멀티모달 routing 승격 기록
+
+- 기능 commits: `4d800a5`, `83efdd3`, `b4c418d`, `43b71a1`
+- 공개 E2E 보정 commit: `1d0804c`
+- production image: `sha256:ce1caaca95c7b822bad59e790d2ad88560c9c95369573fd04db0ede15bba915d`
+- router: `TRANSIT_ROUTER_MODE=multimodal`, 최대 환승 2회
+- DB: migration 1~9 current, 정류장 227,225개·연결 2,844개,
+  버스 노선 140개·노선 정류장 5,794개
+- subway topology: 전체/활성 역 1,097개, TAGO 역 매핑 706개,
+  서비스 노선 46개·route-ready 30개·provider mapping 697개
+- bus↔subway: 500m 이내 후보 200개 중 실제 Kakao 보행 경로 182개 저장,
+  거리·endpoint·LineString 검증 실패 후보는 제외
+- 공개 smoke: KAIST→대전역에서 `multimodal-*` 3건, 지하철 포함·환승 포함,
+  `TAGO_SUBWAY_TIMETABLE`과 버스 fallback timing source 확인
+- strict E2E: NAVER 지도 필수, 지하철 단독 FAST·버스 포함 BALANCED,
+  차량 10초 polling 2회 이상·카메라 고정과 4개 viewport 포함 3/3 통과
+- security: 공개 JavaScript 1개에서 SEOUL/TAGO/Kakao 서버 key 이름과 값 0건
+- monitoring: Prometheus target 3개 `up`; 외부 webhook 미설정 경고 1개는
+  `ALERT_WEBHOOK_URL` 입력 대기 상태와 일치
+- 배포 전 backup: `chimap-daily-20260727T092614Z.dump`, 17,611,642 bytes,
+  SHA-256 `764dba0e81872eef431b8756f55512ba56ed35abf5d034fd9af4c93051d3fff6`
+- 최종 backup: `chimap-daily-20260727T102927Z.dump`, 17,725,228 bytes,
+  SHA-256 `e93038a5f59c2df6f36caab0edbd6ef5c21f78fc23e3916623790ca1c36d9f1f`
+- 서울 실시간 API: `SEOUL_SUBWAY_API_KEY`는 서버 환경에만 존재하지만 공식
+  HTTPS endpoint 연결을 검증하지 못해 `SEOUL_SUBWAY_ENABLED=0` 유지. 운영
+  ETA는 TAGO 시간표 또는 배차간격 기반임을 응답에 명시
+
+### 2026-07-27 서울 지하철 실시간 활성화 기록
+
+- source commits: `ffe80d6`, `e16684b`
+- production image: `sha256:77f4de84c4baaa11d0c865d6b95bde3ae928b8bc8404dcfeb24d09ff94040887`
+- API container commit: `e16684b`, local/public health와 readiness HTTP 200
+- 원인: 공식 host의 443/TLS는 connect timeout이고 80/HTTP만 정상. 운영 Docker
+  bridge에서는 Node `fetch`도 timeout되어 공식 HTTP 경로를 `node:http`,
+  `Connection: close`로 분리
+- 보안 경계: exact host·80번 port·명시적 opt-in, redirect 차단, 응답 5MiB 제한,
+  KST 일일 900회 process-local guard, 오류·로그에 key/전체 URL 미포함
+- 실제 upstream smoke: 서울역 도착 20건, 1호선 위치 81건, HTTP 200/`INFO-000`
+- 실제 추천 smoke: 서울역→강남역 HTTP 200, 세 후보 모두 첫 4호선 leg에서
+  `SEOUL_REALTIME_ARRIVAL=true`, 이후 환승은 TAGO 시간표 fallback
+- 역명 보정: CSV의 `서울역`처럼 끝에 `역`이 붙은 query는 서울 API 요청 전에
+  접미사를 제거
+- 외부 알림: `EXTERNAL_ALERTS_ENABLED=0`, relay health `disabled`, POST 202,
+  `ChimapAlertDeliveryNotConfigured` 활성 경보 0개
+- tests/build: API 114개 통과·8개 환경 통합 테스트 skip, relay 4개 통과,
+  TypeScript/API/Web production build와 Prometheus 20개 rule 검증 통과
+- security: 공개 asset `/assets/index-DVyoPrrl.js`에서 서버 key 이름·값 0건,
+  최근 API log에서 key·전체 서울 요청 URL·error 0건
+- monitoring: API/relay/Alertmanager target 3개 `up`, 경보 rule 20개 모두 `ok`
+- 배포 전 backup: `chimap-daily-20260727T122539Z.dump`, 17,725,228 bytes,
+  SHA-256 `12f5ec6f8f63193edff33f71c699d28e75ce3a28f20730f4d72cfbf55750e579`
+- 배포 후 backup: `chimap-daily-20260727T123937Z.dump`, 17,736,605 bytes,
+  SHA-256 `8ce86625ec1632eedf35a4af509e67854d3e34b441e74fc5554ac56feedc9b0e`
 
 ## 12. 공개 번들 비밀값 검사
 
@@ -640,6 +740,7 @@ host에 publish하지 않습니다. 교통 동기화 성공 시각·최근 실�
 외부 URL은 루트 `.env`에만 둡니다.
 
 ```dotenv
+EXTERNAL_ALERTS_ENABLED=1
 ALERT_NOTIFICATION_PROVIDER=slack
 ALERT_WEBHOOK_URL=
 ```
@@ -653,14 +754,14 @@ docker compose up -d --no-build --force-recreate alert-relay
 
 확인 스크립트는 Alertmanager API에 실제 점검 경보를 넣고 relay의 마지막
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
-외부 URL이 아직 없다면 아래의 구성 지표 `0`과 설정 필요 경보가 정상입니다.
+현재처럼 외부 알림을 사용하지 않으면 `EXTERNAL_ALERTS_ENABLED=0`으로 둡니다.
+이때 relay는 `/alerts`를 `202 disabled`로 수신 종료하고 health에
+`enabled:false`를 표시하며, `ChimapAlertDeliveryNotConfigured` 경보도
+평가하지 않습니다. 사용을 시작할 때만 flag와 URL을 함께 설정하고 아래 전달
+검사를 실행합니다.
 
-2026-07-26 01:26 KST 현재 Alertmanager와 relay health, 라우팅 설정과
-격리 수신처 메시지 변환은 정상입니다. 외부 URL은 비어 있어
-`chimap_alert_relay_configured=0`과
-`ChimapAlertDeliveryNotConfigured`가 발생하는 상태가 정상입니다. URL 입력
-후에는 구성 지표가 `1`인지, 점검 경보와 복구 알림이 실제 운영 채널에 모두
-도착했는지 확인해야 활성화가 완료됩니다.
+외부 알림을 다시 켠 뒤에는 구성 지표가 `1`인지, 점검 경보와 복구 알림이 실제
+운영 채널에 모두 도착했는지 확인해야 활성화가 완료됩니다.
 
 ## 16. 롤백
 

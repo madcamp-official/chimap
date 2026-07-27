@@ -4,22 +4,22 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production/staging health 재확인: 2026-07-27 16:48 KST
-- 전체 운영 검증 스냅샷: 2026-07-27 14:29 KST
+- production health/readiness 재확인: 2026-07-27 21:45 KST
+- 전체 운영 검증 스냅샷: 2026-07-27 21:40 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`7a99e03`)
+- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`e16684b`)
 - cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
-- 버스 위치·지도 시점·TAGO 지하철·migration 7 운영 배포: 2026-07-27 14:28 KST
+- 멀티모달 그래프·서울 실시간 지하철·migration 9 운영 배포: 2026-07-27 21:39 KST
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
-  health 200·guest/Kakao 활성·Apple 비활성
+  health/readiness 200·guest/Kakao 활성·Apple 비활성, 실제 추천 3건 확인
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
-현재 공개 readiness는 정류장 227,225개, TAGO 연결 정류장 2,844개,
-노선 134개, 노선-정류장 관계 5,731개, 활성 지하철역 1,097개와 TAGO 매핑
-706개입니다. 추천 요청이 새 지역의 실제 노선을 동기화하면 버스 관련 수치는
-증가할 수 있습니다.
+현재 공개 readiness는 정류장 227,308개, TAGO 연결 정류장 3,271개,
+노선 156개, 노선-정류장 관계 6,398개, 활성 지하철역 1,097개, TAGO 매핑
+706개와 버스↔지하철 보행 연결 182개입니다. 추천 요청과 정기 동기화가 새
+지역의 실제 노선을 저장하면 버스 관련 수치는 증가할 수 있습니다.
 
 Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 이벤트, 자동
 건강 경로 UX와 선택형 카카오 로그인이 공개 asset에 반영되어 있습니다.
@@ -148,6 +148,7 @@ docs/staging-environment.md  production과 분리된 staging API/DB 운영
 docs/ios-development.md      iPhone 12 Pro·Xcode·TestFlight 개발 기준
 docs/user-experience.md  사용자 흐름, 상태, 반응형·접근성 계약
 docs/database-schema.md  물리 스키마, API·브라우저 저장 계약
+data                     버스·지하철 import 원본과 토폴로지 CSV
 ops                      백업·동기화 timer, Prometheus와 Alertmanager 설정
 compose.yml              운영 API, DB, 모니터링과 장애 알림
 compose.staging.yml      staging API와 별도 PostgreSQL
@@ -191,7 +192,7 @@ Compose로 실행한 통합 애플리케이션은 `http://127.0.0.1:3000`에서
 docker compose up -d postgres
 
 docker compose run --rm \
-  -v "$PWD/bus data.csv:/data/bus-stops.csv:ro" \
+  -v "$PWD/data/bus_data.csv:/data/bus-stops.csv:ro" \
   api node dist/cli/transit.js import-stops --path /data/bus-stops.csv
 
 docker compose run --rm api node dist/cli/transit.js sync-area \
@@ -272,9 +273,9 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 3개,
-API 103개, web 56개, mobile 14개로 총 191개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 199개입니다.
+현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 4개,
+API 114개, web 56개, mobile 14개로 총 203개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 211개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
@@ -294,12 +295,12 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 교통 갱신: systemd timer가 매일 KAIST 1.2km·대전역 500m 노선 동기화
 - 관측: Prometheus 15초 수집, 15일·2GiB 보존, loopback UI `:9090`
 - 경보: API·검색·DB·TAGO·백업·동기화·알림 전달 20개
-- 전달: Alertmanager→alert-relay→Slack/Discord/일반 webhook
+- 전달: 필요할 때만 `EXTERNAL_ALERTS_ENABLED=1`로 Alertmanager→alert-relay→Slack/Discord/일반 webhook
 - 로그 제외: 검색어, 좌표, 키, 외부 원문
 
 Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
-검증됐습니다. 외부 운영 채널은 `ALERT_WEBHOOK_URL` 입력 전이므로 아직
-활성화되지 않았습니다. webhook 설정과 실제 전달 확인 순서는
+검증됐습니다. 외부 운영 채널은 현재 `EXTERNAL_ALERTS_ENABLED=0`으로 명시적으로
+비활성화되어 있습니다. webhook 설정과 실제 전달 확인 순서는
 [배포·백업·복구 운영서](./docs/deployment.md)의 장애 알림 절차를 따릅니다.
 
 ## 문서

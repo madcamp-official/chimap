@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatNotification,
   parseAlertmanagerPayload,
+  parseExternalAlertsEnabled,
   summarizeAlerts,
   type AlertmanagerPayload,
 } from "./notification.js";
@@ -30,6 +31,13 @@ const firingPayload: AlertmanagerPayload = {
 };
 
 describe("운영자 장애 알림 표현", () => {
+  it("외부 알림은 명시적으로 활성화한 경우에만 켠다", () => {
+    expect(parseExternalAlertsEnabled(undefined)).toBe(false);
+    expect(parseExternalAlertsEnabled("0")).toBe(false);
+    expect(parseExternalAlertsEnabled("1")).toBe(true);
+    expect(() => parseExternalAlertsEnabled("yes")).toThrow(/0 또는 1/u);
+  });
+
   it("발생 경보를 한국어 제목과 행동 가능한 설명으로 요약한다", () => {
     const summary = summarizeAlerts(firingPayload);
 

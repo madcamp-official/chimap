@@ -118,6 +118,11 @@ API는 최대 100개를 반환합니다.
 동기화합니다. 운영 timer는 매일 KAIST 1.2km와 대전역 500m를 갱신하고
 상태 파일에 마지막 성공 시각과 실패 노선·코드를 기록합니다.
 
+영역 seed 중 정류장 한 곳의 노선 조회가 timeout되면 해당 조회의 code를 기록하고
+다른 정류장과 이미 발견한 노선 동기화를 계속합니다. 지하철역 mapping도
+`TagoApiError`가 난 역만 `PENDING`으로 보존하고 다음 역을 처리하며, 예상하지 못한
+DB·계약 오류는 계속 즉시 실패시킵니다.
+
 ## 7. 캐시·timeout·재시도
 
 | 항목 | 기본값 |
@@ -189,7 +194,7 @@ pnpm tago:test-arrivals -- --cityCode 25 --nodeId <nodeId>
 pnpm tago:test-route-stops -- --cityCode 25 --routeId <routeId>
 pnpm tago:test-vehicles -- --cityCode 25 --routeId <routeId>
 
-pnpm bus:import-stops -- --path "/path/bus data.csv"
+pnpm bus:import-stops -- --path "data/bus_data.csv"
 pnpm bus:sync-route -- --cityCode 25 --routeId <routeId>
 pnpm bus:sync-area -- \
   --lat 36.3723 --lng 127.3604 \
@@ -201,7 +206,9 @@ pnpm bus:stats
 
 pnpm subway:import-stations
 pnpm subway:import-topology
+pnpm subway:import-provider-map
 pnpm subway:sync-stations -- --concurrency 4
+pnpm transit:build-transfers -- --concurrency 2
 pnpm subway:test-departures -- \
   --stationId <database-station-id> --direction U
 pnpm subway:stats
@@ -241,7 +248,32 @@ CLI는 root `.env`를 Node `process.loadEnvFile`로 읽고 DB pool을 최대
 - `chimap_tago_subway_request_duration_seconds` 요청 지연
 - `chimap_tago_subway_unmapped_stations` 활성 미매핑 역 수
 
-## 12. 공식 자료
+## 12. 요청 범위 멀티모달 추천
+
+`TRANSIT_ROUTER_MODE=multimodal`은 출발·도착 주변에서 실제 운행 노선을 먼저
+고른 뒤, 해당 버스 노선 전체 정류장과 `is_route_ready=true` 지하철 방향성
+구간, 사전 계산한 버스↔지하철 보행 간선을 하나의 요청 그래프로 합칩니다.
+상태는 현재 노드·탑승 중 서비스·마지막 탑승 서비스·환승 횟수를 포함하며 새
+서비스에 탑승할 때만 대기시간을 한 번 더합니다. 최대 환승은
+`TRANSIT_MAX_TRANSFER_COUNT`로 제어하며 기본값은 2입니다.
+
+대기시간 우선순위는 버스의 경우 TAGO 도착→배차간격, 지하철의 경우 서울 주소
+역에서 서울 실시간 도착→TAGO 시간표→headway, 그 밖의 역에서 TAGO 시간표→
+headway입니다. 예정 승차가 현재보다 10분 이후이면 현재 실시간 값을 사용하지
+않습니다. 모든 결과 leg에는 `timingSource`, `isRealtime`, `stale`이 들어갑니다.
+
+서울시 실시간 지하철 endpoint는 현재 공식 `swopenapi.seoul.go.kr`의 HTTP
+주소만 응답합니다. 그래서 일반 HTTP URL은 계속 거절하되, 정확한 공식 host와
+80번 port에 한해 `SEOUL_SUBWAY_ALLOW_INSECURE_HTTP=1`로 위험을 명시적으로
+수락해야 활성화할 수 있습니다. API key가 평문 전송된다는 제한 때문에 서버
+전용으로만 호출하고 redirect를 따르지 않으며, 일일 공식 한도 1,000회보다 낮은
+900회 process-local guard를 둡니다. 운영 Docker bridge에서 Node `fetch`와 공식
+서버의 호환 문제가 확인되어 HTTP 호출만 `node:http`와 `Connection: close`를
+사용합니다. 실패 시 TAGO/정적 fallback이 경로를 계속 제공합니다. `shadow`
+모드는 기존 결과를 반환하면서 새 그래프만 실행하고, `legacy`는 즉시 기존
+탐색기로 되돌리는 롤백 스위치입니다.
+
+## 13. 공식 자료
 
 - [TAGO 버스정류소정보](https://www.data.go.kr/data/15098534/openapi.do)
 - [TAGO 버스노선정보](https://www.data.go.kr/data/15098529/openapi.do)

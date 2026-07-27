@@ -261,6 +261,7 @@ describe("TransitService TAGO 역 매핑", () => {
     await expect(service.syncSubwayStationMappings(4)).resolves.toEqual({
       mapped: 2,
       unresolved: 0,
+      failed: 0,
       checked: 2,
     });
     expect(searchSubwayStations).toHaveBeenCalledOnce();
@@ -300,13 +301,72 @@ describe("TransitService TAGO 역 매핑", () => {
     await expect(service.syncSubwayStationMappings()).resolves.toEqual({
       mapped: 0,
       unresolved: 1,
+      failed: 0,
       checked: 1,
     });
     expect(updateSubwayStationMapping).toHaveBeenCalledWith({
       id: daejeonStation.id,
       status: "UNRESOLVED",
+      canonicalStatus: "AMBIGUOUS",
       tagoStationId: null,
       tagoRouteName: null,
     });
+  });
+
+  it("TAGO 일시 실패 역만 보류하고 나머지 매핑을 계속한다", async () => {
+    const stations = [
+      {
+        ...daejeonStation,
+        id: "223",
+        tagoStationId: null,
+        mappingStatus: "PENDING" as const,
+      },
+      {
+        ...daejeonStation,
+        id: "224",
+        tagoStationId: null,
+        mappingStatus: "PENDING" as const,
+      },
+    ];
+    const updateSubwayStationMapping = vi.fn().mockResolvedValue(undefined);
+    const repository = {
+      subwayStationsForMapping: vi.fn().mockResolvedValue(stations),
+      updateSubwayStationMapping,
+    } as unknown as TransitRepository;
+    const searchSubwayStations = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new TagoApiError({
+          service: "subway",
+          operation: "GetKwrdFndSubwaySttnList",
+          resultCode: "TIMEOUT",
+          safeMessage: "TAGO API 요청 시간이 초과되었습니다.",
+          retryable: true,
+        }),
+      )
+      .mockResolvedValueOnce([
+        { stationId: "MTRDJ10004", name: "대전역", routeName: "1호선" },
+      ]);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      DATA_GO_KR_SERVICE_KEY: "subway-key",
+    });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository,
+      client: { searchSubwayStations } as unknown as TagoClient,
+    });
+
+    await expect(service.syncSubwayStationMappings(1)).resolves.toEqual({
+      mapped: 1,
+      unresolved: 0,
+      failed: 1,
+      checked: 2,
+    });
+    expect(updateSubwayStationMapping).toHaveBeenCalledOnce();
+    expect(updateSubwayStationMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "224", status: "MAPPED" }),
+    );
   });
 });

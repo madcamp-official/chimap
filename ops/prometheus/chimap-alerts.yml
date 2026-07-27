@@ -47,7 +47,10 @@ groups:
           description: Alertmanager cannot hand alerts to the external notification relay.
 
       - alert: ChimapAlertDeliveryNotConfigured
-        expr: chimap_alert_relay_configured == 0
+        expr: |
+          chimap_alert_relay_enabled == 1
+          and on(provider)
+          chimap_alert_relay_configured == 0
         for: 10m
         labels:
           severity: warning

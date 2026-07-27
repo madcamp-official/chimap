@@ -1,9 +1,9 @@
 # 데이터베이스 스키마와 저장 계약
 
 기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-27 운영 DB에서
-migration 1~7, 정류장 227,225개, TAGO 연결 정류장 2,844개, 노선 134개,
-노선-정류장 관계 5,731개, 활성 지하철역 1,097개와 TAGO 매핑 706개를
-확인했습니다. 운영 수치는
+migration 1~9, 정류장 227,308개, TAGO 연결 정류장 3,271개, 노선 156개,
+노선-정류장 관계 6,398개, 활성 지하철역 1,097개, TAGO 매핑 706개와
+버스↔지하철 보행 연결 182개를 확인했습니다. 운영 수치는
 [구현·운영 현황](./current-state.md)에서 갱신합니다.
 
 ## 1. 경계와 원칙
@@ -608,6 +608,28 @@ API 응답을 바꾸지 않고 보조 설명의 밀도에만 영향을 줍니다
 동의 상태를 보존한 채 나머지 값을 기본값으로 되돌립니다. OS의
 `prefers-reduced-motion`과 `motionPreference=reduced` 중 하나라도 참이면
 최종 동작 축소 상태가 됩니다.
+
+### 8.9 멀티모달 교통 그래프 데이터
+
+migration 9는 기존 `subway_station_lines`를 물리 역·노선 기준 원본으로 유지하고
+`subway_line_stations.station_line_id`로 명시적으로 연결합니다. CSV 재적재는
+live table을 삭제하지 않고 새 데이터만 활성화하며 `transit_dataset_versions`의
+generation과 row count를 갱신합니다.
+
+- `subway_provider_station_mappings`: 서비스 노선·역·TAGO/SEOUL별 외부 ID,
+  질의 별칭, 매핑 상태와 우선순위
+- `subway_provider_direction_mappings`: 방향성 segment별 TAGO U/D 및 서울
+  상/하행 코드. 임의 역명 fuzzy match를 저장하지 않음
+- `bus_subway_transfer_edges`: 버스 정류장과 물리 역 사이의 실제 보행 거리·시간,
+  PostGIS LineString, 입력 좌표 hash와 활성 상태
+- `bus_subway_transfer_build_runs`: 배치 후보·처리·저장·제외·실패 수
+- `transit_dataset_versions`: topology/provider mapping import 세대와 row count
+
+환승 간선 기본키는 `(bus_stop_id, station_line_id)`이며 재실행 시 upsert합니다.
+지하철 경로는 `station_order`로 임의 연결하지 않고
+`subway_segments(from_source_station_key, to_source_station_key)`의 방향성 간선만
+사용합니다. `is_route_ready=false` 또는 `active=false` 데이터는 탐색에서
+제외됩니다.
 
 ## 9. 백업과 복구
 

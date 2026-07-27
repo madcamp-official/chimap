@@ -1,12 +1,16 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
+import { KakaoMobilityProvider } from "../providers/kakao-provider.js";
+import { buildBusSubwayTransferEdges } from "../transit/bus-subway-transfer-builder.js";
 import { importBusStopsFile } from "../transit/csv-importer.js";
 import { importSubwayStationsFile } from "../transit/subway-csv-importer.js";
+import { importSubwayProviderMapFile } from "../transit/subway-provider-map-importer.js";
 import { importSubwayTopologyDirectory } from "../transit/subway-topology-importer.js";
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
@@ -154,14 +158,26 @@ async function syncArea(area: SyncArea, concurrency: number) {
     string,
     { cityCode: string; routeId: string }
   >();
+  const failureCodes = new Set<string>();
+  let failedStopRouteLookupCount = 0;
   for (const stop of nearby.items) {
     if (stop.cityCode === null || stop.nodeId === null) {
       continue;
     }
-    const response = await transit.getRoutesByStop(
-      stop.cityCode,
-      stop.nodeId,
-    );
+    let response;
+    try {
+      response = await transit.getRoutesByStop(
+        stop.cityCode,
+        stop.nodeId,
+      );
+    } catch (error) {
+      if (!(error instanceof TagoApiError)) {
+        throw error;
+      }
+      failedStopRouteLookupCount += 1;
+      failureCodes.add(safeFailureCode(error));
+      continue;
+    }
     for (const route of response.items) {
       routes.set(`${route.cityCode}:${route.routeId}`, {
         cityCode: route.cityCode,
@@ -173,7 +189,6 @@ async function syncArea(area: SyncArea, concurrency: number) {
   let nextIndex = 0;
   let synced = 0;
   let failed = 0;
-  const failureCodes = new Set<string>();
   const failedRoutes: Array<{
     cityCode: string;
     routeId: string;
@@ -213,6 +228,7 @@ async function syncArea(area: SyncArea, concurrency: number) {
     discoveredRouteCount: routes.size,
     selectedRouteCount: selected.length,
     syncedRouteCount: synced,
+    failedStopRouteLookupCount,
     failedRouteCount: failed,
     failureCodes: [...failureCodes],
     failedRoutes,
@@ -299,10 +315,10 @@ async function run(): Promise<void> {
       const result = await syncArea(area, concurrency);
       printJson(result);
       if (
-        result.selectedRouteCount > 0 &&
-        result.syncedRouteCount === 0
+        result.failureCodes.length > 0 ||
+        (result.selectedRouteCount > 0 && result.syncedRouteCount === 0)
       ) {
-        throw new Error("선택한 TAGO 노선을 하나도 동기화하지 못했습니다.");
+        throw new Error("TAGO 영역 동기화가 부분 실패했습니다.");
       }
       break;
     }
@@ -344,6 +360,7 @@ async function run(): Promise<void> {
             discoveredRouteCount: 0,
             selectedRouteCount: 0,
             syncedRouteCount: 0,
+            failedStopRouteLookupCount: 0,
             failedRouteCount: 1,
             failureCodes: [safeFailureCode(error)],
             failedRoutes: [],
@@ -358,13 +375,21 @@ async function run(): Promise<void> {
         (total, result) => total + result.failedRouteCount,
         0,
       );
-      const success = syncedRouteCount > 0 && failedRouteCount === 0;
+      const failedStopRouteLookupCount = results.reduce(
+        (total, result) => total + result.failedStopRouteLookupCount,
+        0,
+      );
+      const success =
+        syncedRouteCount > 0 &&
+        failedRouteCount === 0 &&
+        failedStopRouteLookupCount === 0;
       const status = {
         attemptedAt,
         success,
         lastSuccessAt: success ? new Date().toISOString() : previousLastSuccessAt,
         areaCount: results.length,
         syncedRouteCount,
+        failedStopRouteLookupCount,
         failedRouteCount,
         failureCodes: [
           ...new Set(results.flatMap((result) => result.failureCodes)),
@@ -444,6 +469,51 @@ async function run(): Promise<void> {
         headways: result.headways.length,
         transfers: result.transfers.length,
       });
+      break;
+    }
+    case "import-subway-provider-map": {
+      const path =
+        argument("path") ??
+        (config.subwayTopologyDataDir === undefined
+          ? undefined
+          : join(
+              config.subwayTopologyDataDir,
+              "subway_provider_station_map_template.csv",
+            ));
+      if (path === undefined) {
+        throw new Error(
+          "SUBWAY_TOPOLOGY_DATA_DIR 또는 --path를 설정해 주세요.",
+        );
+      }
+      const rows = await importSubwayProviderMapFile(
+        path,
+        transit.repository,
+      );
+      printJson({ path, sourceRows: rows.length });
+      break;
+    }
+    case "build-bus-subway-transfers": {
+      if (config.kakaoRestApiKey === undefined) {
+        throw new Error("KAKAO_REST_API_KEY를 설정해 주세요.");
+      }
+      const concurrency = Math.min(
+        Math.max(Number(argument("concurrency") ?? 2), 1),
+        4,
+      );
+      const limit = Math.min(
+        Math.max(Number(argument("limit") ?? 20_000), 1),
+        20_000,
+      );
+      const result = await buildBusSubwayTransferEdges({
+        repository: transit.repository,
+        walkingProvider: new KakaoMobilityProvider(config.kakaoRestApiKey),
+        concurrency,
+        limit,
+      });
+      printJson(result);
+      if (result.failed > 0) {
+        throw new Error("일부 버스-지하철 환승 간선 생성에 실패했습니다.");
+      }
       break;
     }
     case "sync-subway-stations": {

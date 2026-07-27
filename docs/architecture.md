@@ -350,6 +350,19 @@ limit은 프로세스 로컬이므로 현재 API는 단일 인스턴스로 운�
 기본 rate limit은 장소 60회/분, 추천 10회/분, 익명 UI 이벤트 120회/분이며
 각각 IP 단위입니다.
 
+### 6.1 요청 범위 멀티모달 그래프
+
+추천 요청은 DB 공간검색으로 출발·도착 주변 정류장과 역을 정하고, 끝점 정류장을
+운행하는 버스 노선만 전체 정류장 순서로 확장합니다. 여기에 route-ready 지하철
+segment와 사전 계산한 버스↔지하철 보행 간선을 결합합니다. 탐색은 서비스 탑승
+상태를 유지해 같은 노선의 매 역마다 대기시간이 반복되지 않게 하고, 최대 2회
+환승과 제한된 Pareto label로 요청 비용을 제한합니다.
+
+결과 materializer가 도보는 Kakao 보행 geometry, 버스는 검증된 도로 geometry,
+지하철은 실제 방향성 역열로 변환합니다. 실시간 공급자 장애는 각 leg의 정적
+대기시간으로 격리되며 그래프 자체를 실패시키지 않습니다. 배포 중 새 데이터가
+없거나 새 탐색 결과가 비면 기존 추천기로 자동 fallback합니다.
+
 ## 7. 장애 모델
 
 - Kakao Local 복구 가능 장애: NAVER 주소 보완
@@ -396,10 +409,11 @@ PostgreSQL pool을 닫습니다.
 - Alertmanager는 긴급 경보를 10초, 주의 경보를 30초 동안 묶은 뒤 relay로
   보내며 복구 상태도 전달합니다. relay는 비밀 URL을 runtime에만 읽고
   메시지에 경보명·요약·조치 설명·상태 확인 링크를 제공합니다.
-- 외부 URL이 없을 때 relay health는 내부 수신 가능 상태를 유지하되
-  `chimap_alert_relay_configured=0`을 노출합니다. Prometheus는 이를
-  `ChimapAlertDeliveryNotConfigured`로 표시하며, 전달 실패 횟수에는
-  포함하지 않아 경보가 자기 자신을 증폭하지 않게 합니다.
+- `EXTERNAL_ALERTS_ENABLED=0`이면 relay는 Alertmanager 요청을 `202 disabled`로
+  종료하고 webhook을 호출하지 않습니다. health와
+  `chimap_alert_relay_enabled=0`에 이 상태를 노출하며 Prometheus도 설정 누락
+  경보를 만들지 않습니다. 활성화한 상태에서 URL만 없을 때에만
+  `ChimapAlertDeliveryNotConfigured`를 표시합니다.
 
 ## 10. PM2를 사용하지 않는 이유
 
