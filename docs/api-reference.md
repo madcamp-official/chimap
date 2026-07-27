@@ -183,11 +183,16 @@ Kakao Developers에서 카카오 로그인을 활성화하고 위 Redirect URI�
 등록해야 합니다. Client Secret이 활성화된 앱이므로 토큰 요청에도 같은 값을
 사용합니다.
 
-## 4. 모바일 호환성과 선택 로그인
+## 4. 모바일 호환성과 Kakao 필수 session
 
 모바일은 Web cookie를 사용하지 않습니다. CHIMap access/refresh 원문은 256-bit
 opaque token이고 DB에는 SHA-256 hash만 저장합니다. 성공 응답은 모두
 `Cache-Control: no-store`입니다.
+
+서버 계약은 Web/향후 client 호환성을 위해 guest flag를 유지하지만, 현재 iOS와
+Android 앱 UI는 저장된 CHIMap session이 없으면 Kakao 로그인 화면만 표시합니다.
+Apple provider 코드는 유지하되 내부 iOS staging에서는 `appleEnabled=false`로
+숨깁니다.
 
 모바일 요청은 다음 세 header를 한 묶음으로 보냅니다. 하나만 보내는 요청은
 400이며, 최소 지원 버전보다 낮으면 `CLIENT_UPDATE_REQUIRED` 426, 점검 중이면
@@ -204,7 +209,8 @@ X-Contract-Version: v1
 
 인증 없이 호출하며 최소 iOS/Android 버전, maintenance 안내, 지원 지역,
 privacy policy 버전, 차량 polling 주기와 guest/Kakao/Apple 활성 상태를
-반환합니다. 앱은 이 endpoint 실패만으로 저장된 추천 화면을 막지 않습니다.
+반환합니다. 현재 mobile의 `guestEnabled`는 로그인 우회 조건이 아닙니다. 앱은 이
+endpoint 실패만으로 이미 저장된 인증 사용자 추천 화면을 막지 않습니다.
 
 ### `POST /api/v1/auth/kakao/mobile`
 

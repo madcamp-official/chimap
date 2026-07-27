@@ -28,11 +28,11 @@ CHIMap은 다음 네 단위로 운영한다.
 | Client | 카카오 로그인 | 비로그인 사용 |
 | --- | --- | --- |
 | Web | 선택 | 장소 검색·추천·지도 등 모든 핵심 기능 허용 |
-| iOS | 선택(Kakao/Apple) | 장소·추천·지도 핵심 기능 허용 |
-| Android | 선택(Kakao) | 장소·추천·지도 핵심 기능 허용 |
+| iOS | Kakao 필수, Apple은 외부 TestFlight 전 추가 | 로그인 화면만 허용 |
+| Android | Kakao 필수 | 로그인 화면만 허용 |
 
 첫 내부 iOS TestFlight에서는 iOS의 Apple 로그인 코드를 제거하지 않되 server
-`appleEnabled=false`로 UI를 숨기고 guest·HealthKit·Kakao·session lifecycle만
+`appleEnabled=false`로 UI를 숨기고 Kakao·HealthKit·session lifecycle만
 release gate로 삼습니다. Apple 로그인은 외부 TestFlight 전 별도 gate입니다.
 
 모바일 개발은 실제 테스트 폰과 Xcode/Android Studio를 사용한다. 네이티브
@@ -43,7 +43,7 @@ NAVER 지도, Kakao SDK, HealthKit/Health Connect가 필요하므로 Expo Go는
 
 이 문서의 foundation 항목은 현재 작업 트리에 다음과 같이 반영했다.
 
-- `apps/mobile`: Expo Router, guest-first 선택형 Kakao/Apple 로그인, SecureStore, CNG config
+- `apps/mobile`: Expo Router, Kakao 필수 session boundary, SecureStore, CNG config
 - `packages/app-core`, `packages/design-tokens`: platform-neutral 공유 경계
 - Zustand RouteStore와 추천 Query AsyncStorage persistence
 - AppState foreground 5분 stale refetch와 route type 기반 선택 복구
@@ -57,9 +57,13 @@ NAVER 지도, Kakao SDK, HealthKit/Health Connect가 필요하므로 Expo Go는
 - mobile config/최소 버전/maintenance 계약과 앱 내 계정 삭제
 - Android Kotlin 2.1.20 고정, NAVER/Kakao Maven group 격리와 실제 arm64 debug APK compile
 
-아직 완료로 간주하지 않는 항목은 실제 iPhone/Android Development Build 설치,
-NAVER 지도 실기기 렌더링, Kakao 앱 복귀, HealthKit/Health Connect 실제 자료,
-스토어 배포 E2E다. 코드 foundation 완료와 device release gate 통과를 구분한다.
+이전 staging credential로 iPhone 12 Pro Development Build 설치와 NAVER 지도,
+Kakao 앱 복귀·CHIMap session까지 확인했습니다. 현재 Native App Key로 생성 설정과
+서명 빌드는 다시 검증했지만 Kakao SDK native 실패가 보고되어, 동일 Kakao 앱의
+`org.madcamp.chimap.staging` 등록과 새 바이너리 실기기 E2E는 미완료 gate입니다.
+그 밖에 HealthKit/Health Connect 전체 실기기 matrix, Android Development Build와
+스토어 배포 E2E도 남아 있습니다. 코드 foundation 완료와 device release gate
+통과를 구분합니다.
 
 ## 2. 현재 상태
 
@@ -126,7 +130,7 @@ NAVER 지도 실기기 렌더링, Kakao 앱 복귀, HealthKit/Health Connect 실
 Browser                         iOS / Android
 apps/web                       apps/mobile
 React + Vite                   React Native + Expo Dev Build
-optional Kakao Login           guest + optional Kakao/Apple
+optional Kakao Login           required Kakao session
 NAVER Web Map                  NAVER Native Map SDK
 localStorage                   SecureStore + local storage
     │                               │
@@ -203,19 +207,12 @@ RouteStore와 Query cache가 충돌하지 않는다. Web localStorage는 별도 
 
 ### 4.2 Git branch와 worktree 규칙
 
-현재 Git 기준선은 다음과 같다.
-
-- `main` (`321ef96`): 초기 커밋에 머물러 있어 현재 애플리케이션의 통합 기준선으로
-  바로 사용할 수 없음
-- `feat/tago-transit` (`b9f7063`): Web/API/교통 기능이 들어 있는 현재 실질 기준선
-- `feat/mobile/cross-platform-foundation`: `feat/tago-transit`에서 분기해 이 문서의
-  foundation 변경을 격리한 현재 작업 branch
-
-따라서 현재 foundation branch는 `feat/tago-transit`에 명시적으로 의존한다.
-병합할 때는 `feat/tago-transit → main`을 먼저 완료하고, 그 다음 foundation을
-갱신된 `main`에 rebase한 뒤 PR을 만든다. 두 branch를 동시에 `main`으로 열어
-같은 기존 커밋을 중복 포함시키지 않는다. foundation 변경은 이 branch 안에서
-구현·CI·문서 commit으로 분리해 검토와 되돌리기 단위를 명확히 유지한다.
+통합 기준선은 Web/API/교통 이력과
+`feat/mobile/cross-platform-foundation@1df41a5`, iOS staging 구현을 포함한
+`main`입니다. 초기 커밋에 머물던 과거 `main`과 draft PR #1의 이력은 같은 commit
+graph에 포함했으며, 이후 변경은 갱신된 `main`에서 책임별 short-lived branch로
+분기합니다. foundation이나 generated native project를 장기 branch로 유지하지
+않습니다.
 
 Web/iOS/Android 장기 branch를 세 개 유지하지 않는다. 장기 platform branch는
 공통 계약 수정이 세 갈래로 복제되고 merge 순서에 따라 drift가 생기기 때문이다.
@@ -239,17 +236,17 @@ worktree마다 의존성 디렉터리와 `.env`를 별도로 유지한다. 공�
 `contracts → api → web/mobile` 순서의 작은 PR로 먼저 merge하고, iOS/Android
 adapter는 공용 mobile feature가 merge된 뒤 각각 rebase한다.
 
-iOS-first 이후 실제 branch 운용 순서는 다음과 같다.
+iOS-first 이후 branch 운용 순서는 다음과 같다.
 
-1. 현재 `feat/mobile/cross-platform-foundation`을 실질 기준선 위에서 검증한다.
-2. `feat/tago-transit`을 `main`에 먼저 병합하고 foundation을 갱신된 `main`에 rebase한다.
-3. foundation 병합 뒤 `feat/ios/native-spike`를 새 worktree에서 만들고 iOS adapter,
-   entitlement, provider console 및 archive 관련 변경만 둔다.
-4. iOS에서 발견한 공용 UI/state/API 문제는 `feat/mobile/ios-hardening`으로 옮겨 먼저
-   병합한다. iOS branch에서 Android 공용 코드를 장기간 소유하지 않는다.
-5. `feat/android/native-spike`는 위 공용 수정이 들어간 최신 `main`에서 분기한다.
-   따라서 Android가 이미 해결된 공용 문제를 다시 구현하거나 오래된 계약을 들고
-   출발하지 않는다.
+1. Web/API·cross-platform foundation·iOS staging을 검증한 통합 commit을 `main`의
+   기준선으로 사용한다.
+2. 공용 UI/state/API 변경은 최신 `origin/main`에서 `feat/mobile/*` 또는
+   `feat/api/*`로 짧게 분기해 먼저 병합한다.
+3. iOS entitlement/provider/archive 변경은 `feat/ios/*`, Android native adapter는
+   `feat/android/*`에만 두며 generated project를 commit하지 않는다.
+4. 각 platform branch는 공용 변경 병합 뒤 최신 `main`에서 갱신하고 장기 유지하지
+   않는다. 따라서 Android가 이미 해결된 공용 문제를 다시 구현하거나 오래된
+   계약을 들고 출발하지 않는다.
 
 즉 iOS와 Android release 작업은 별도 short-lived branch와 CI gate로 격리하지만,
 동일 feature/state를 복제하는 영구 platform branch는 만들지 않는다.
@@ -297,20 +294,19 @@ PR 하나가 여러 ownership 영역을 건드리면 계약/API의 additive 변�
 장애여도 익명 검색·추천은 계속 동작해야 한다. 로그인한 사용자에게 제공할
 첫 편의 기능은 즐겨찾기와 기기 간 비민감 설정 동기화다.
 
-### 5.2 Mobile: guest-first 선택 로그인
+### 5.2 Mobile: Kakao 필수 로그인
 
-모바일 핵심 경로는 로그인 없이 사용할 수 있다. 이는 인증 공급자 장애가 추천
-기능을 막지 않게 하고 iOS에서 계정이 반드시 필요하지 않은 기능에 로그인을
-강제하지 않기 위한 경계다. Kakao SDK는 iOS/Android 공통 선택 수단이며 iOS에는
-Sign in with Apple도 같은 수준으로 제공한다. provider wrapper는 platform adapter
-아래에 두고 실제 폰 복귀 흐름을 release gate에서 검증한다.
+모바일은 HealthKit/Health Connect와 개인화·cache·계정 삭제의 사용자 경계를
+명확히 하기 위해 Kakao session을 필수로 사용한다. Kakao SDK는 iOS/Android 공통
+로그인 수단이며 Sign in with Apple 코드는 삭제하지 않고 외부 iOS TestFlight 전
+별도 provider gate로 추가한다. provider wrapper는 platform adapter 아래에 두고
+실제 폰 복귀 흐름을 release gate에서 검증한다.
 
 ```text
 앱 시작
   → SecureStore의 CHIMap refresh token 확인
-  → 없거나 만료: guest-local namespace로 핵심 화면 진입
-  → 원할 때 Kakao 또는 iOS Apple 로그인
-  → POST /api/v1/auth/kakao/mobile 또는 /auth/apple/mobile
+  → 없거나 만료: Kakao 로그인 화면 표시
+  → POST /api/v1/auth/kakao/mobile
   → backend가 provider token/code와 사용자 identity 검증
   → CHIMap access/refresh token 발급
   → refresh token은 SecureStore에 저장
@@ -445,14 +441,14 @@ Android 단계에서는 같은 MacBook에 Android Studio, SDK, emulator를 추�
 | 상세 이동 단계 | full-screen sheet | full-screen sheet |
 | 화면 설정 | native settings | native settings |
 | 익명 telemetry | opt-in | opt-in |
-| 로그인 | 선택(Kakao/Apple) | 선택(Kakao) |
+| 로그인 | Kakao 필수(Apple 후속) | Kakao 필수 |
 
 ### 7.2 최초 실행 UX
 
 1. 긴 animation 대신 짧은 native splash
 2. 앱 가치 한 화면 설명
-3. 로그인 없이 home 진입(로그인은 계정 영역에서 선택)
-4. 최소 profile과 하루 목표 설정
+3. Kakao 로그인과 CHIMap session 저장
+4. 사용자별 최초 1회 최소 profile과 하루 목표 설정
 5. `Apple 건강에서 오늘 걸음 자동 불러오기` 선택
 
 로그인과 health 권한을 한 화면에서 연속으로 강요하지 않는다. 카카오 로그인
@@ -473,7 +469,7 @@ Apple 건강에서 2분 전 갱신
 [건강 경로 찾기]
 ```
 
-- session을 조용히 refresh하되 실패하면 입력을 잃지 않고 guest로 전환
+- session을 조용히 refresh하되 무효하면 사용자 local state를 정리하고 로그인 화면으로 전환
 - 오늘 걸음은 앱 foreground 복귀와 KST 날짜 변경 때 갱신
 - 위치 권한은 현재 위치 button을 눌렀을 때만 요청
 - 권한이 없으면 직접 검색·수동 걸음 입력 제공
@@ -625,7 +621,7 @@ provider console credential과 Xcode Archive는 외부 release gate로 남는다
 ### Phase 2 — Mobile foundation/backend token: 1~2주
 
 - `apps/mobile`
-- Expo Router guest-first session boundary
+- Expo Router Kakao-required session boundary
 - `packages/app-core`
 - mobile auth/refresh/logout API
 - SecureStore
@@ -649,7 +645,7 @@ Kotlin 2.1.20과 arm64-v8a로 `:app:assembleDebug`를 실제 통과하고 v2 서
 포함한 다섯 독립 job이 모두 성공했다. 실제 iPhone/Android Development Build,
 provider console credential과 store archive는 여전히 별도 release gate다.
 
-Gate: 실제 iPhone에서 guest 추천과 선택 로그인→session 복구→logout→재로그인이
+Gate: 실제 iPhone에서 Kakao 로그인→session 복구→logout→재로그인이
 되고 web session과 같은 `app_users` identity를 사용한다.
 
 ### Phase 3 — iOS feature parity: 3주
@@ -740,8 +736,9 @@ loading·error·result/NAVER path/detail sheet, eviction 복원, 앱 내 계정 
 
 - web anonymous E2E 회귀 없음
 - web 실제 Kakao login E2E
-- guest 상태에서 인증 장애와 무관하게 장소·추천·지도 사용 가능
-- 선택 로그인 성공 후 첫 useful screen까지 불필요한 추가 consent 없음
+- Web guest 회귀는 유지하고 mobile은 인증 실패를 명확히 안내하며 session 없이
+  장소·추천·지도로 진입하지 않음
+- Kakao 로그인 성공 후 최초 사용자에게만 개인화 입력을 1회 요구
 - 권한 거부 시 위치/걸음 수동 fallback
 - 검색어·GPS·health raw data가 DB/log에 없음
 - crash-free session 목표 99.5% 이상
@@ -831,7 +828,7 @@ recommendation failure, provider latency, DB pool, backup/restore에 alert를 �
 6. web/backend 운영 배포
 7. Kakao/NAVER staging credential을 staging bundle ID에 등록하고 Apple UI는 flag로 숨김
 8. iPhone용 Expo Development Build 설치와 native SDK 기술 spike
-9. 실제 device에서 guest 추천, 선택 로그인, SecureStore와 grace retry 검증
+9. 실제 device에서 Kakao 필수 로그인, SecureStore와 grace retry 검증
 10. TestFlight
 11. Android adapter와 Play release
 
@@ -845,9 +842,9 @@ recommendation failure, provider latency, DB pool, backup/restore에 alert를 �
 
 - Web: 익명 전체 기능과 선택형 Kakao login이 공개 환경에서 동작
 - Backend: web cookie와 mobile bearer가 같은 user identity를 사용
-- iOS 내부 TestFlight: guest+선택 Kakao login, HealthKit, NAVER map, 전체 추천 흐름 공개
+- iOS 내부 TestFlight: Kakao 필수 login, HealthKit, NAVER map, 전체 추천 흐름 공개
 - iOS 외부 TestFlight 전: 선택 Apple login과 grant lifecycle 추가 검증
-- Android: guest+선택 Kakao login, Health Connect, NAVER map, 전체 추천 흐름 공개
+- Android: Kakao 필수 login, Health Connect, NAVER map, 전체 추천 흐름 공개
 - 세 frontend가 같은 versioned API contract를 사용
 - 각 frontend를 독립 build/deploy/rollback 가능
 - raw health/search/GPS data 비저장 경계 검증

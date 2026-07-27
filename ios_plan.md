@@ -27,9 +27,10 @@ Mac에서 iOS를 개발할 때의 기본 원칙은 다음과 같다.
    reference viewport는 `390×844pt`(`@3x`)로 기록하되 이 크기를 코드에
    하드코딩하지 않고 responsive layout 검증 기준으로만 사용한다.
 8. 첫 내부 TestFlight는 `org.madcamp.chimap.staging` 전용 App Store Connect app으로
-   배포하며 guest 핵심 기능, HealthKit, Kakao 로그인, refresh/logout/account
-   deletion을 포함한다. Apple 로그인 코드는 유지하되 `appleEnabled=false`로
-   숨기고 E2E는 외부 TestFlight 전 단계로 미룬다.
+   배포하며 Kakao 필수 로그인, HealthKit, refresh/logout/account deletion을
+   포함한다. Apple 로그인 코드는 유지하되 `appleEnabled=false`로 숨기고 E2E는
+   외부 TestFlight 전 단계로 미룬다. 서버의 `guestEnabled`는 Web/공용 계약 설정이며
+   현재 iOS 로그인 화면을 우회하지 않는다.
 9. 첫 내부 TestFlight는 `userInterfaceStyle="light"`로 고정한다. 현재 design
    token은 light 전용이므로 Dark Mode는 semantic light/dark token과 theme
    provider를 갖추는 후속 phase로 분리한다.
@@ -52,11 +53,11 @@ apps/mobile/src 또는 shared package 수정
 
 ### 이미 구현된 기반
 
-- 최초 기준은 `feat/mobile/cross-platform-foundation@72612e2`였으며, 2026-07-27
-  staging 검증 뒤 서버 staging 운영 문서를 포함한 authoritative remote
-  `539a266cda9ed4a00992a41122e5f41cbe110945`로 fast-forward했다. 작업 branch는
-  `feat/ios/native-spike`이며 `apps/mobile/src`, `apps/mobile/app.config.ts`,
-  `apps/mobile/eas.json`과 세 shared package가 모두 존재한다.
+- 최초 기준은 `feat/mobile/cross-platform-foundation@72612e2`였으며, 최종 통합은
+  원격 최신 `1df41a5`의 migration 9·멀티모달·서울 지하철 실시간 변경과
+  `feat/ios/native-spike`의 앱 변경을 `main`에 합친 상태다. `apps/mobile/src`,
+  `apps/mobile/app.config.ts`, `apps/mobile/eas.json`과 세 shared package가 모두
+  존재한다.
 
 - development/staging/production bundle ID가 각각
   `org.madcamp.chimap.dev`, `org.madcamp.chimap.staging`,
@@ -76,93 +77,55 @@ apps/mobile/src 또는 shared package 수정
 
 ### 2026-07-27 staging Development Build 검증 현황
 
-- `539a266`은 `compose.staging.yml`, staging/iOS 운영서와 관련 문서만 변경했으며
-  `apps/api`, `packages/contracts`, `apps/mobile/src`, dependency lockfile은 바꾸지
-  않았다. 따라서 mobile API schema와 runtime source에는 직접적인 version 충돌이
-  없다. 원격 `main`은 여전히 초기 commit `321ef96`이고 실제 최신 기준선은
-  `origin/feat/mobile/cross-platform-foundation`이다.
-- 새 staging 운영서는 production과 다른 Compose project, loopback port, DB volume,
-  env file을 명시해 API/DB 격리 기준과 일치한다. 다만 Kakao는 같은 Application의
-  환경별 key를 쓰는 정책이라, 별도 staging Kakao Application을 요구해 온 기존 계획과
-  다르다. 실제 Kakao 로그인 전에 mobile Native App Key와 server `KAKAO_APP_ID`가
-  같은 staging identity인지 provider console에서 확정해야 한다.
+- 원격 최신 `feat/mobile/cross-platform-foundation@1df41a5`의 공유 계약,
+  migration 9, request-scoped 멀티모달 경로와 서울 지하철 실시간 코드를 iOS
+  staging 구현과 병합했다. 새 계약의 `subway`, `timing`, `transfer` 필드는 additive며
+  mobile의 strict schema parsing·수단별 거리 비율·leg 지도 렌더링과 호환된다.
+- 원격 provider-map test가 Git에 없는 runtime CSV를 직접 읽어 clean checkout에서
+  실패하던 문제는 작은 추적 fixture로 분리해 수정했다.
 - 검증 환경은 Apple Silicon Mac, macOS 26.5.2(25F84), Xcode 26.6(17F113),
   Ruby 2.6.10, CocoaPods 1.16.2, Node.js 24.18.0, pnpm 10.15.1이다.
 - 현재 login shell에는 `node`, `pnpm`, `pod`가 상시 설치돼 있지 않아 이번 검증은
   `/tmp`의 격리 toolchain으로 수행했다. 반복 가능한 로컬 loop 전에는 같은 버전을
   영구 설치하거나 저장소 pinning 방식으로 제공해야 한다.
-- `https://staging.chimap.madcamp-kaist.org/api/v1/health`는 TLS 오류 없이 HTTP 200,
-  `status=ok`를 반환했다.
-- `/api/v1/mobile-config`는 HTTP 200이며 `guestEnabled=true`, `kakaoEnabled=true`,
-  `appleEnabled=false`다.
-- upstream 동기화 뒤 `/api/v1/readiness`는 HTTP 200 `ready`로 바뀌었다. 확인 당시
-  stop 227,058건, linked stop 160건, route 43건, route stop 108건이며 subway
-  station은 여전히 0건이다. 따라서 readiness는 통과하지만 지하철 범위 완료를
-  의미하지는 않는다.
-- iOS client header와 현재 contract schema로 KAIST·대전역 장소 검색은 각각 HTTP
-  200과 8개 결과를 반환했다. 첫 개인화 추천 요청은 약 22초 뒤 Cloudflare HTML
-  504였으나 같은 요청 재시도는 provider/cache가 준비된 뒤 HTTP 200, FAST 1개로
-  성공했다. mobile Query는 1회 retry가 있지만 첫 요청 latency와 JSON이 아닌 504
-  응답은 실제 기기 E2E에서 계속 관찰해야 한다.
-- staging host와 mobile flag는 확인했지만 DB volume과 provider application이
-  production과 물리적으로 분리됐는지는 client endpoint만으로 독립 검증할 수 없다.
-  서버 배포 설정과 provider console에서 별도 확인해야 한다.
+- staging health/readiness는 HTTP 200이며 mobile config는 `guestEnabled=true`,
+  `kakaoEnabled=true`, `appleEnabled=false`다. guest flag와 별개로 현재 iOS 화면은
+  CHIMap Kakao session을 필수로 요구한다.
 - Git에서 제외된 `apps/mobile/.env`의 다섯 client 값을 사용했다. API host는 staging
   정확한 주소이며 trailing slash가 없고 NAVER iOS/Android Client ID는 서로 다르다.
-  Web Client ID 값이 로컬에 없어 native ID와의 실제 값 비교는 미수행이다.
-- working tree의 `app.config.ts`, config test, native verifier에는 Light Mode,
+  생성된 iOS plist의 Kakao key/scheme과 `.env` Native App Key도 일치한다.
+- `app.config.ts`, config test, native verifier에는 Light Mode,
   deployment target 17.0, iPhone-only, staging URL 고정, 공개 provider ID와 server
   secret 분리 검사가 반영돼 있다.
-- frozen install, workspace boundaries, 세 shared package build, mobile typecheck,
-  mobile test 25건, staging public Expo config, clean iOS prebuild, Pod install,
-  native verifier가 통과했다.
-- clean prebuild 결과는 `apps/mobile/ios/CHIMapStaging.xcworkspace`, scheme은
-  `CHIMapStaging`이다. generated iOS 경로는 Git ignore 상태다.
-- 설치된 iPhone 12 Pro Simulator가 없어 iOS 26.5 iPhone 17 Simulator로 unsigned
-  Debug compile을 수행했고 성공했다. 생성 앱 설치와 Dev Launcher 기동, staging
-  환경으로 실행한 Metro LAN server 탐색까지 확인했다. 외부 scheme 열기 확인 dialog는
-  macOS가 자동 keystroke를 허용하지 않아 JS feature smoke는 수행하지 못했다. 이
-  결과는 390×844pt UI 검증을 대체하지 않는다.
-- 실제 iPhone 12 Pro(iOS 26.5.2)는 연결·pairing·Developer Mode와 Xcode destination을
-  확인했다. 다만 현재 Personal Team은 Sign in with Apple capability를 지원하지 않아
-  `org.madcamp.chimap.staging` provisioning profile 생성에 실패했다. Apple 코드와
-  entitlement를 삭제하는 우회는 하지 않았으며 앱 설치, Metro 연결, physical smoke는
-  아직 수행하지 못했다.
+- 이전 staging credential로 실제 iPhone 12 Pro Development Build 설치, Metro,
+  KakaoTalk 왕복, backend token exchange, SecureStore session과 NAVER 지도 진입을
+  확인했다. 현재 Native App Key는 CNG plist/scheme와 signed device build까지
+  일치하지만 Kakao SDK native 실패가 보고되어, Kakao Developers의 동일 key에
+  `org.madcamp.chimap.staging` 등록 후 새 바이너리 E2E를 다시 통과해야 한다.
+  route 카드는 dot 반복 대신 도보·버스·지하철 거리 비율을 연속 막대로 표시한다.
+- generated `apps/mobile/ios`와 `.expo`는 검증 후 제거했으며 Git에는 포함하지 않는다.
 - `apps/mobile/eas.json`은 여전히 Ad Hoc용 staging profile이고 Expo owner,
   `extra.eas.projectId`, staging `ascAppId`도 미설정이다. 이번 단계에서는 EAS/App Store
   Connect를 변경하거나 build/submit하지 않았다.
 
 ### Web과 비교해 iOS에서 보완할 부분
 
-현재 mobile foundation은 기능의 세로 단면이지만 Web과 완전한 UX parity는 아니다.
-다음 항목을 iOS 개발 초기에 명시적으로 정리한다.
+구현된 항목은 route 선택/상세 분리, leg별 색과 출발·도착 marker/camera fit,
+최초 1회 profile, SafeAreaProvider, responsive 1/2열, 숫자 키보드 닫기,
+KeyboardAvoidingView, 장소 검색 debounce/cancel/stale 차단과 Light 고정이다.
 
-1. 현재 mobile은 추천 카드를 누르면 route 선택과 상세 sheet 열기가 동시에
-   일어난다. Web처럼 `경로 선택`과 `자세히`를 분리하고, 카드 선택만으로 상세를
-   자동으로 열지 않게 한다.
-2. 현재 native map은 모든 leg를 하나의 초록색 path로 합친다. Web과 같은
-   도보·버스·지하철 의미 색/선, 출발·도착·승차·환승·하차 marker를 구현한다.
-3. 차량 marker, 지도 장애와 추천 장애의 분리, 데이터 제공자 안내가 아직
-   충분하지 않다.
-4. profile 입력이 한 화면에 항상 노출된다. Web처럼 최초 필수 onboarding,
-   저장 후 간결한 요약, 명시적인 수정·삭제 흐름으로 정리한다.
-5. Web의 `guided/compact`, reduce motion, loading 지연 안내와 오류 code mapping을
-   mobile 공용 정책으로 옮길지 결정해야 한다.
-6. 앱과 Modal이 React Native core `SafeAreaView`를 사용한다. deprecated core
-   component를 `react-native-safe-area-context`의 `SafeAreaProvider`, `SafeAreaView`,
-   inset 기반 처리로 교체해야 한다.
-7. 신체정보와 걸음 입력의 `twoColumns`, 로그인된 계정의 action row가 항상 가로
-   배치다. `useWindowDimensions()`의 `width`와 `fontScale`로 1열 전환해야 한다.
-8. `number-pad`/`decimal-pad`에 완료·닫기 동작이 없고 keyboard avoidance가 없다.
-   현재 걸음, 신체정보, 장소 검색과 추천 버튼이 keyboard에 가려지지 않게 해야 한다.
-9. 장소 검색은 명시적 버튼/submit 요청만 있고 debounce, 이전 요청 취소, 늦게 도착한
-   stale result 차단이 없다.
-10. design token은 light 위주다. working tree의 `app.config.ts`는 첫 내부
-    TestFlight 정책에 맞춰 `userInterfaceStyle="light"`로 고정됐고 config test와
-    native verifier도 통과했다. 완전한 Dark Theme는 후속 phase다.
-11. 현재 `apps/mobile/eas.json`의 staging profile은 `distribution="internal"`인
-    Ad Hoc build다. TestFlight용 store distribution, EAS preview environment,
-    staging submit profile로 바꿔야 한다.
+남은 보완은 다음과 같다.
+
+1. 실제 차량 marker와 구간별 realtime/timing metadata 표현을 mobile detail에 확장한다.
+2. Web의 guided/compact, reduce motion와 loading 지연 안내를 공용 정책으로 옮긴다.
+3. 서버의 legacy·multimodal 지하철 leg가 아직 역사 좌표를 직선으로 잇는다. 실제
+   선로 geometry는 migration 10/importer와 두 planner 변경이 필요하며
+   `docs/subway-track-geometry-backend-prompt.md`를 기준으로 별도 `feat/api/*`에서
+   구현한다.
+4. `apps/mobile/eas.json` staging을 TestFlight용 store/preview/submit profile로
+   바꾸고 Expo project/owner와 staging `ascAppId`를 연결한다.
+5. 완전한 Dark Theme, 외부 TestFlight용 Apple 로그인 E2E와 App Store 심사는
+   후속 release phase로 유지한다.
 
 이 간극은 Xcode 내부에서 임시 UI로 메우지 않고 `apps/mobile/src/features`와
 shared package에 반영한다.
@@ -196,16 +159,16 @@ branch/commit을 다시 checkout한다.
 
 ## 4. Git branch와 Mac checkout 운용
 
-현재 `main`은 아직 실제 통합 기준선보다 오래됐으므로 무조건 `main`에서 새 iOS
-작업을 시작하면 안 된다. 먼저 팀이 합의한 최신 remote 기준 commit을 확인한다.
+Web/API foundation과 iOS staging을 통합한 뒤에는 최신 `origin/main`을 새로운
+작업 기준선으로 사용합니다. 작업을 시작할 때는 local `main` 이름만 믿지 말고
+fetch 후 remote SHA와 CI 결과를 확인합니다.
 
 단기 순서:
 
 1. 현재 server/mobile 변경을 작은 commit으로 정리하고 remote에 push한다.
-2. foundation이 `main`에 병합되기 전이면
-   `origin/feat/mobile/cross-platform-foundation`을 기준으로 한다.
-3. foundation 병합 후에는 최신 `origin/main`을 기준으로 바꾼다.
-4. Mac에서 별도 worktree 또는 별도 clone을 사용한다.
+2. 검증된 통합 commit을 `main`에 병합하고 push CI 다섯 job을 확인한다.
+3. 이후 작업은 최신 `origin/main`에서 책임별 short-lived branch로 분기한다.
+4. 동시에 진행하는 작업은 Mac에서 별도 worktree 또는 clone을 사용한다.
 
 예시:
 
@@ -742,8 +705,8 @@ Gate: Xcode와 CLI가 같은 Debug app을 재현하고 Fast Refresh가 동작한
 - Kakao login, token rotation, logout, account deletion 활성화
 - monitoring에 environment와 client platform label 추가
 
-Gate: production DB를 건드리지 않고 guest/Kakao/refresh/logout/account deletion
-E2E가 가능하고 Apple UI는 기존 코드를 유지한 채 숨겨진다.
+Gate: production DB를 건드리지 않고 Kakao 필수 로그인·refresh/logout/account
+deletion E2E가 가능하고 Apple UI는 기존 코드를 유지한 채 숨겨진다.
 
 ### Phase 3 — Web UX parity: 3~5일
 
@@ -846,13 +809,13 @@ xcodebuild \
 
 다음 항목은 iOS 17 이상 실제 iPhone 12 Pro portrait에서 통과해야 한다.
 
-1. guest 장소 검색·추천·NAVER 지도
+1. Kakao 로그인 후 장소 검색·추천·NAVER 지도
 2. foreground 위치 성공·거부
 3. HealthKit 실제 steps, 빈 데이터 `0`, 읽기 실패와 수동 입력
 4. KakaoTalk 성공·사용자 취소·KakaoTalk 미설치 browser fallback을 서로 다른
    결과로 처리
 5. refresh/logout/account deletion; Apple 버튼은 `appleEnabled=false`에서 숨김
-6. guest/current user/environment별 Query, Zustand, SecureStore 격리
+6. session 없음/current user/environment별 Query, Zustand, SecureStore 격리
 7. 상세 sheet를 연 상태에서 process 종료·재실행 복원
 8. offline launch와 foreground 5분 refetch
 9. VoiceOver, Dynamic Type, Reduce Motion
@@ -974,19 +937,20 @@ iOS 로컬 개발 기반은 다음을 모두 만족해야 완료다.
 | --- | --- | --- | --- | --- | --- | --- |
 | Source of truth/CNG | `apps/mobile/src`, `app.config.ts`, config plugin이 존재하고 staging clean prebuild/Pods가 성공; generated iOS는 ignore됨 | generated `apps/mobile/ios` 직접 수정·commit 금지 유지; Xcode는 실제 생성된 `CHIMapStaging.xcworkspace`에서 build/sign/log만 사용 | `feat/ios/*` | clean prebuild, native verifier, Git status | 유료 Development Team 서명 뒤 staging workspace 실행 | Xcode 수동 변경 없이 재생성 가능 |
 | iOS 17/iPhone-only | working tree에 portrait, `supportsTablet=false`, built-in deployment target 17.0, Light가 반영됐고 config test/verifier/unsigned compile 통과 | source 설정 유지; 실제 기기 provisioning과 설치 gate 완료 | `feat/ios/*` | app config test, verifier의 pbxproj/device/style 검사 | iOS 17+ iPhone 12 Pro 설치 | deployment 17.0, iPhone-only, portrait/light 일치 |
-| Safe Area | planner, bootstrap, Modal이 core `SafeAreaView` 사용 | root `SafeAreaProvider`, 모든 화면/sheet를 safe-area-context로 교체 | `feat/mobile/*` | component render test, core import 금지 검사 | notch/Home Indicator와 sheet inset 확인 | system 영역 침범 없음 |
-| Responsive layout | 걸음·신체정보 `twoColumns`, account action row가 항상 가로 배치 | `useWindowDimensions`; width<390 또는 fontScale>=1.3이면 세로 배치 | `feat/mobile/*` | width/fontScale component test | 390×844pt, 작은 iPhone, 접근성 글자 크기 | 가로 잘림·scroll·text/button 겹침 없음 |
-| Route 선택/상세 | `selectRoute`가 선택과 sheet open을 동시에 수행 | `selectRoute`와 `openDetail` 분리; 카드 선택은 지도만, `자세히`가 sheet open | `feat/mobile/*` | route-store migration/unit/component test | 카드 선택, 자세히, route 변경, 재실행 | 선택/상세가 독립되고 상태 복원 통과 |
-| NAVER Map | 모든 leg 좌표를 단일 path로 합치고 첫 좌표 camera만 사용 | WALK/BUS/SUBWAY별 style, 출발·도착·승차·환승·하차/차량 marker, 전체 route camera fit | `feat/ios/*` | map-contract/overlay 변환 test | 긴/짧은/단일 좌표, marker, foreground 복귀 | 전체 경로와 의미별 overlay가 한 화면에 적절히 표시 |
-| 장소 검색 | submit/button 요청만 있고 timeout AbortController만 존재 | debounce, 이전 요청 취소 signal, sequence/request key로 stale result 차단 | `feat/mobile/*` | fake timer·race·abort component test | 빠른 연속 입력, empty/error, keyboard search | 마지막 검색어 결과만 표시 |
-| 숫자 keyboard | number/decimal pad에 완료 동작과 avoidance 없음 | Done/닫기 toolbar와 KeyboardAvoidingView 또는 동등 처리 | `feat/mobile/*` | focus/keyboard layout component test | 모든 숫자 입력 후 닫기와 추천 버튼 접근 | keyboard가 입력/action을 가리지 않음 |
+| Safe Area | root `SafeAreaProvider`와 bootstrap/login/planner/detail/profile `SafeAreaView`를 safe-area-context로 구현 | core import 금지와 inset screenshot 회귀 유지 | `feat/mobile/*` | typecheck, component/core import 검사 보강 | notch/Home Indicator와 sheet inset 확인 | system 영역 침범 없음 |
+| Responsive layout | `useWindowDimensions()`의 width/fontScale로 compact header와 profile 1/2열 전환 구현 | 작은 iPhone·접근성 fontScale component 회귀 보강 | `feat/mobile/*` | width/fontScale component test | 390×844pt, 작은 iPhone, 접근성 글자 크기 | 가로 잘림·scroll·text/button 겹침 없음 |
+| Route 선택/상세 | `selectRoute`와 `openDetail` 분리, 3단계 sheet와 persistence test 구현 | 실제 process eviction·route 변경 회귀 유지 | `feat/mobile/*` | route-store·sheet snap test | 카드 선택, 자세히, route 변경, 재실행 | 선택/상세가 독립되고 상태 복원 통과 |
+| Route 카드 거리 | leg별 dot 반복을 제거하고 WALK/BUS/SUBWAY 거리 합계, 연속 비율 막대와 km·percent 범례 구현 | 실제 선로 geometry 도입 뒤 subway 실제 거리 회귀 | `feat/mobile/*`, geometry는 `feat/api/*` | 비율 합계 100%·수단 합산 unit test | iPhone 12 Pro 카드 screenshot | 수단별 실제 거리 비율을 잘림 없이 비교 가능 |
+| NAVER Map | WALK/BUS/SUBWAY별 polyline, 출발·도착 marker와 전체 route region fit 구현 | 승차·환승·하차/차량 marker와 timing 표현 후속 | `feat/ios/*` | map-contract/overlay 변환 test 보강 | 긴/짧은/단일 좌표, marker, foreground 복귀 | 전체 경로와 의미별 overlay가 한 화면에 적절히 표시 |
+| 장소 검색 | 300ms debounce, AbortController, sequence 기반 stale result 차단 구현 | fake timer·race component test 추가 | `feat/mobile/*` | 현재 typecheck, 후속 race test | 빠른 연속 입력, empty/error, keyboard search | 마지막 검색어 결과만 표시 |
+| 숫자 keyboard | profile/planner에 InputAccessory Done과 KeyboardAvoidingView 구현 | 모든 숫자 입력의 실기기 focus 회귀 | `feat/mobile/*` | 현재 typecheck, 후속 focus test | 모든 숫자 입력 후 닫기와 추천 버튼 접근 | keyboard가 입력/action을 가리지 않음 |
 | 접근성 | 일부 role/state와 44pt 입력은 있으나 전체 audit 없음 | touch target 44pt, VoiceOver label/focus, Dynamic Type wrap 보완 | `feat/mobile/*` | accessibility query/component test | 화면 순서대로 focus, 접근성 크기 screenshot | focus 순서·label·크기 gate 통과 |
 | Theme | working tree의 `userInterfaceStyle=light`와 native Info.plist 검증 통과; token은 light 전용 | Light 고정과 screenshot 기준 유지; Dark Theme는 후속 semantic token/provider phase | `feat/ios/*` | app config test, verifier | Light Mode screenshot set | system Dark에서도 의도한 light UI로 일관 표시 |
 | HealthKit 날짜 | 기기 local day로 조회하고 cache는 한국 날짜로 reset | 두 날짜 정책 문서화, timezone/자정 fixture, 0건 정상 처리와 중립적 오류 문구 | `feat/mobile/*` | local/Korean day boundary unit test | sample 있음, 0건, 읽기 실패, 수동 fallback | timezone 차이에도 걸음·cache 상태가 예측 가능 |
-| Kakao/auth | exchange, refresh, logout, deletion 구현; login 오류는 한 문구로 합침 | 성공·사용자 취소·KakaoTalk 미설치 browser fallback을 구분해 UI/state 처리 | `feat/ios/*` | adapter/auth/session test | 세 Kakao 흐름과 refresh/logout/delete | staging에서 전체 session lifecycle 통과 |
+| Kakao/auth | Kakao 필수 화면, native/API/session 오류 분리, KakaoTalk 실패 시 account fallback, SecureStore 허용 key, refresh/logout/deletion 구현; 이전 credential의 KakaoTalk 왕복·지도 진입 확인 | 현재 Native App Key의 iOS bundle 등록·새 바이너리 재설치, 성공/취소/미설치 fallback과 account deletion 실기기 재검증 | `feat/ios/*` | auth/session/storage/error tests | 세 Kakao 흐름과 refresh/logout/delete | 현재 staging identity로 전체 session lifecycle 통과 |
 | Apple 로그인 | adapter/contract/button 존재하고 mobile-config flag로 표시 제어 | 코드 유지, staging `appleEnabled=false`; 외부 TestFlight 전 provider E2E | `feat/ios/*`, 후속 | flag별 button test | 내부 build에서 미노출 확인 | 내부 범위에서 숨김, 외부 release 전 별도 gate |
-| 저장 격리 | Query/Zustand는 environment·OS·owner hash, SecureStore는 environment·OS로 분리 | route/detail 분리 후 migration·cleanup regression 유지 | `feat/mobile/*` | persistence/auth-storage tests | guest→user→logout→다른 환경 전환 | cache/session이 owner/environment를 넘지 않음 |
-| Staging API/auth | health/readiness 200, mobile-config guest/Kakao true·Apple false; bus route seed는 일부 준비됐고 subway는 0건. 첫 추천 cold 요청은 HTML 504 뒤 retry에서 FAST 1개로 성공. native NAVER ID 둘은 분리됐지만 DB/provider의 production 격리는 미확인 | subway seed 완료; cold recommendation latency/504 관찰·개선; 서버 배포/DB volume과 Kakao·NAVER console의 production 격리 확인 | `feat/api/*`, 계약 변경 시 `feat/contracts/*` | contract/API integration test, readiness/mobile-config, cold/warm recommendation smoke | staging hostname과 provider identity, guest/Kakao session lifecycle 확인 | 안정적인 cold 추천, 필요한 transit seed와 production DB/credential 완전 격리 |
-| 실제 iPhone signing | iPhone 12 Pro 연결·pairing·Developer Mode·destination 확인; Personal Team이 Sign in with Apple을 지원하지 않아 provisioning 실패 | staging App ID의 HealthKit·Sign in with Apple capability를 지원하는 유료 Apple Developer Team을 Xcode에 추가하고 자동 서명 | `feat/ios/*` | signed device `xcodebuild` | 설치·launch·Metro와 전체 physical smoke | Apple entitlement를 유지한 staging Debug app이 실제 기기에서 실행 |
+| 저장 격리 | Query/Zustand는 environment·OS·owner hash, SecureStore는 environment·OS로 분리 | route/detail 분리 후 migration·cleanup regression 유지 | `feat/mobile/*` | persistence/auth-storage tests | session 없음→user→logout→다른 환경 전환 | cache/session이 owner/environment를 넘지 않음 |
+| Staging API/auth | health/readiness 200, 멀티모달·migration 9·서울 실시간과 mobile-config guest/Kakao true·Apple false; 앱은 Kakao session 필수 | 현재 Native App Key와 server `KAKAO_APP_ID`의 동일 Kakao 앱 여부 및 실기기 session E2E, provider/DB 격리 지속 관찰; 실제 지하철 선형 geometry는 별도 API 작업 | `feat/api/*`, 계약 변경 시 `feat/contracts/*` | contract/API/integration, readiness/mobile-config smoke | staging hostname, Kakao/NAVER identity, session lifecycle | 안정적인 추천과 production DB/credential 완전 격리 |
+| 실제 iPhone signing | Personal Team용 Apple entitlement opt-out CNG plugin으로 iPhone 12 Pro 설치·launch·Metro·NAVER smoke를 이전 credential에서 확인; 현재 key의 signed device build 성공 | 현재 Kakao key로 새 바이너리 설치·로그인 재검증, 유료 Team에서 Apple capability를 다시 켠 외부 TestFlight 서명 검증 | `feat/ios/*` | signed device build, native verifier | HealthKit·Kakao·NAVER와 전체 physical smoke | 내부 staging은 Apple UI 없이 실행, 외부 release는 Apple entitlement 포함 |
 | EAS 내부 TestFlight | staging이 `distribution=internal`, submit staging 없음, owner/projectId 없음 | store/preview/staging/autoIncrement, staging ascAppId, project 연결, public config preflight | `feat/ios/*` | eas.json schema, public config/bundle/host verifier | 설치된 staging 앱의 이름·bundle·API 확인 | 별도 staging App Store Connect app 내부 TestFlight 배포 |
-| CI | boundaries, shared build, mobile typecheck/test, config/prebuild/verifier, pod/xcodebuild 존재; deployment/device/style 검증도 working tree에서 통과했고 lint script는 없음 | 공용 UI 변경에 맞춘 component test 추가; lint는 별도 도입 전 gate에서 제외 | 책임 변경과 동일 branch | 기존 5개 CI job | CI build를 실제 기기 smoke와 대조 | 현재 존재하는 검증과 iPhone gate가 모두 통과 |
+| CI | boundaries/shared build와 Web/API/Mobile test·typecheck, config/prebuild/verifier, pod/xcodebuild 5개 job 존재; mobile 46 tests 통과, lint script는 없음 | main push Actions 5개 job 확인; 공용 UI component test 보강, lint는 별도 작업 | 책임 변경과 동일 branch | 기존 5개 CI job | CI build를 실제 기기 smoke와 대조 | 현재 존재하는 검증과 iPhone gate가 모두 통과 |

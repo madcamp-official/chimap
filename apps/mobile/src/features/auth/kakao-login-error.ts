@@ -25,6 +25,17 @@ export function kakaoLoginErrorMessage(caught: unknown): string {
     );
   }
   if (
+    normalized.includes("kakao native login failed") ||
+    normalized.includes("kakaosdkcommon.sdkerror") ||
+    normalized.includes("rnkakaologins")
+  ) {
+    return (
+      "카카오 네이티브 인증 단계에서 실패했습니다. " +
+      "Kakao Developers의 Native App Key에 org.madcamp.chimap.staging Bundle ID가 등록되어 있는지 확인하고, " +
+      ".env 변경 후 CNG로 다시 빌드한 앱을 삭제·재설치해 주세요."
+    );
+  }
+  if (
     normalized.includes("cancel") ||
     normalized.includes("취소") ||
     normalized.includes("canceled") ||

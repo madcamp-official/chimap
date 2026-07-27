@@ -2,8 +2,8 @@
 
 이 문서는 Expo/React Native CNG 기반 CHIMap iOS 앱을 Mac과 Xcode에서 개발하는
 기준입니다. 기준 기기는 iOS 17 이상 실제 iPhone 12 Pro이며, 첫 내부
-TestFlight는 staging 전용 앱으로 guest·HealthKit·Kakao와 전체 CHIMap session
-lifecycle을 검증합니다.
+TestFlight는 staging 전용 앱으로 Kakao 필수 로그인·HealthKit과 전체 CHIMap
+session lifecycle을 검증합니다.
 
 ## 1. 확정 범위
 
@@ -17,7 +17,7 @@ lifecycle을 검증합니다.
 | 첫 theme | Light 고정 |
 | API | `https://staging.chimap.madcamp-kaist.org` |
 | bundle ID | `org.madcamp.chimap.staging` |
-| 인증 | guest + Kakao, Apple 코드는 유지하고 flag로 숨김 |
+| 인증 | Kakao 필수, Apple 코드는 유지하고 flag로 숨김 |
 | health | HealthKit read only, background delivery 없음 |
 | 첫 배포 | 별도 staging App Store Connect 앱의 내부 TestFlight |
 
@@ -56,9 +56,9 @@ Xcode에서 지속되어야 할 설정은 generated project에만 남기지 않�
 - `feat/contracts/*`: additive API 계약
 - `feat/api/*`: backend와 staging migration/config
 
-foundation이 `main`에 병합되기 전에는
-`origin/feat/mobile/cross-platform-foundation`을 기준으로 합니다. 현재 서버에서
-확인한 기준선은 `7a99e03`입니다. Mac의 변경을 버리지 않고 fetch/fast-forward
+2026-07-27 최종 통합은 `origin/feat/mobile/cross-platform-foundation@1df41a5`의
+멀티모달·서울 지하철 실시간·migration 9를 iOS staging 구현과 함께 `main`에
+병합한 상태를 기준으로 합니다. Mac의 변경을 버리지 않고 fetch/fast-forward
 가능 여부를 먼저 확인합니다.
 
 ```bash
@@ -67,14 +67,14 @@ git fetch origin --prune
 git log --oneline --decorate -10
 ```
 
-generated `apps/mobile/ios`, `.expo`, `dist`, `.env.local`은 commit하지 않습니다.
+generated `apps/mobile/ios`, `.expo`, `dist`, `.env`는 commit하지 않습니다.
 
 ## 4. Mac 환경 파일
 
 파일:
 
 ```text
-/Users/seojinlee/Desktop/chimap_monorepo/apps/mobile/.env.local
+/Users/seojinlee/Desktop/chimap_monorepo/apps/mobile/.env
 ```
 
 내용:
@@ -100,10 +100,10 @@ KAKAO_NATIVE_APP_KEY=
 검증:
 
 ```bash
-git check-ignore -v apps/mobile/.env.local
+git check-ignore -v apps/mobile/.env
 
 set -a
-source apps/mobile/.env.local
+source apps/mobile/.env
 set +a
 
 pnpm --filter @chimap/mobile exec expo config --type public
@@ -123,7 +123,7 @@ curl -sS -w '\nHTTP %{http_code}\n' \
   https://staging.chimap.madcamp-kaist.org/api/v1/readiness
 ```
 
-내부 범위의 기대값:
+staging 서버 설정의 기대값:
 
 ```json
 {
@@ -137,6 +137,10 @@ readiness 503이면 응답의 DB/provider/transit 통계를 확인합니다. pro
 fallback하거나 ATS arbitrary-load 예외를 추가하지 않습니다. 서버 seed와 운영은
 [staging 환경 운영서](./staging-environment.md)를 따릅니다.
 
+`guestEnabled=true`는 Web과 공용 계약의 서버 허용 상태이며 현재 iOS staging
+화면의 인증 우회 조건이 아닙니다. 앱은 저장된 CHIMap session이 없으면 항상 Kakao
+로그인 화면을 표시합니다.
+
 ## 6. Config 완료 조건
 
 첫 내부 TestFlight 전에 `app.config.ts`, config test와 native verifier가 다음을
@@ -145,7 +149,7 @@ fallback하거나 ATS arbitrary-load 예외를 추가하지 않습니다. 서버
 - `orientation="portrait"`
 - `ios.supportsTablet=false`
 - `userInterfaceStyle="light"`
-- `expo-build-properties` built-in `ios.deploymentTarget="17.0"`
+- Expo SDK 56 built-in `ios.deploymentTarget="17.0"`
 - staging bundle `org.madcamp.chimap.staging`
 - scheme `chimap-staging`
 - `NMFNcpKeyId`에 iOS Client ID
@@ -155,12 +159,17 @@ fallback하거나 ATS arbitrary-load 예외를 추가하지 않습니다. 서버
 - Apple code/entitlement 유지, UI는 server flag로 제어
 - server secret 미포함
 
-2026-07-27 `7a99e03` 기준 남은 source gap:
+2026-07-27 통합 기준 source 상태:
 
-- `userInterfaceStyle`은 아직 `automatic`
-- built-in iOS deployment target 17.0 명시·검증 없음
-- `eas.json` staging은 아직 Ad Hoc `distribution="internal"`
-- Expo owner/project ID와 staging/production `ascAppId` 미입력
+- `userInterfaceStyle="light"`, iOS deployment target 17.0, iPhone-only가
+  `app.config.ts`·config test·native verifier에 반영됨
+- `react-native-safe-area-context`, responsive 1/2열, 숫자 키보드 닫기,
+  장소 검색 debounce/cancel/stale 방지, route 선택/상세 분리가 구현됨
+- Kakao 필수 로그인과 사용자별 최초 1회 개인화 설정, SecureStore session
+  저장·refresh/logout/account deletion이 구현됨
+- `eas.json` staging은 아직 Ad Hoc `distribution="internal"`이며 Expo
+  owner/project ID와 staging/production `ascAppId`가 미입력이라 TestFlight
+  제출 단계는 완료되지 않음
 
 이 항목은 확인되지 않은 완료로 표시하지 않습니다.
 
@@ -233,7 +242,7 @@ Metro는 Development Build의 JavaScript를 제공하고, staging API는 공개 
 
 ```bash
 set -a
-source apps/mobile/.env.local
+source apps/mobile/.env
 set +a
 
 pnpm --filter @chimap/mobile start -- --dev-client --lan --clear
@@ -305,8 +314,8 @@ Xcode 실기기 gate 뒤 staging EAS profile을 다음 방향으로 전환합니
 - bundle `org.madcamp.chimap.staging`
 
 EAS environment에도 Mac과 같은 공개 다섯 값을 넣고 server secret은 넣지
-않습니다. Apple UI는 계속 숨기며 내부 TestFlight에서 guest, HealthKit, NAVER,
-Kakao, refresh/logout/account deletion과 eviction/offline을 확인합니다.
+않습니다. Apple UI는 계속 숨기며 내부 TestFlight에서 Kakao 필수 로그인,
+HealthKit, NAVER, refresh/logout/account deletion과 eviction/offline을 확인합니다.
 
 ## 13. 완료 gate
 
@@ -319,5 +328,5 @@ Kakao, refresh/logout/account deletion과 eviction/offline을 확인합니다.
 - process eviction·offline·5분 refetch·120초 refresh grace
 - 390pt safe area/keyboard/Dynamic Type/VoiceOver 통과
 - production DB·credential·cache/session과 혼입 없음
-- 생성 iOS와 `.env.local`이 Git에 포함되지 않음
+- 생성 iOS와 `apps/mobile/.env`가 Git에 포함되지 않음
 - staging App Store Connect와 production record 분리

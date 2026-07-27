@@ -276,9 +276,9 @@ version 1 또는 손상된 값은 필수 프로필이 없으므로 최초 온보
 
 ## 11. Native 앱 상태 복원
 
-iOS·Android 앱은 로그인 없이도 같은 추천 흐름을 제공합니다. 첫 내부 iOS
-TestFlight의 로그인은 Kakao만 노출하고 Apple 코드는 유지하되 server flag로
-숨깁니다. 앱 process가 OS 메모리 회수로 종료돼도 같은
+iOS·Android 앱은 Kakao CHIMap session을 얻은 뒤 추천 흐름에 진입합니다. 첫 내부
+iOS TestFlight는 Kakao만 노출하고 Apple 코드는 유지하되 server flag로 숨깁니다.
+앱 process가 OS 메모리 회수로 종료돼도 같은
 environment·OS·사용자 namespace에서 마지막 추천 요청, 선택 route와 열린 상세
 sheet, 성공한 추천 응답을 복원합니다. 복원 중에는 빈 planner를 먼저 노출하지 않고
 저장소 경계를 해석하는 progress indicator를 표시합니다.
@@ -288,7 +288,8 @@ foreground 전환 시 추천이 5분을 엄격히 초과했고 online·활성·�
 0으로 초기화하고 사용자가 건강 앱에서 다시 읽거나 직접 입력하기 전 새 추천을
 자동 요청하지 않습니다. 로그아웃·계정 전환·계정 삭제는 해당 사용자 RouteStore,
 Query cache와 SecureStore session을 함께 지우며 guest 자료를 계정에 자동 병합하지
-않습니다.
+않습니다. 현재 UI는 guest planner를 열지 않지만 session 없는 bootstrap namespace도
+인증 사용자 namespace와 섞이지 않게 유지합니다.
 
 iOS 첫 release의 화면 기준은 iOS 17+ iPhone 12 Pro portrait `390×844pt`입니다.
 이 크기는 고정 frame이 아니라 screenshot reference이며 Safe Area, 키보드,

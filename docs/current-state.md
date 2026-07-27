@@ -2,10 +2,10 @@
 
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
-- **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
-  계약과 Expo 앱에 더해 migration 9, 요청 범위 버스·지하철 멀티모달 그래프,
+- **현재 구현**: `main`의 Web/API/Mobile 공통 계약과 Expo 앱에 더해 migration 9,
+  요청 범위 버스·지하철 멀티모달 그래프,
   최대 2회 환승, TAGO 시간표 timing과 사전 계산 버스↔지하철 보행 연결을
-  포함합니다. 현재 API 결정적 테스트 114개와 relay 4개, 전체 production
+  포함합니다. 현재 API 결정적 테스트 114개와 mobile 46개, relay 4개, 전체 production
   build를 통과했고 DB 통합 테스트 8개는 별도 PostGIS 환경에서 실행합니다.
 - **현재 공개 배포**: 2026-07-27 21:39 KST에 commit `e16684b`의 이미지
   `sha256:77f4de84…`로 API/웹을 교체했습니다. `TRANSIT_ROUTER_MODE=multimodal`이며
@@ -126,13 +126,13 @@
 | 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 구현 브랜치 | `feat/mobile/cross-platform-foundation` (`feat/tago-transit` 기반) |
+| 구현 브랜치 | `main` (`feat/mobile/cross-platform-foundation@1df41a5`와 iOS staging 통합) |
 | 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
 | foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
 | 공개 웹 asset | `index-DVyoPrrl.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
-| 모바일 인증 | production 14:29 snapshot은 guest만 enabled, staging 16:48 snapshot은 guest/Kakao enabled·Apple disabled |
-| 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
+| 모바일 인증 | staging server는 guest/Kakao enabled·Apple disabled, 현재 iOS 앱 화면은 Kakao session 필수 |
+| 기본 브랜치 | `main`에 Web/API foundation과 iOS staging 구현 통합 |
 | 공개 번들 비밀값 검사 | NAVER·Kakao·TAGO·DB·CHIMap session 서버 비밀값 미검출 |
 
 ## 3. readiness 스냅샷
@@ -273,6 +273,12 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
   grace 만료 재사용 시 해당 mobile family revoke
 - Apple authorization code server 교환, 암호화 refresh grant 보관과 앱 내 계정 삭제
 - Android SDK 36/minSdk 26/Kotlin 2.1.20 arm64 debug APK compile·v2 서명 검증
+- iOS staging은 Kakao 로그인을 필수 gate로 사용하고 사용자별 최초 1회 개인화
+  입력을 저장하며 이후 `내 정보`에서 수정
+- iPhone 12 Pro 기준 3단계 planner sheet, 수단별 실제 거리 비율 카드,
+  route 선택/상세 분리, NAVER leg별 polyline·marker·전체 route camera fit 구현
+- SafeAreaProvider, width/fontScale 반응형 1/2열, 숫자 키보드 닫기,
+  장소 검색 300ms debounce·이전 요청 취소·stale result 차단 구현
 
 생성되는 `apps/mobile/ios`, `android`, `.expo`, `dist`는 CNG/build 산출물이므로 Git에
 포함하지 않습니다. 최종 store 완료 조건은 실제 기기 NAVER/Kakao/Apple/health,
@@ -288,7 +294,8 @@ process eviction과 TestFlight/Play release E2E입니다.
 - API image source: `55fec7c`, image `sha256:02971772…`
 - database connected, PostGIS·migration current
 - Kakao/NAVER/TAGO provider configured
-- mobile config: guest/Kakao true, Apple false
+- mobile config: guest/Kakao true, Apple false. 현재 iOS UI는 guest flag와 별개로
+  Kakao session을 필수로 요구
 - 정류장 227,207개·TAGO 연결 2,144개, 노선 50개·관계 4,178개
 - 지하철역 1,097개·TAGO 매핑 706개, readiness 200
 - 외부 KAIST 본원→대전역 추천 `FAST/BALANCED/GOAL` 3건 HTTP 200
@@ -301,10 +308,14 @@ process eviction과 TestFlight/Play release E2E입니다.
 기록합니다.
 
 iOS 로컬 기준은 iOS 17+ iPhone 12 Pro, 390×844pt reference, iPhone-only,
-portrait입니다. 첫 내부 TestFlight는 staging bundle에서 guest·HealthKit·Kakao와
-refresh/logout/account deletion까지 검증하고 Apple 코드는 유지한 채 server flag로
-숨깁니다. 현재 `app.config.ts`의 Light 고정과 built-in deployment target 17.0,
-EAS store/preview와 App Store Connect ID는 아직 후속 작업입니다.
+portrait입니다. 이전 staging credential의 Development Build에서는 KakaoTalk 왕복,
+CHIMap session 저장과 NAVER 지도 진입을 확인했습니다. 현재 Native App Key는 CNG
+설정과 signed device build까지 일치하지만 Kakao SDK native 실패가 보고되어,
+Kakao Developers의 동일 key에 `org.madcamp.chimap.staging` 등록 후 새 바이너리
+실기기 E2E가 남았습니다. 첫 내부 TestFlight는 Kakao 필수 로그인·HealthKit과
+refresh/logout/account deletion을 검증하고 Apple 코드는 server flag로 숨깁니다.
+Light 고정과 built-in deployment target 17.0은 완료됐고, EAS store/preview와 App
+Store Connect ID는 후속 작업입니다.
 
 ### 운영
 
@@ -337,7 +348,7 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 최신 현재 코드 검사 | API 114개·relay 4개, TypeScript/API/Web production build 통과. 서울 도착·위치 upstream과 서울역→강남역 실제 추천 검증 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
-| native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |
+| native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile, iOS signed device build 통과. 이전 iPhone 설치·NAVER smoke는 확인했으나 현재 Kakao key E2E와 Android Development Build는 대기 |
 | PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 교통·migration 6개와 mobile auth 2개 통과 |
 | 공개 strict 지도 E2E | 기본 추천·NAVER 지도·레이아웃 통과. 확장 정류장 1회 upstream 504 후 단독 재실행 통과 |
 | 2026-07-27 14:27 KST 공개 strict E2E | 기본 추천·주변 역·NAVER 지도·버스 갱신·카메라 보존과 4개 viewport 통과. 확장 검색은 upstream 일시 실패 후 단독 재실행 통과 |
@@ -413,60 +424,38 @@ SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치�
 
 ## 8. Git release 상태
 
-애플리케이션·운영 설정·테스트·문서 변경은
-`556b484 Complete live routing operations and alerting`에 반영했습니다.
-새 checkout의 계약 build와 Compose 검사 환경을 보완한
-`bf05003 Fix CI environment preparation`까지 `feat/tago-transit`에
-push했습니다.
+2026-07-27 최종 저장소 통합은 다음 순서로 수행했습니다.
 
-선택형 카카오 로그인과 태블릿 헤더 보정을 포함한 현재 기능 HEAD는
-`965aa88 Add optional Kakao web login`으로 `feat/tago-transit`에
-push했습니다. GitHub push CI run `30194446016`과 PR 연동 run
-`30194447120`에서 다음 두 job이 모두 성공했습니다.
+1. 원격 최신 `feat/mobile/cross-platform-foundation@1df41a5`를 fetch해
+   migration 9, request-scoped multimodal routing, 서울 지하철 실시간과 최신
+   운영 문서를 확인했습니다.
+2. iOS staging UI·Kakao/HealthKit/session·responsive/safe-area·native verifier
+   변경을 `feat/ios/native-spike`에 커밋했습니다.
+3. 원격 foundation을 iOS branch에 병합하고 공유 계약을 다시 build했습니다.
+4. 원격 commit에 누락돼 clean checkout API test를 깨뜨리던
+   `subway_provider_station_map_template.csv` 의존성을 작은 추적 fixture로
+   교체했습니다.
+5. Web/API/Mobile/native/PostGIS 검증 뒤 통합 branch를 `main`에 병합하고
+   `origin/main`을 갱신합니다.
 
-- `Typecheck, tests, build, config`
-- `PostgreSQL and PostGIS integration`
-
-cross-platform foundation은 `feat/tago-transit`의 `b9f7063`에서 분기해 다음 세
-commit으로 공통 feature, CI와 계획 문서를 분리했습니다.
-
-- `c7d8c9a feat: add cross-platform mobile foundation`
-- `252f1a0 ci: verify mobile platforms independently`
-- `633b166 docs: finalize cross-platform rollout plan`
-
-`82e7eca fix: harden mobile lifecycle and native builds`는 foreground persistence
-정책, Health Connect 빈 records 회귀, Kotlin/Maven/Gradle 안정화와 OS별 verifier를
-추가했습니다. `f624e9b docs: update cross-platform operations`까지 push했고,
-GitHub Actions run `30230011225`에서 Web/API quality, Mobile JavaScript, iOS
-native, Android native, PostGIS의 다섯 독립 job이 모두 성공했습니다. 같은
-commit의 이미지 `sha256:0a2db829…`를 2026-07-27 11:01 KST 공개 승격했습니다.
-
-버스 위치 선별·WebP marker·카메라 보존·TAGO 지하철 적재/시간표 API와 주변 역
-UI의 운영 소스는 `96e2549 Add live transit tracking and subway schedules`로
-같은 foundation 브랜치에 push했습니다. 동일 소스 이미지
-`sha256:f497c9a5…`를 2026-07-27 14:28 KST 공개 승격했습니다.
-
-지하철 routing과 보정 경로의 시간표 metadata 보존은 `052dac6`, `7a99e03`으로
-같은 foundation branch에 push했습니다. `7a99e03`의 production image
-`sha256:6cbd51c8…`와 staging image `sha256:7befecd1…`를 15:51 KST에 build했고,
-production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KST 두
-공개 hostname의 health HTTP 200을 확인했습니다. staging readiness는 교통 seed
-미완료 때문에 503이며 production 전체 회귀·백업 검증 시각은 앞선 14:29 KST
-기록과 구분합니다.
-
-기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
-있습니다. `feat/tago-transit`→`main` draft PR #1이 열려 있으며, 검토·병합,
-병합 후 수동 `Public live E2E`와 foundation 다섯 CI job의 필수 check 지정이
-남았습니다.
+기존 draft PR #1의 Web/API 이력도 동일 commit graph에 포함됩니다. 이후 작업은
+초기 commit만 있던 옛 `main`이나 장기 iOS branch가 아니라 갱신된 `main`에서
+책임별 `feat/mobile/*`, `feat/ios/*`, `feat/api/*`, `feat/contracts/*`로 분기합니다.
 
 ## 9. 현재 한계와 확장 조건
 
 - staging은 HTTPS/API/auth, 버스·지하철 seed, readiness 200과 외부 실제 추천까지
   준비됐습니다. TAGO timeout으로 보류된 지하철역 3개는 다음 mapping 실행에서
   재시도하며 iPhone 실기기 E2E는 별도 release gate입니다.
-- iOS는 CNG/CI 기반이 구현됐지만 iPhone 12 Pro 실기기, Light 고정,
-  deployment target 17.0, staging App Store Connect/EAS store profile 검증이
+- iPhone 12 Pro Development Build 설치와 NAVER 지도 진입은 이전 credential에서
+  확인했습니다. 현재 Native App Key의 KakaoTalk→session E2E, HealthKit matrix,
+  staging App Store Connect app, EAS store/preview profile과 TestFlight 제출이
   남았습니다. [iOS 개발 운영서](./ios-development.md)를 release gate로 사용합니다.
+- legacy와 multimodal 지하철 planner는 아직 실제 선로 geometry가 아니라 역사
+  좌표를 직선으로 잇습니다. DB migration 10과 합법적 track shape importer,
+  두 planner의 ordered geometry 조립은
+  [지하철 선형 구현 프롬프트](./subway-track-geometry-backend-prompt.md)의 후속
+  `feat/api/*` 작업입니다.
 - 전국 정류장은 적재했지만 노선과 노선-정류장 관계는 사용 지역을 중심으로
   점진적으로 동기화합니다.
 - API는 프로세스 로컬 캐시와 rate limit을 사용하므로 단일 인스턴스로
@@ -475,7 +464,7 @@ production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KS
   connection budget 재설계가 선행되어야 합니다.
 - 검색과 추천 성능은 외부 공급자 지연의 영향을 받으므로 p95와 공급자별
   timeout을 함께 관찰해야 합니다.
-- 정류장 탐색은 최대 1.2km와 1회 환승까지만 지원하므로 이 범위 밖의
+- 정류장 탐색은 최대 1.2km와 2회 환승까지만 지원하므로 이 범위 밖의
   연결은 구체적인 위치 선택 안내 또는 연결 범위 안내와 함께 404가 됩니다.
 - Alertmanager와 relay는 배포됐지만 외부 알림은 현재 사용하지 않습니다.
   `EXTERNAL_ALERTS_ENABLED=0`에서 webhook 호출과 설정 누락 경보를 모두 막습니다.

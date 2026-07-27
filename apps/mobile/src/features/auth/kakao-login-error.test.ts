@@ -25,6 +25,19 @@ describe("Kakao login error message", () => {
     ).toContain("00000000-0000-4000-8000-000000000000");
   });
 
+  it("래퍼가 세부 코드를 숨긴 iOS native 실패에도 설정 점검을 안내한다", () => {
+    const message = kakaoLoginErrorMessage(
+      new Error(
+        "Kakao native login failed: The operation couldn’t be completed. " +
+          "(KakaoSDKCommon.SdkError error 2.)",
+      ),
+    );
+
+    expect(message).toContain("Native App Key");
+    expect(message).toContain("org.madcamp.chimap.staging");
+    expect(message).toContain("삭제·재설치");
+  });
+
   it("사용자 취소와 설정 오류를 구분한다", () => {
     expect(kakaoLoginErrorMessage(new Error("login cancelled"))).toBe(
       "카카오 로그인이 취소되었습니다.",

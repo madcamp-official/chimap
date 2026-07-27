@@ -130,9 +130,9 @@ Express API
 
 ```text
 apps/mobile
-  ├─ src/features            guest-first 화면/auth/place/query/store
+  ├─ src/features            Kakao session 필수 화면/auth/place/query/store
   ├─ src/platform
-  │    ├─ apple/kakao        OS별 선택 로그인
+  │    ├─ apple/kakao        OS별 provider adapter(Apple은 내부 staging에서 숨김)
   │    ├─ maps/location      NAVER native map / foreground 위치
   │    └─ steps              HealthKit / Health Connect
   ├─ app.config.ts           bundle/package, entitlement, native SDK key

@@ -8,8 +8,8 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 - 전체 운영 검증 스냅샷: 2026-07-27 21:40 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`e16684b`)
-- cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
+- 저장소 기준선: `main` (Web/API cross-platform foundation과 iOS staging 통합)
+- 통합한 upstream 기준: `feat/mobile/cross-platform-foundation` (`1df41a5`)
 - 멀티모달 그래프·서울 실시간 지하철·migration 9 운영 배포: 2026-07-27 21:39 KST
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
   health/readiness 200·guest/Kakao 활성·Apple 비활성, 실제 추천 3건 확인
@@ -28,8 +28,9 @@ Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 
 
 웹에서는 카카오 로그인 없이 모든 경로 검색 기능을 사용할 수 있습니다. 원하면
 헤더에서 카카오 로그인해 같은 CHIMap 계정 기반의 향후 모바일·웹 연동을
-준비할 수 있습니다. iOS/Android 앱도 guest로 핵심 추천을 사용하고 필요할 때
-Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
+준비할 수 있습니다. 현재 iOS staging 앱은 사용자별 HealthKit·개인화·저장소
+경계를 보장하기 위해 Kakao 로그인이 필수입니다. Apple 코드는 유지하지만 내부
+staging에서는 숨기며 외부 TestFlight 전 별도 E2E를 수행합니다. 전체 순서는
 [cross-platform 계획](./docs/cross-platform-plan.md), iPhone 12 Pro 기준 로컬
 절차는 [iOS 개발 운영서](./docs/ios-development.md)에 기록합니다.
 
@@ -38,8 +39,9 @@ Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
    선택합니다.
 3. 최초 이용 시 만 나이·신장·체중·생물학적 성별·하루 목표 걸음으로
    개인화 한 걸음 길이를 계산합니다. 다섯 항목은 모두 필수이며 원본
-   신체정보는 브라우저에만 저장합니다. 직접 한 걸음 길이를 입력하거나 일정
-   거리를 걷게 하는 측정 절차는 사용하지 않습니다.
+   신체정보는 Web의 브라우저 또는 앱의 environment·OS·사용자 namespace에만
+   저장합니다. 앱은 사용자별 최초 1회만 이 화면을 요구하고 이후 `내 정보`에서
+   수정할 수 있습니다. 일정 거리를 걷게 하는 별도 측정 절차는 사용하지 않습니다.
 4. 헤더에서 현재 걸음을 확인하거나 수정하고 왼쪽 폼에서 `건강 경로 찾기`를
    누릅니다. 사용자가 추가 시간이나 마감시간을 결정할 필요는 없습니다.
 5. 서버가 남은 목표와 기본 경로를 바탕으로 15~90분의 자동 추천 범위를
@@ -47,8 +49,7 @@ Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
 6. 목표 경로는 먼저 내려 걷는 후보를 우선하고, 필요할 때 더 뒤의
    정류장에서 탑승하는 후보를 결합합니다.
 7. 빠른 경로, 빠른 경로 대비 약 2배 걸음 경로, 목표 근접 경로의
-   시간·수단·도보·환승을 간단히
-   비교합니다.
+   시간·수단별 거리 비율·예상 걸음·환승을 간단히 비교합니다.
 8. 카드를 선택해 NAVER 지도 경로를 바꾸고, 필요한 경로만 `자세히`를
    열어 전체 텍스트 이동 단계와 승하차 정보를 확인합니다.
 9. 추천 아래에서 출발·도착 주변 역과 TAGO 시간표 기반 U/D 다음 출발을
@@ -80,7 +81,7 @@ Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
 | 도보 | Kakao Routing | 실제 도보 거리·시간·좌표 |
 | 버스 선 | Kakao Mobility Directions | TAGO 정류장 순서를 보존한 도로 매칭 geometry |
 | 버스 | 국토교통부 TAGO | 정류장·노선·도착·차량 |
-| 지하철 | 국토교통부 TAGO | 역 검색·역별 시간표 기반 다음 출발 |
+| 지하철 | 서울 열린데이터광장 + 국토교통부 TAGO | 서울 실시간 도착·위치, 그 외 역 검색·시간표 기반 다음 출발 |
 | 정적 교통 데이터 | PostgreSQL 18 + PostGIS | 전국 정류장·노선 순서·지하철역과 TAGO 매핑 |
 
 경로 추천은 외부 공급자 응답과 전국 공개 정류장 자료만 사용합니다. 지도 SDK가
@@ -143,7 +144,7 @@ packages/contracts       요청·응답·내부 정규화 Zod 계약
 packages/app-core        Web/RN 비의존 추천 선택·복원·stale 정책
 packages/design-tokens   Web/RN에서 공유하는 의미 기반 token
 docs                     아키텍처, 운영, 공급자, 테스트 문서
-docs/cross-platform-plan.md  guest-first 선택 로그인과 iOS→Android 실행 계획
+docs/cross-platform-plan.md  Web 선택 로그인·Mobile Kakao 필수와 iOS→Android 실행 계획
 docs/staging-environment.md  production과 분리된 staging API/DB 운영
 docs/ios-development.md      iPhone 12 Pro·Xcode·TestFlight 개발 기준
 docs/user-experience.md  사용자 흐름, 상태, 반응형·접근성 계약
@@ -274,8 +275,8 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
 현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 4개,
-API 114개, web 56개, mobile 14개로 총 203개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 211개입니다.
+API 114개, web 56개, mobile 46개로 총 235개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 243개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \

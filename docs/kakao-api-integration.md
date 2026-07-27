@@ -151,7 +151,7 @@ token은 사용자 정보 확인 중에만 메모리에서 사용하고 저장�
 사용합니다. 상세 HTTP 계약은 [API 레퍼런스](./api-reference.md)를 따릅니다.
 [Kakao Login REST API](https://developers.kakao.com/docs/ko/kakaologin/rest-api)
 
-### iOS·Android 선택 로그인
+### iOS·Android 필수 로그인
 
 React Native 앱은 환경별 `KAKAO_NATIVE_APP_KEY`를 native SDK에 주입합니다.
 staging Native key에는 `org.madcamp.chimap.staging`, production Native key에는
@@ -166,20 +166,24 @@ native SDK가 받은 Kakao access token은 CHIMap session으로 직접 사용하
 `access_token_info`의 `app_id`·만료를 확인한 뒤 `/v2/user/me` identity를 대조해
 15분 access/30일 refresh CHIMap token pair를 발급합니다. provider token은 검증 뒤
 폐기하며 CHIMap refresh token만 SecureStore에 저장합니다. Kakao 인증 장애·취소와
-무관하게 guest 검색·추천·지도는 계속 동작해야 합니다.
+실패는 로그인 화면에서 서로 구분해 안내하며, 현재 앱은 CHIMap session 없이
+검색·추천·지도로 진입하지 않습니다. Web의 비로그인 핵심 흐름은 그대로
+유지합니다.
 
 2026-07-27 11:01 KST 운영 검증에서 익명 web session은
 `kakaoLoginAvailable=true`, 로그인 시작은 HTTP 302, state cookie는
 HttpOnly·Secure·SameSite=Lax였고 Kakao authorize endpoint도 302를
-반환했습니다. mobile config는 운영 native credential 입력 전이라 guest만
-활성화되고 Kakao provider는 disabled입니다. 실제 계정 동의→callback→logout과
-native KakaoTalk 복귀는 사용자가 브라우저·기기에서 완료해야 하는 최종 확인
-항목입니다.
+반환했습니다. 당시 production mobile config는 native credential 입력 전이라
+guest만 활성화되고 Kakao provider는 disabled였습니다. 이는 과거 운영 snapshot이며
+현재 staging 앱의 Kakao 필수 정책과 혼동하지 않습니다.
 
 2026-07-27 16:48 KST staging은 `staging-server` runtime key와 mobile auth를
 구성해 `guestEnabled=true`, `kakaoEnabled=true`, `appleEnabled=false`를
 반환합니다. 이는 server config 준비 상태이며 실제 iPhone의 KakaoTalk 성공·취소·
 browser fallback과 refresh/logout/account deletion E2E를 대신하지 않습니다.
+현재 Native App Key는 생성된 plist/scheme와 signed device build까지 일치하지만,
+Kakao Developers의 동일 Native App Key에 `org.madcamp.chimap.staging`를 등록한 뒤
+새 바이너리로 native login E2E를 다시 통과해야 합니다.
 
 무료 쿼터 적용 범위, 초과 과금과 비즈월렛 필요 여부는 앱·계정 상태에 따라
 달라질 수 있습니다. 저장소 문서의 고정 날짜나 추정 정책으로 판단하지 말고

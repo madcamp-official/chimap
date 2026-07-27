@@ -479,7 +479,7 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
     미검출인지 확인
 30. `/api/v1/mobile-config`의 contract/minimum version/maintenance/region과
     guest·Kakao·Apple provider flag가 runtime credential 상태와 일치하는지 확인
-31. `schema_migrations`가 1~7 current이고 candidate와 운영 readiness가 모두
+31. `schema_migrations`가 1~9 current이고 candidate와 운영 readiness가 모두
     HTTP 200이며 지하철 전체·활성·매핑 통계가 기대값인지 확인
 
 자동 E2E:
@@ -515,8 +515,9 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 수동 실행합니다. 구현 commit `965aa88`의 과거 push/PR run은 당시 Web/API 두
 job이 성공한 기록입니다. cross-platform foundation commit `f624e9b`의 push
 run `30230011225`에서는 위 다섯 job이 모두 성공했습니다. 이후에도 다섯
-job을 release gate로 사용합니다. `feat/tago-transit`에서 `main`으로 향하는
-draft PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 rebase합니다.
+job을 release gate로 사용합니다. Web/API foundation과 iOS staging 이력은 갱신된
+`main`에 통합하고, 이후 변경은 최신 `origin/main`에서 책임별 short-lived branch로
+분기합니다.
 
 ### 2026-07-27 승격 기록
 

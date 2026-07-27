@@ -105,7 +105,7 @@ CHIMap은 Kakao Developers 앱 하나를 서비스 identity로 유지하고, 그
 키를 환경별로 나눕니다.
 
 - `staging-server` REST API key → `.env.staging`의 `KAKAO_REST_API_KEY`
-- `staging-mobile` Native App key → Mac mobile `.env.local`의
+- `staging-mobile` Native App key → Mac mobile `.env`의
   `KAKAO_NATIVE_APP_KEY`
 - 숫자 `KAKAO_APP_ID` → 같은 CHIMap Kakao 앱의 App ID
 
@@ -244,7 +244,7 @@ TAGO 단일 정류장·역 조회가 timeout되면 해당 항목만 실패로 �
 
 ## 6. Mobile 연결
 
-Mac clone의 `apps/mobile/.env.local`에는 공개 client 값 다섯 개만 둡니다.
+Mac clone의 `apps/mobile/.env`에는 공개 client 값 다섯 개만 둡니다.
 
 ```dotenv
 APP_ENV=staging

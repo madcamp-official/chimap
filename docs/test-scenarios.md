@@ -297,6 +297,8 @@ UI 전체 흐름:
 ## 11. Mobile lifecycle·native·auth
 
 - iOS/Android/Web 및 dev/staging/prod가 서로 다른 storage namespace 사용
+- iOS staging은 저장된 CHIMap session이 없으면 Kakao 로그인을 필수로 요구
+- 사용자별 개인화 입력은 최초 1회만 표시되고 `내 정보`에서 다시 수정 가능
 - Zustand RouteStore가 선택 route ID/type과 열린 상세 sheet를 eviction 뒤 복원
 - 성공한 추천 query만 최대 24시간 AsyncStorage에 보존
 - foreground 복귀 시 온라인·활성·같은 한국 날짜·5분 초과 추천만 조용히 refetch
@@ -307,9 +309,13 @@ UI 전체 흐름:
 - Android Kotlin 2.1.20, minSdk 26, NAVER/Kakao Maven group 격리와 공식 URL 확인
 - refresh grace 120초 안에는 암호화 보관한 동일 pair 재생, 만료 뒤 family revoke
 - `scripts/verify-mobile-native-config.mjs all|ios|android`를 CNG 직후 실행
+- 추천 카드는 leg 조각을 반복 표시하지 않고 도보/버스/지하철 거리 합계와
+  합계 100%인 연속 비율 막대를 표시
 
-실기기 gate는 카카오톡 설치/미설치 복귀, Apple 로그인, NAVER 지도 렌더링,
-HealthKit/Health Connect 실제·빈 자료, 권한 거부, process eviction을 포함합니다.
+내부 iOS 실기기 gate는 카카오톡 설치/미설치 복귀, NAVER 지도 렌더링,
+HealthKit 실제·빈 자료, 권한 거부, process eviction을 포함합니다. Apple 로그인은
+외부 TestFlight 전 별도 gate이고 Android Health Connect는 Android release gate에서
+검증합니다.
 
 ### 환경·플랫폼 격리 smoke
 
@@ -320,7 +326,7 @@ HealthKit/Health Connect 실제·빈 자료, 권한 거부, process eviction을 
 - 같은 staging API를 쓰는 Web·iOS·Android는 server 계정·교통 seed를 공유함
 - mobile AsyncStorage/SecureStore key가 environment·OS·user hash별로 분리됨
 - iOS staging build에 production API host나 Android NAVER Client ID가 포함되지 않음
-- `.env`, `.env.staging`, `apps/mobile/.env.local`이 Git 추적·Docker image·공개 asset에 없음
+- `.env`, `.env.staging`, `apps/mobile/.env`가 Git 추적·Docker image·공개 asset에 없음
 
 현재 staging은 버스·지하철 seed, health/readiness 200과 외부 KAIST 본원→대전역
 추천 3건까지 통과했습니다. timeout 난 정류장·역만 격리하고 나머지 seed를 계속하는

@@ -19,6 +19,8 @@
    - `apps/api/src/transit/subway-topology-importer.ts`
    - `apps/api/src/providers/subway-route-planner.ts`
    - `apps/api/src/providers/subway-route-planner.test.ts`
+   - `apps/api/src/providers/multimodal-route-planner.ts`
+   - `apps/api/src/providers/multimodal-route-planner.test.ts`
    - `apps/mobile/src/platform/maps/native-route-map.native.tsx`
    - `data/subway_service_lines.csv`
    - `data/subway_line_stations.csv`
@@ -34,7 +36,8 @@
 - `SubwayRoutingEdge`에도 선형 좌표가 없다.
 - `getSubwayRoutingGraph()`는 지하철 간선의 거리로 `straight_distance_meters`만 읽는다.
 - `subwayCoreLegs()`는 같은 노선의 탑승 구간을 만든 뒤 `coordinates: rideStations.map(coordinate)`를 사용한다. 결국 API는 역사 좌표만 전달하고 모바일은 그 점들을 직선으로 이을 수밖에 없다.
-- 현재 마이그레이션 최신 버전은 8이며 PostGIS는 이미 사용 중이다.
+- 현재 staging/production 기본인 `TRANSIT_ROUTER_MODE=multimodal`에서도 request graph의 지하철 edge를 `[from.coordinate, to.coordinate]`로 만들고, 최종 leg를 `coordinates: stations.map(subwayCoordinate)`로 생성한다. 따라서 legacy 지하철 planner만 수정하면 실제 서비스 문제는 남는다.
+- 현재 마이그레이션 최신 버전은 9이며 PostGIS는 이미 사용 중이다.
 - 대전 1호선의 현재 service line ID는 `SL_035A73FB3875`이고, 현재 topology 데이터 기준 22개 역/42개 방향성 segment가 route-ready 상태다.
 
 ## 목표 동작
@@ -109,9 +112,9 @@ GTFS를 쓸 경우 `shape_id`, `trip_id`, `route_id`, `stop_sequence`, 가능하
 
 DB에는 원본에 가까운 geometry를 보존한다. API payload용 단순화가 필요하면 한국 미터 좌표계(예: EPSG:5179)로 변환한 후 5~10m 이하의 허용 오차로 `ST_SimplifyPreserveTopology`를 적용하고 다시 4326으로 변환한다. 위경도 degree를 meter처럼 취급하지 않는다. 단순화 전후의 양 끝점과 주요 곡선이 보존되는지 fixture로 검증하고, 임의 vertex cap으로 경로를 훼손하지 않는다.
 
-## 3. DB migration v9
+## 3. DB migration v10
 
-기존 migration을 수정하지 말고 `apps/api/src/transit/migrations.ts`에 version 9를 추가한다. 기존 레코드가 있으므로 첫 migration에서는 nullable로 추가하고, importer/backfill과 coverage gate로 완전성을 보장한다.
+기존 migration을 수정하지 말고 `apps/api/src/transit/migrations.ts`에 version 10을 추가한다. version 9는 request-scoped multimodal routing이 이미 사용한다. 기존 레코드가 있으므로 첫 migration에서는 nullable로 추가하고, importer/backfill과 coverage gate로 완전성을 보장한다.
 
 권장 스키마는 다음과 같다. 실제 명명은 저장소 관례에 맞추되 의미는 유지한다.
 
@@ -164,7 +167,7 @@ geometrySource: string | null;
 
 SQL이 payload용 단순화를 수행한다면 원본 geometry는 DB에 보존하고, 쿼리 결과에만 단순화 geometry를 사용한다. `MemoryCache`의 지하철 graph TTL이 현재 5분이므로 데이터 import/deploy 후 재시작 또는 명시적 cache 무효화 절차를 rollout 문서에 포함한다.
 
-## 5. subway route leg 조립
+## 5. legacy·multimodal subway route leg 조립
 
 `subwayCoreLegs()`에서 더 이상 `rideStations.map(coordinate)`를 정상 경로의 좌표로 사용하지 않는다.
 
@@ -177,6 +180,13 @@ SQL이 payload용 단순화를 수행한다면 원본 geometry는 DB에 보존�
 5. tolerance를 벗어난 gap은 직선으로 조용히 연결하지 말고 오류/metric으로 남긴다.
 
 여러 ride edge의 geometry를 합친 배열을 지하철 leg의 `coordinates`로 넣는다. 모든 edge에 geometry가 있을 때는 역사 수보다 훨씬 많은 실제 선형 점이 내려가야 한다. 일부 geometry가 없을 때만 기존 역사 좌표 fallback을 사용할 수 있으며 다음 조건을 지킨다.
+
+동일한 조립 함수를 `multimodal-route-planner.ts`에도 재사용한다.
+
+- request graph를 만들 때 `RIDE` edge의 `coordinates`는 repository의 ordered track coordinates를 사용한다. 정상 geometry가 있는데 `[from.coordinate, to.coordinate]`로 덮어쓰지 않는다.
+- `#subwayLeg()`는 `stations.map(subwayCoordinate)`가 아니라 traversed ride edge geometry를 순서대로 합친다.
+- legacy와 multimodal planner가 서로 다른 reverse/dedupe/fallback 규칙을 갖지 않도록 공용 순수 helper 또는 repository-level invariant로 통일한다.
+- 현재 배포 기본값이 `TRANSIT_ROUTER_MODE=multimodal`이므로 multimodal 통합 테스트와 staging smoke를 필수 release gate로 둔다.
 
 - 응답 생성은 계속 가능하게 한다.
 - 로그/metric에 service line, from/to key, fallback 사유를 남긴다. 토큰이나 개인정보는 로그에 넣지 않는다.
@@ -219,7 +229,7 @@ SQL이 payload용 단순화를 수행한다면 원본 geometry는 DB에 보존�
 
 ### Repository/DB 테스트
 
-- migration v9가 기존 DB에 적용됨
+- migration v10이 migration 9까지 적용된 기존 DB에 순차 적용됨
 - LineString round-trip 후 좌표 순서가 유지됨
 - `track_distance_meters`가 `ST_Length(...::geography)`와 일치함
 - geometry가 있으면 실제 길이, 없으면 직선거리 fallback을 사용함
@@ -259,7 +269,7 @@ DB 통합 테스트는 테스트용 PostGIS DB에서만 실행한다. staging im
 
 ## 9. staging 검증 절차
 
-1. migration v9 적용 전 DB backup/복구 경로를 확인한다.
+1. migration v10 적용 전 DB backup/복구 경로를 확인한다.
 2. geometry importer를 dry-run하고 rejected/reversed/gap/coverage 수치를 저장한다.
 3. staging DB에 import한다.
 4. 대전 1호선 42/42 coverage SQL 결과를 확인한다.
