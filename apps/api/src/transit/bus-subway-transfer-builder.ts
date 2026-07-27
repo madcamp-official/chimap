@@ -1,4 +1,8 @@
-import { haversineDistanceMeters, type Coordinate } from "@chimap/contracts";
+import {
+  haversineDistanceMeters,
+  type Coordinate,
+  type NormalizedRoute,
+} from "@chimap/contracts";
 
 import type { MobilityProvider } from "../providers/types.js";
 import type { TransitRepository } from "./transit-repository.js";
@@ -56,12 +60,31 @@ export async function buildBusSubwayTransferEdges(options: {
         if (candidate === undefined) {
           continue;
         }
+        if (!candidate.needsRefresh) {
+          skipped += 1;
+          processed += 1;
+          continue;
+        }
         try {
-          const route = await options.walkingProvider.getWalkingRoute({
-            origin: candidate.busCoordinate,
-            destination: candidate.subwayCoordinate,
-            routeMode: "SHORTEST",
-          });
+          let route: NormalizedRoute | undefined;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              route = await options.walkingProvider.getWalkingRoute({
+                origin: candidate.busCoordinate,
+                destination: candidate.subwayCoordinate,
+                routeMode: "SHORTEST",
+              });
+              break;
+            } catch (error) {
+              if (attempt === 1) {
+                throw error;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+          }
+          if (route === undefined) {
+            throw new Error("보행 경로를 받지 못했습니다.");
+          }
           const coordinates = uniqueCoordinates(
             route.legs.flatMap((leg) => leg.coordinates),
           );

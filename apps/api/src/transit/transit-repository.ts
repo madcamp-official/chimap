@@ -187,6 +187,7 @@ export type BusSubwayTransferCandidate = {
   subwayCoordinate: { lat: number; lng: number };
   straightDistanceMeters: number;
   sourceHash: string;
+  needsRefresh: boolean;
 };
 
 export type SubwayTimingContext = {
@@ -1904,13 +1905,20 @@ export class TransitRepository {
           ON linked.stop_internal_id = bus_stop.id
         WHERE station.active = true
       )
-      SELECT DISTINCT ON (bus_stop_id, station_line_id)
-        bus_stop_id, station_line_id, bus_name, station_name,
-        bus_latitude, bus_longitude, station_latitude, station_longitude,
-        straight_distance_meters
+      SELECT DISTINCT ON (ranked.bus_stop_id, ranked.station_line_id)
+        ranked.bus_stop_id, ranked.station_line_id,
+        ranked.bus_name, ranked.station_name,
+        ranked.bus_latitude, ranked.bus_longitude,
+        ranked.station_latitude, ranked.station_longitude,
+        ranked.straight_distance_meters,
+        existing.source_hash AS existing_source_hash,
+        existing.active AS existing_active
       FROM ranked
+      LEFT JOIN bus_subway_transfer_edges AS existing
+        ON existing.bus_stop_id = ranked.bus_stop_id
+       AND existing.station_line_id = ranked.station_line_id
       WHERE proximity_rank <= 10
-      ORDER BY bus_stop_id, station_line_id
+      ORDER BY ranked.bus_stop_id, ranked.station_line_id
       LIMIT $1
     `, [limit]);
     return result.rows.map((row): BusSubwayTransferCandidate => {
@@ -1929,18 +1937,22 @@ export class TransitRepository {
         },
         straightDistanceMeters: Number(row.straight_distance_meters),
       };
+      const sourceHash = createHash("sha256")
+        .update([
+          candidate.busStopId,
+          candidate.stationLineId,
+          candidate.busCoordinate.lat.toFixed(7),
+          candidate.busCoordinate.lng.toFixed(7),
+          candidate.subwayCoordinate.lat.toFixed(7),
+          candidate.subwayCoordinate.lng.toFixed(7),
+        ].join("\u001f"))
+        .digest("hex");
       return {
         ...candidate,
-        sourceHash: createHash("sha256")
-          .update([
-            candidate.busStopId,
-            candidate.stationLineId,
-            candidate.busCoordinate.lat.toFixed(7),
-            candidate.busCoordinate.lng.toFixed(7),
-            candidate.subwayCoordinate.lat.toFixed(7),
-            candidate.subwayCoordinate.lng.toFixed(7),
-          ].join("\u001f"))
-          .digest("hex"),
+        sourceHash,
+        needsRefresh:
+          row.existing_active !== true ||
+          String(row.existing_source_hash ?? "") !== sourceHash,
       };
     });
   }
