@@ -4,7 +4,7 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production/staging health 재확인: 2026-07-27 16:48 KST
+- production/staging health 재확인: 2026-07-27 17:44 KST
 - 전체 운영 검증 스냅샷: 2026-07-27 14:29 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
@@ -12,7 +12,7 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 - cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
 - 버스 위치·지도 시점·TAGO 지하철·migration 7 운영 배포: 2026-07-27 14:28 KST
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
-  health 200·guest/Kakao 활성·Apple 비활성
+  health/readiness 200·guest/Kakao 활성·Apple 비활성, 실제 추천 3건 확인
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
@@ -273,8 +273,8 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
 현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 3개,
-API 103개, web 56개, mobile 14개로 총 191개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 199개입니다.
+API 104개, web 56개, mobile 14개로 총 192개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 200개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \

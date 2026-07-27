@@ -49,13 +49,13 @@ git diff --check
 - contracts: 12개
 - app-core: 3개
 - alert-relay: 3개
-- API: 103개
+- API: 104개
 - web: 56개
 - mobile: 14개
-- 합계: 191개
+- 합계: 192개
 
 PostgreSQL 전용 8개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
-건너뜁니다. 격리 PostGIS까지 포함한 전체는 199개입니다.
+건너뜁니다. 격리 PostGIS까지 포함한 전체는 200개입니다.
 
 ## 3. 공급자 테스트
 
@@ -322,9 +322,9 @@ HealthKit/Health Connect 실제·빈 자료, 권한 거부, process eviction을 
 - iOS staging build에 production API host나 Android NAVER Client ID가 포함되지 않음
 - `.env`, `.env.staging`, `apps/mobile/.env.local`이 Git 추적·Docker image·공개 asset에 없음
 
-현재 staging은 health와 mobile config까지 통과했지만 노선·노선-정류장·지하철
-seed가 0이어서 readiness 503이 정상입니다. readiness 200과 추천 E2E는
-[staging 환경 운영서](./staging-environment.md)의 seed 완료 뒤 실행합니다.
+현재 staging은 버스·지하철 seed, health/readiness 200과 외부 KAIST 본원→대전역
+추천 3건까지 통과했습니다. timeout 난 정류장·역만 격리하고 나머지 seed를 계속하는
+회귀는 API 단위 테스트와 운영 실행 결과를 함께 확인합니다.
 
 ## 12. 배포 보안 검사
 

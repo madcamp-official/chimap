@@ -4,7 +4,7 @@
 
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
   계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
-  포함합니다. 2026-07-27에 결정적 테스트 191개, 격리 PostGIS 8개, 전체
+  포함합니다. 2026-07-27에 결정적 테스트 192개, 격리 PostGIS 8개, 전체
   typecheck/build, Android arm64 native compile과 GitHub의 iOS simulator·Android
   전체 ABI compile을 통과했습니다. 실제 iPhone/Android Development Build와
   store archive는 외부 release gate로 남습니다.
@@ -19,8 +19,8 @@
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
-  정류장 227,054개만 우선 적재됐고 노선·관계·지하철이 없어 readiness는 아직
-  HTTP 503입니다.
+  commit `55fec7c`의 timeout 격리 이미지를 배포하고 버스·지하철 seed를 완료해
+  readiness HTTP 200과 KAIST 본원→대전역 추천 3건을 확인했습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -273,15 +273,18 @@ process eviction과 TestFlight/Play release E2E입니다.
 - Compose project: `chimap-staging`
 - PostgreSQL volume: `chimap-staging-postgres`
 - production의 `chimap` project·network·DB volume과 분리
-- API image source: `7a99e03`, image `sha256:7befecd1…`
+- API image source: `55fec7c`, image `sha256:02971772…`
 - database connected, PostGIS·migration current
 - Kakao/NAVER/TAGO provider configured
 - mobile config: guest/Kakao true, Apple false
-- 정류장 227,054개·TAGO 연결 7개, 노선/관계/지하철 0으로 readiness 503
+- 정류장 227,207개·TAGO 연결 2,144개, 노선 50개·관계 4,178개
+- 지하철역 1,097개·TAGO 매핑 706개, readiness 200
+- 외부 KAIST 본원→대전역 추천 `FAST/BALANCED/GOAL` 3건 HTTP 200
 
 같은 staging API를 Web, iOS, Android가 사용하므로 server account와 기준 데이터를
 공유하되, UI persistence와 token은 environment·OS·user namespace를 유지합니다.
-교통 seed 완료와 readiness 200 전에는 실제 추천 E2E를 완료로 처리하지 않습니다.
+교통 seed와 외부 추천 smoke를 완료했으며 이후 새 지원 지역은 같은 절차로
+노선을 점진 동기화합니다.
 [staging 환경 운영서](./staging-environment.md)에 기동·적재·중지 절차를
 기록합니다.
 
@@ -319,7 +322,7 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| 최신 전체 로컬 검사 | 17:01 KST 경계·format·typecheck, 결정적 테스트 191개, 격리 PostGIS 8개 통과 |
+| 최신 현재 코드 검사 | API 104개, builder TypeScript/Web·API build 통과. CI `30250725725`의 Web/API·PostGIS·Mobile JS·iOS simulator·Android 전체 ABI compile 모두 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |
@@ -445,9 +448,9 @@ production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KS
 
 ## 9. 현재 한계와 확장 조건
 
-- staging은 HTTPS/API/auth와 정류장 import까지 준비됐지만 노선·노선 관계·지하철
-  seed가 없어 readiness 503입니다. 실제 추천과 iPhone E2E 전에
-  [staging 환경 운영서](./staging-environment.md)의 적재 절차를 완료해야 합니다.
+- staging은 HTTPS/API/auth, 버스·지하철 seed, readiness 200과 외부 실제 추천까지
+  준비됐습니다. TAGO timeout으로 보류된 지하철역 3개는 다음 mapping 실행에서
+  재시도하며 iPhone 실기기 E2E는 별도 release gate입니다.
 - iOS는 CNG/CI 기반이 구현됐지만 iPhone 12 Pro 실기기, Light 고정,
   deployment target 17.0, staging App Store Connect/EAS store profile 검증이
   남았습니다. [iOS 개발 운영서](./ios-development.md)를 release gate로 사용합니다.

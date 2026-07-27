@@ -536,9 +536,22 @@ draft PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 reb
 - staging transit: 정류장 227,054개·연결 7개, 노선/관계/지하철 0
 - staging readiness: seed 미완료로 HTTP 503
 
+17:44 KST에는 source `55fec7c`의 TAGO timeout 격리 수정을 staging에만
+재배포하고 seed를 완료했습니다.
+
+- staging image: `sha256:02971772…`
+- transit: 정류장 227,207개·연결 2,144개·노선 50개·관계 4,178개
+- subway: 전체/활성 1,097개·TAGO 매핑 706개
+- local/external health·readiness HTTP 200
+- KAIST 본원→대전역 실제 추천 3건(`FAST/BALANCED/GOAL`) HTTP 200
+- mapping timeout 3건은 `PENDING`으로 보존하고 다음 실행에서 재시도
+- seed 전 backup: `chimap-staging-preseed-20260727T080953Z.dump`, 17,293,693 bytes,
+  SHA-256 `e1f387d7504574570186dc0ba8a67e196a3e0ec8ab72f9f17ce46f22873fd594`
+
 production의 마지막 전체 strict E2E·백업·restore는 앞선 14:29 KST 기록을
-유지합니다. staging은 [staging 환경 운영서](./staging-environment.md)의 노선·
-지하철 seed 뒤 readiness 200과 실제 추천을 별도로 검증합니다.
+유지합니다. staging은 production DB를 복사하지 않고 공개 교통 seed만 독립
+적재했으며 자세한 재실행 절차는 [staging 환경 운영서](./staging-environment.md)를
+따릅니다.
 
 ## 12. 공개 번들 비밀값 검사
 

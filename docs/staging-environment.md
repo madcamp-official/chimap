@@ -237,6 +237,11 @@ docker compose --env-file .env.staging -f compose.staging.yml \
 
 공개 교통 자료만 적재한 뒤 `readiness`를 다시 확인합니다.
 
+TAGO 단일 정류장·역 조회가 timeout되면 해당 항목만 실패로 집계하고 나머지
+노선·역 seed는 계속합니다. `sync-area`가 부분 실패 code를 반환하면 이미 성공한
+노선은 보존되므로 같은 명령을 재실행합니다. `sync-subway-stations` 결과의
+`failed` 역은 `PENDING`으로 남아 다음 실행에서 재시도됩니다.
+
 ## 6. Mobile 연결
 
 Mac clone의 `apps/mobile/.env.local`에는 공개 client 값 다섯 개만 둡니다.
@@ -276,7 +281,7 @@ docker compose --env-file .env.staging -f compose.staging.yml down
 production 후보 이미지는 staging이 사용하는 3001과 충돌하지 않도록
 `127.0.0.1:3002`에서 smoke합니다.
 
-## 8. 2026-07-27 확인 스냅샷
+## 8. 2026-07-27 17:44 KST 확인 스냅샷
 
 - Cloudflare hostname과 TLS 발급 완료
 - tunnel origin `http://127.0.0.1:3001`
@@ -284,8 +289,13 @@ production 후보 이미지는 staging이 사용하는 3001과 충돌하지 않�
 - local/external `/api/v1/health` HTTP 200
 - `mobile-config`: guest/Kakao true, Apple false
 - database/PostGIS/migration과 Kakao/NAVER/TAGO provider 준비
-- 전국 정류장 227,054개, TAGO 연결 7개
-- 노선·노선-정류장·지하철 미적재로 readiness HTTP 503
+- source/image: `55fec7c` / `sha256:02971772…`
+- 전국 정류장 227,207개, TAGO 연결 2,144개
+- 버스 노선 50개, 노선-정류장 4,178개
+- 활성 지하철역 1,097개, TAGO 매핑 706개
+- local/external readiness HTTP 200
+- 외부 KAIST 본원→대전역 추천 3건(`FAST/BALANCED/GOAL`) HTTP 200
+- TAGO timeout 3개 역은 `PENDING`으로 보존
 
-따라서 HTTPS와 mobile auth 연결은 사용할 수 있지만 추천 실제 기기 E2E는 위
-교통 seed와 readiness 200을 먼저 완료해야 합니다.
+따라서 staging API는 iPhone 실제 기기 추천 E2E에 사용할 수 있습니다. 남은
+외부 gate는 NAVER/Kakao/HealthKit 실기기와 eviction 복원입니다.
