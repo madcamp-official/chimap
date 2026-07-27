@@ -347,7 +347,8 @@ HealthKit/Health Connect 실제·빈 자료, 권한 거부, process eviction을 
 - Alertmanager 설정을 `amtool`로 검증
 - relay가 긴급·주의·복구 메시지를 Slack/Discord/일반 형식으로 변환
 - 격리 HTTP 수신처로 실제 긴급 메시지와 상태 확인 버튼 전달
-- 외부 URL 미설정 시 relay 구성 지표 `0`과 설정 필요 경보 확인
+- `EXTERNAL_ALERTS_ENABLED=0`일 때 relay health `disabled`, POST 202,
+  `chimap_alert_relay_enabled=0`과 설정 필요 경보 0개 확인
 - 지표와 로그에 검색어·좌표·키·원문 없음
 
 ## 14. 폐기 대상 잔존 검사

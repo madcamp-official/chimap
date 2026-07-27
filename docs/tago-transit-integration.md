@@ -194,7 +194,7 @@ pnpm tago:test-arrivals -- --cityCode 25 --nodeId <nodeId>
 pnpm tago:test-route-stops -- --cityCode 25 --routeId <routeId>
 pnpm tago:test-vehicles -- --cityCode 25 --routeId <routeId>
 
-pnpm bus:import-stops -- --path "/path/bus data.csv"
+pnpm bus:import-stops -- --path "data/bus_data.csv"
 pnpm bus:sync-route -- --cityCode 25 --routeId <routeId>
 pnpm bus:sync-area -- \
   --lat 36.3723 --lng 127.3604 \

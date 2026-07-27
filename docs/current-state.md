@@ -5,15 +5,15 @@
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
   계약과 Expo 앱에 더해 migration 9, 요청 범위 버스·지하철 멀티모달 그래프,
   최대 2회 환승, TAGO 시간표 timing과 사전 계산 버스↔지하철 보행 연결을
-  포함합니다. 이번 변경은 API 119개 테스트(운영 DB가 없는 실행에서는 DB
-  통합 8개 제외), 전체 build와 공개 strict Playwright 3개를 통과했습니다.
-- **현재 공개 배포**: 2026-07-27 19:25 KST에 기능 commit `43b71a1`의 이미지
-  `sha256:ce1caaca…`로 API/웹을 교체했습니다. `TRANSIT_ROUTER_MODE=multimodal`이며
-  공개 KAIST→대전역 요청에서 지하철 단독과 지하철→버스 환승 경로가
-  `multimodal-*` ID로 반환됩니다. 검증 보정은 commit `1d0804c`에 기록했습니다.
-- **마지막 전체 운영 점검**: 2026-07-27 19:29 KST에 컨테이너, PostgreSQL,
-  migration 9, 멀티모달 seed, 공개 HTTPS 추천, NAVER 필수 E2E, 모니터링,
-  공개 bundle 비밀값과 배포 후 백업을 대조했습니다.
+  포함합니다. 현재 API 결정적 테스트 114개와 relay 4개, 전체 production
+  build를 통과했고 DB 통합 테스트 8개는 별도 PostGIS 환경에서 실행합니다.
+- **현재 공개 배포**: 2026-07-27 21:39 KST에 commit `e16684b`의 이미지
+  `sha256:77f4de84…`로 API/웹을 교체했습니다. `TRANSIT_ROUTER_MODE=multimodal`이며
+  서울역→강남역 추천에서 첫 4호선 leg가 `SEOUL_REALTIME_ARRIVAL`, 이후 환승
+  leg가 TAGO 시간표 fallback으로 반환됩니다.
+- **마지막 전체 운영 점검**: 2026-07-27 21:45 KST에 컨테이너, PostgreSQL,
+  migration 9, 멀티모달 seed, 공개 health/readiness와 실제 추천, 모니터링,
+  공개 bundle·로그 비밀값과 배포 후 백업을 대조했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
@@ -137,7 +137,7 @@
 
 ## 3. readiness 스냅샷
 
-2026-07-27 19:29 KST 공개 재확인 결과:
+2026-07-27 21:45 KST 공개 재확인 결과:
 
 ```json
 {
@@ -153,10 +153,10 @@
     "tago": true
   },
   "transit": {
-    "stops": 227225,
-    "linkedStops": 2844,
-    "routes": 140,
-    "routeStops": 5794,
+    "stops": 227308,
+    "linkedStops": 3271,
+    "routes": 156,
+    "routeStops": 6398,
     "subwayStations": 1097,
     "activeSubwayStations": 1097,
     "mappedSubwayStations": 706,
@@ -168,7 +168,7 @@
 }
 ```
 
-readiness timestamp는 `2026-07-27T10:25:01.783Z`였습니다. 위 JSON에서는
+readiness timestamp는 `2026-07-27T12:45:48.159Z`였습니다. 위 JSON에서는
 가독성을 위해 timestamp를 생략했습니다. 필수 교통 통계가 준비되고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
@@ -334,7 +334,7 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| 최신 현재 코드 검사 | API 104개, builder TypeScript/Web·API build 통과. CI `30250725725`의 Web/API·PostGIS·Mobile JS·iOS simulator·Android 전체 ABI compile 모두 통과 |
+| 최신 현재 코드 검사 | API 114개·relay 4개, TypeScript/API/Web production build 통과. 서울 도착·위치 upstream과 서울역→강남역 실제 추천 검증 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |

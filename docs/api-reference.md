@@ -63,7 +63,7 @@ DB를 조회하지 않습니다.
 ```json
 {
   "status": "ready",
-  "timestamp": "2026-07-26T00:40:47.478Z",
+  "timestamp": "2026-07-27T12:45:48.159Z",
   "database": {
     "connected": true,
     "postgis": true,
@@ -75,23 +75,23 @@ DB를 조회하지 않습니다.
     "tago": true
   },
   "transit": {
-    "stops": 227225,
-    "linkedStops": 2844,
-    "routes": 134,
-    "routeStops": 5731,
+    "stops": 227308,
+    "linkedStops": 3271,
+    "routes": 156,
+    "routeStops": 6398,
     "subwayStations": 1097,
     "activeSubwayStations": 1097,
     "mappedSubwayStations": 706,
     "subwayServiceLines": 46,
     "routeReadySubwayLines": 30,
-    "providerMappedStations": 706,
-    "busSubwayTransferEdges": 0
+    "providerMappedStations": 697,
+    "busSubwayTransferEdges": 182
   }
 }
 ```
 
-위 응답은 2026-07-27 migration 7·CSV import·TAGO 매핑 후 예시이며 실제 데이터 동기화에
-따라 시각과 통계가 달라질 수 있습니다.
+위 응답은 2026-07-27 migration 9·멀티모달 seed와 서울 실시간 활성화 후
+예시이며 실제 데이터 동기화에 따라 시각과 통계가 달라질 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
 

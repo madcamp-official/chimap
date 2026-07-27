@@ -18,6 +18,9 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
+현재 production 기준선은 21:39 KST의 commit `e16684b`, 이미지
+`sha256:77f4de84...`이며 서울 실시간 지하철과 멀티모달 추천이 활성화되어
+있습니다. 최신 검증은 아래 서울 지하철 실시간 활성화 기록을 기준으로 합니다.
 
 ## 1. 사전 조건
 
@@ -213,7 +216,7 @@ Compose 운영값:
 
 ```bash
 docker compose run --rm \
-  -v "$PWD/bus data.csv:/data/bus-stops.csv:ro" \
+  -v "$PWD/data/bus_data.csv:/data/bus-stops.csv:ro" \
   api node dist/cli/transit.js import-stops --path /data/bus-stops.csv
 ```
 

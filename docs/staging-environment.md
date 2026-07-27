@@ -192,7 +192,7 @@ curl -sS -w '\nHTTP %{http_code}\n' \
 
 ## 5. 교통 기준 자료 적재
 
-전국 정류장 CSV는 Git에 넣지 않고 host의 `bus data.csv`를 read-only로
+전국 정류장 CSV는 Git에 넣지 않고 host의 `data/bus_data.csv`를 read-only로
 mount합니다.
 
 ```bash
@@ -200,7 +200,7 @@ docker compose \
   --env-file .env.staging \
   -f compose.staging.yml \
   run --rm \
-  -v "$PWD/bus data.csv:/data/bus-stops.csv:ro" \
+  -v "$PWD/data/bus_data.csv:/data/bus-stops.csv:ro" \
   api node dist/cli/transit.js import-stops \
   --path /data/bus-stops.csv
 ```

@@ -29,7 +29,6 @@ apps/mobile/.metro-health-check*
 pnpm-debug.log*
 .data/
 data/
-/bus data.csv
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
