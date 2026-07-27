@@ -1,16 +1,18 @@
 # CHIMap
 
 CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대중교통 기반 건강
-경로를 자동으로 비교·추천하는 웹 애플리케이션입니다.
+경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- 공개 health/readiness 재확인: 2026-07-27 14:29 KST
+- production/staging health 재확인: 2026-07-27 16:48 KST
 - 전체 운영 검증 스냅샷: 2026-07-27 14:29 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`96e2549`)
+- 운영 Web/API 기준선: `feat/mobile/cross-platform-foundation` (`7a99e03`)
 - cross-platform 구현 브랜치: `feat/mobile/cross-platform-foundation`
 - 버스 위치·지도 시점·TAGO 지하철·migration 7 운영 배포: 2026-07-27 14:28 KST
+- staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
+  health 200·guest/Kakao 활성·Apple 비활성
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
@@ -28,7 +30,8 @@ Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 
 헤더에서 카카오 로그인해 같은 CHIMap 계정 기반의 향후 모바일·웹 연동을
 준비할 수 있습니다. iOS/Android 앱도 guest로 핵심 추천을 사용하고 필요할 때
 Kakao 또는 iOS의 Apple 로그인을 선택합니다. 전체 순서는
-[cross platform 계획](./cross_flatform_plan.md)에 기록합니다.
+[cross-platform 계획](./docs/cross-platform-plan.md), iPhone 12 Pro 기준 로컬
+절차는 [iOS 개발 운영서](./docs/ios-development.md)에 기록합니다.
 
 1. 출발지와 목적지를 300ms 자동완성 또는 Enter/검색 버튼으로 조회합니다.
 2. 캠퍼스 중심·도로명 주소·출입구 표시를 확인하고 검색 결과를 직접
@@ -108,6 +111,13 @@ Docker Compose
   └─ alert-relay (Slack/Discord/일반 webhook)
        ↑ API·동기화·백업·알림 전달 상태
 
+Staging Web/iOS/Android
+  └─ HTTPS staging.chimap.madcamp-kaist.org/api/v1
+       ↓ Cloudflare Tunnel → 127.0.0.1:3001
+  chimap-staging Compose
+  ├─ staging API
+  └─ 별도 PostgreSQL/PostGIS volume
+
 systemd timers
   ├─ 일일 custom-format 백업
   ├─ 월간 별도 PostGIS restore 검증
@@ -132,12 +142,15 @@ apps/web/test-data       출처와 checksum이 있는 실제 차량 응답 캡�
 packages/contracts       요청·응답·내부 정규화 Zod 계약
 packages/app-core        Web/RN 비의존 추천 선택·복원·stale 정책
 packages/design-tokens   Web/RN에서 공유하는 의미 기반 token
-cross_flatform_plan.md   guest-first 선택 로그인과 iOS→Android 실행 계획
 docs                     아키텍처, 운영, 공급자, 테스트 문서
+docs/cross-platform-plan.md  guest-first 선택 로그인과 iOS→Android 실행 계획
+docs/staging-environment.md  production과 분리된 staging API/DB 운영
+docs/ios-development.md      iPhone 12 Pro·Xcode·TestFlight 개발 기준
 docs/user-experience.md  사용자 흐름, 상태, 반응형·접근성 계약
 docs/database-schema.md  물리 스키마, API·브라우저 저장 계약
 ops                      백업·동기화 timer, Prometheus와 Alertmanager 설정
 compose.yml              운영 API, DB, 모니터링과 장애 알림
+compose.staging.yml      staging API와 별도 PostgreSQL
 .env.example             유일한 환경변수 템플릿
 ```
 
@@ -260,8 +273,8 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
 현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 3개,
-API 96개, web 54개, mobile 14개로 총 182개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 190개입니다.
+API 103개, web 56개, mobile 14개로 총 191개입니다. 별도 PostGIS DB에서
+실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 199개입니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \

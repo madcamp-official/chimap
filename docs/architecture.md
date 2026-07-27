@@ -41,6 +41,30 @@ MTU는 NAVER TLS 경로의 handshake 안정성을 위해 1400으로 고정합니
 Alertmanager 9093도 host loopback에만 공개하고 relay는 host port를
 노출하지 않습니다.
 
+### 환경별 frontend·DB 경계
+
+DB는 Web/iOS/Android별로 나누지 않고 runtime 환경별로 나눕니다.
+
+```text
+Production Browser/iOS/Android
+  → https://chimap.madcamp-kaist.org/api/v1
+  → chimap API
+  → chimap-postgres
+
+Staging Browser/iOS/Android
+  → https://staging.chimap.madcamp-kaist.org/api/v1
+  → Cloudflare Tunnel → 127.0.0.1:3001
+  → chimap-staging API
+  → chimap-staging-postgres
+```
+
+같은 환경의 frontend는 server 계정·프로필·교통 기준 데이터를 같은 API로
+공유합니다. client UI state, query cache, health 원본과 token 저장소는
+environment·OS·user namespace로 격리합니다. staging은 production DB dump나
+인증 session을 복제하지 않고 공개 교통 기준 자료만 독립 importer로 적재합니다.
+구체적인 리소스명과 명령은 [staging 환경 운영서](./staging-environment.md)를
+따릅니다.
+
 ## 2. 애플리케이션 컴포넌트
 
 ```text

@@ -4,7 +4,7 @@ Kakao는 CHIMap의 장소·주소·역지오코딩·도보와 버스 표시용 �
 공급자입니다. 브라우저가 Kakao를 직접 호출하지 않고 Node API가 서버 전용
 REST API 키로 호출합니다.
 
-이 문서는 현재 구현과 2026-07-26에 확인한 Kakao 공식 문서를 기준으로
+이 문서는 현재 구현과 2026-07-27에 확인한 Kakao 공식 문서를 기준으로
 합니다. 쿼터·과금·콘솔 메뉴는 운영 정책에 따라 바뀔 수 있으므로 배포 때
 공식 문서와 앱 콘솔의 현재 표시를 다시 확인합니다.
 
@@ -101,6 +101,24 @@ Kakao 결과가 하나라도 있으면 NAVER 결과와 섞지 않습니다. NAVE
 
 ## 5. Kakao Developers 설정
 
+Kakao Developers는 한 서비스 앱 안에서 REST API·JavaScript·Native App key를
+유형별로 여러 개 등록하고 key별 Redirect URI, Client Secret, 허용 IP와 native
+platform 정보를 설정할 수 있습니다. CHIMap은 서비스 앱 하나를 유지하고 다음
+용도 key를 나눕니다.
+
+```text
+CHIMap Kakao 앱 / 하나의 App ID
+  ├─ production-server REST key
+  ├─ staging-server REST key
+  ├─ production-mobile Native key
+  └─ staging-mobile Native key
+```
+
+같은 앱 안의 key는 App ID, 사용자 service identity, 동의 설정과 앱 단위 quota를
+공유합니다. key 분리는 허용 IP·callback·Bundle ID·rotation의 장애 범위를 줄이는
+목적입니다. staging/production token의 `app_id`까지 다르게 해야 한다면 별도 test
+app과 Kakao 서비스 정책을 먼저 확인합니다.
+
 1. Kakao Developers에서 대상 앱을 선택합니다.
 2. `[카카오맵] → [사용 설정] → [상태]`를 `ON`으로 설정합니다.
 3. `[앱] → [플랫폼 키] → [REST API 키]`를 확인합니다.
@@ -113,14 +131,14 @@ Kakao 결과가 하나라도 있으면 NAVER 결과와 섞지 않습니다. NAVE
 
 ### 선택형 웹 로그인 추가 설정
 
-같은 Kakao 앱의 REST API 키를 OAuth client ID로 사용하되 Client Secret과
-Redirect URI를 추가로 설정합니다.
+같은 Kakao 앱의 환경별 REST API 키를 OAuth client ID로 사용하되 Client Secret과
+Redirect URI도 해당 key에 환경별로 설정합니다.
 
 1. 카카오 로그인을 활성화합니다.
 2. nickname/profile image 동의 항목만 검토하고 email·전화번호 등은 로그인
    목적으로 요청하지 않습니다.
-3. 개발·staging·운영 Redirect URI를 실제 callback URL과 한 글자도 다르지
-   않게 등록합니다.
+3. staging REST key에는 staging callback, production REST key에는 production
+   callback을 한 글자도 다르지 않게 등록합니다.
 4. Client Secret을 활성화하고 서버 token 교환 요청에만 사용합니다.
 5. 서버에는 `KAKAO_OAUTH_CLIENT_SECRET`, `KAKAO_OAUTH_REDIRECT_URI`,
    `AUTH_SESSION_SECRET`, `AUTH_SESSION_TTL_DAYS`를 설정합니다.
@@ -135,11 +153,13 @@ token은 사용자 정보 확인 중에만 메모리에서 사용하고 저장�
 
 ### iOS·Android 선택 로그인
 
-React Native 앱은 `KAKAO_NATIVE_APP_KEY`를 native SDK에 주입하고 iOS Bundle ID,
-Android package와 `kakao{NativeAppKey}` URL scheme를 Kakao Developers 플랫폼에
-등록합니다. Expo Go가 아니라 Development Build에서 카카오톡 설치·미설치 흐름과
-앱 복귀를 각각 검증합니다. 생성된 plist/manifest에 반대 OS 설정이 섞이지 않는지는
-native config verifier가 확인합니다.
+React Native 앱은 환경별 `KAKAO_NATIVE_APP_KEY`를 native SDK에 주입합니다.
+staging Native key에는 `org.madcamp.chimap.staging`, production Native key에는
+`org.madcamp.chimap` iOS Bundle ID와 Android package를 등록하고
+`kakao{NativeAppKey}` URL scheme를 생성합니다. Expo Go가 아니라 Development
+Build에서 카카오톡 설치·미설치 흐름과 앱 복귀를 각각 검증합니다. 생성된
+plist/manifest에 반대 OS 설정이 섞이지 않는지는 native config verifier가
+확인합니다.
 
 native SDK가 받은 Kakao access token은 CHIMap session으로 직접 사용하거나 기기에
 장기 보관하지 않습니다. 앱은 `/api/v1/auth/kakao/mobile`에 전달하고 backend는
@@ -155,6 +175,11 @@ HttpOnly·Secure·SameSite=Lax였고 Kakao authorize endpoint도 302를
 활성화되고 Kakao provider는 disabled입니다. 실제 계정 동의→callback→logout과
 native KakaoTalk 복귀는 사용자가 브라우저·기기에서 완료해야 하는 최종 확인
 항목입니다.
+
+2026-07-27 16:48 KST staging은 `staging-server` runtime key와 mobile auth를
+구성해 `guestEnabled=true`, `kakaoEnabled=true`, `appleEnabled=false`를
+반환합니다. 이는 server config 준비 상태이며 실제 iPhone의 KakaoTalk 성공·취소·
+browser fallback과 refresh/logout/account deletion E2E를 대신하지 않습니다.
 
 무료 쿼터 적용 범위, 초과 과금과 비즈월렛 필요 여부는 앱·계정 상태에 따라
 달라질 수 있습니다. 저장소 문서의 고정 날짜나 추정 정책으로 판단하지 말고
@@ -204,6 +229,8 @@ Cloud provider 변경 시 outbound IP를 다시 확인합니다.
 - [Kakao Map REST API](https://developers.kakao.com/docs/ko/kakaomap/rest-api)
 - [Kakao REST API 호출 허용 IP](https://developers.kakao.com/docs/ko/rest-api/getting-started)
 - [Kakao 앱 설정](https://developers.kakao.com/docs/ko/app-setting/app)
+- [Kakao 앱 key 환경별 추가 변경](https://developers.kakao.com/docs/en/getting-started/app-key-migration)
+- [Kakao access token 정보](https://developers.kakao.com/docs/en/kakaologin/rest-api#retrieve-token-info)
 - [Kakao Mobility 다중 경유지 길찾기](https://developers.kakaomobility.com/guide/navi-api/waypoints.html)
 
 설정이 정확한데도 403이 계속되면 앱 OWNER 계정으로 DevTalk 지도/로컬 API

@@ -1,11 +1,11 @@
 # NAVER 지도와 Geocoding
 
 NAVER는 Web·iOS·Android 지도 렌더링과 Kakao 주소 검색 보완을 담당합니다.
-Web Dynamic Map과 서버 REST API는 같은 Application을 사용할 수 있지만 native
-SDK는 quota·과금·application identity를 분리합니다. 브라우저·서버·native
-자격 증명의 노출 범위를 엄격히 구분합니다.
+NAVER Cloud는 한 Application에서 여러 환경·플랫폼을 등록할 수 있지만 CHIMap은
+Web/REST, iOS, Android native identity를 운영 정책상 분리합니다. 브라우저·서버·
+native 자격 증명의 노출 범위도 엄격히 구분합니다.
 
-이 문서는 현재 작업 트리의 구현과 2026-07-26에 확인한 NAVER Cloud 공식
+이 문서는 현재 작업 트리의 구현과 2026-07-27에 확인한 NAVER Cloud 공식
 문서를 기준으로 합니다. 실제 공개 asset 반영 여부는
 [구현·운영 현황](./current-state.md)에서 별도로 관리합니다.
 
@@ -25,6 +25,13 @@ Web 및 서로의 Client ID를 재사용하지 않고 각각 별도 Maps Applica
 production Expo config는 Web Client ID가 전달됐는데 native ID와 같으면 build를
 거절하며 iOS·Android ID가 같아도 항상 거절합니다.
 
+내부 staging의 Web Dynamic Map과 서버 REST는 현재 production Web/REST
+Application 값을 재사용할 수 있습니다. 이 경우 Web 서비스 URL에
+`https://staging.chimap.madcamp-kaist.org`를 추가해야 하며, Client ID 기준
+사용량·과금·한도와 key rotation 영향은 production과 합산됩니다. 이는 API
+credential만 공유하는 것이며 production/staging의 PostgreSQL, 계정, session,
+추천 데이터가 합쳐진다는 뜻은 아닙니다.
+
 Client Secret은 어떤 경우에도 `VITE_` 변수, Docker build argument, 정적
 asset, 문서와 로그에 넣지 않습니다. 서버 설정은 공개 ID와 Client Secret이
 같으면 기동을 거절합니다.
@@ -37,9 +44,11 @@ NAVER Cloud Platform에서:
 2. CHIMap Web/REST, iOS, Android Application을 각각 등록 또는 수정
 3. Web/REST에는 Dynamic Map, Geocoding, Reverse Geocoding 선택
 4. Web 서비스 URL에 `https://chimap.madcamp-kaist.org` 등록
-5. iOS Bundle ID와 Android package를 각 native Application에 정확히 등록
-6. 각 Application Client ID와 Web/REST Client Secret 확인
-7. Web·iOS·Android별 이용 한도와 임계치 알림 설정
+5. 같은 Web Application을 staging에서 재사용하면
+   `https://staging.chimap.madcamp-kaist.org`도 등록
+6. iOS Bundle ID와 Android package를 각 native Application에 정확히 등록
+7. 각 Application Client ID와 Web/REST Client Secret 확인
+8. Web·iOS·Android별 이용 한도와 임계치 알림 설정
 
 Web 서비스 URL에는 port와 path를 넣지 않습니다. localhost를 추가로
 사용하려면 콘솔 정책에 맞는 별도 URL을 등록합니다.

@@ -4,6 +4,11 @@
 성공·오류 응답은 `@chimap/contracts`의 Zod schema로 검증합니다. 익명 UI
 이벤트 성공만 본문 없는 `204 No Content`를 반환합니다.
 
+staging은 같은 계약의 `https://staging.chimap.madcamp-kaist.org`를 사용하지만
+별도 API process와 PostgreSQL volume에 연결됩니다. Web·iOS·Android가 한 환경의
+API를 함께 쓰는 것은 의도된 server data 공유이며, 서로 다른 환경의 계정·session·
+교통 seed가 자동으로 복제되지는 않습니다.
+
 계약 구현 기준은 `feat/mobile/cross-platform-foundation`이며, 공개 Web/API
 배포 기준은 별도로 [구현·운영 현황](./current-state.md)에 기록합니다. mobile
 endpoint와 migration이 코드에 존재한다는 사실과 실제 store release를 구분합니다.

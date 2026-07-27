@@ -14,6 +14,12 @@ TAGO 식별자, 노선과 노선-정류장 순서 같은 정적 교통 데이터
 로그인한 경우의 최소 계정·web/mobile session, refresh token
 family와 암호화된 retry credential만 저장합니다.
 
+production과 staging은 schema 계약과 migration 코드는 같지만 서로 다른 Compose
+project·network·PostgreSQL volume을 사용합니다. Web·iOS·Android는 선택한 환경의
+API를 통해 그 환경 안의 계정과 기준 데이터를 공유합니다. production dump를
+staging에 복원하거나 양쪽 DB를 동기화하는 작업은 기본 운영 절차에 포함하지
+않으며, 필요한 테스트 fixture와 교통 seed만 staging에 별도로 적재합니다.
+
 다음 정보는 영구 저장하지 않습니다.
 
 - 사용자의 검색어와 자동완성 결과

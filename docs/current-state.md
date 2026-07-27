@@ -4,17 +4,23 @@
 
 - **현재 구현**: `feat/mobile/cross-platform-foundation`의 Web/API/Mobile 공통
   계약, Expo iOS·Android 앱, 모바일 token family와 lifecycle persistence까지
-  포함합니다. 2026-07-27에 결정적 테스트 182개, 격리 PostGIS 8개, 전체
+  포함합니다. 2026-07-27에 결정적 테스트 191개, 격리 PostGIS 8개, 전체
   typecheck/build, Android arm64 native compile과 GitHub의 iOS simulator·Android
   전체 ABI compile을 통과했습니다. 실제 iPhone/Android Development Build와
   store archive는 외부 release gate로 남습니다.
-- **현재 공개 배포**: 2026-07-27 14:28 KST에 commit `96e2549` 소스의 이미지
-  `sha256:f497c9a5…`로 API/웹·alert relay를 교체했습니다. 공개 asset
-  `index-BjbF61pt.js`, WebP 버스 marker·지도 시점 안정화, 주변 지하철 안내,
-  migration 7과 TAGO 지하철 API를 health/readiness와 strict E2E로 확인했습니다.
+- **현재 공개 배포**: 2026-07-27 15:51 KST에 commit `7a99e03` 소스의 이미지
+  `sha256:6cbd51c8…`로 API/웹·alert relay를 교체했습니다. 이 이미지에는 지하철
+  routing 안정화와 보정 경로의 시간표 metadata 보존 수정이 포함됩니다. 16:48
+  KST production health HTTP 200을 재확인했고, 아래 전체 DB·E2E·복구 기록은
+  별도로 명시한 14:29 KST 검증 스냅샷을 기준으로 합니다.
 - **마지막 전체 운영 점검**: 2026-07-27 14:29 KST에 컨테이너, PostgreSQL,
   migration 7, 지하철 1,097개 import·706개 TAGO 매핑, 배포 후 백업·전체 복원,
   모니터링, 공개 E2E와 인증·mobile config smoke를 대조했습니다.
+- **현재 staging**: `compose.staging.yml`의 별도 project와
+  `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
+  external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
+  정류장 227,054개만 우선 적재됐고 노선·관계·지하철이 없어 readiness는 아직
+  HTTP 503입니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -104,7 +110,7 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:f497c9a5…`, code commit `96e2549`), 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:6cbd51c8…`, code commit `7a99e03`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, migration 7, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, 구성 지표 `0`, 외부 webhook 입력 대기 |
@@ -120,7 +126,7 @@
 | foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
 | 공개 웹 asset | `index-BjbF61pt.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
-| 모바일 인증 | `/mobile-config` guest enabled, 운영 Kakao/Apple credential 입력 전이라 두 provider disabled |
+| 모바일 인증 | production 14:29 snapshot은 guest만 enabled, staging 16:48 snapshot은 guest/Kakao enabled·Apple disabled |
 | 기본 브랜치 | `main`은 아직 초기 commit, draft PR #1 열림, 병합·보호 규칙 설정 대기 |
 | 공개 번들 비밀값 검사 | NAVER·Kakao·TAGO·DB·CHIMap session 서버 비밀값 미검출 |
 
@@ -260,6 +266,31 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 포함하지 않습니다. 최종 store 완료 조건은 실제 기기 NAVER/Kakao/Apple/health,
 process eviction과 TestFlight/Play release E2E입니다.
 
+### Staging Web/API와 iOS 연결
+
+- hostname: `staging.chimap.madcamp-kaist.org`
+- Cloudflare origin: `http://127.0.0.1:3001`
+- Compose project: `chimap-staging`
+- PostgreSQL volume: `chimap-staging-postgres`
+- production의 `chimap` project·network·DB volume과 분리
+- API image source: `7a99e03`, image `sha256:7befecd1…`
+- database connected, PostGIS·migration current
+- Kakao/NAVER/TAGO provider configured
+- mobile config: guest/Kakao true, Apple false
+- 정류장 227,054개·TAGO 연결 7개, 노선/관계/지하철 0으로 readiness 503
+
+같은 staging API를 Web, iOS, Android가 사용하므로 server account와 기준 데이터를
+공유하되, UI persistence와 token은 environment·OS·user namespace를 유지합니다.
+교통 seed 완료와 readiness 200 전에는 실제 추천 E2E를 완료로 처리하지 않습니다.
+[staging 환경 운영서](./staging-environment.md)에 기동·적재·중지 절차를
+기록합니다.
+
+iOS 로컬 기준은 iOS 17+ iPhone 12 Pro, 390×844pt reference, iPhone-only,
+portrait입니다. 첫 내부 TestFlight는 staging bundle에서 guest·HealthKit·Kakao와
+refresh/logout/account deletion까지 검증하고 Apple 코드는 유지한 채 server flag로
+숨깁니다. 현재 `app.config.ts`의 Light 고정과 built-in deployment target 17.0,
+EAS store/preview와 App Store Connect ID는 아직 후속 작업입니다.
+
 ### 운영
 
 - PostgreSQL host port 미노출
@@ -277,8 +308,9 @@ process eviction과 TestFlight/Play release E2E입니다.
 
 ## 5. 검증 기록
 
-로컬 검증은 2026-07-27 code commit `96e2549`, 최신 공개 검증은 14:28 KST에
-배포된 같은 commit의 Web/API 이미지를 대상으로 합니다.
+마지막 전체 로컬·공개 검증은 2026-07-27 code commit `96e2549`와 14:28 KST
+Web/API 이미지를 대상으로 합니다. 이후 `7a99e03` 이미지는 production/staging
+health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snapshot을 기준으로 합니다.
 
 | 검증 | 결과 |
 | --- | --- |
@@ -287,7 +319,7 @@ process eviction과 TestFlight/Play release E2E입니다.
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| 최신 전체 로컬 검사 | 경계·format·typecheck, 결정적 테스트 182개, 격리 PostGIS 8개 통과 |
+| 최신 전체 로컬 검사 | 17:01 KST 경계·format·typecheck, 결정적 테스트 191개, 격리 PostGIS 8개 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile 통과. iPhone/Android Development Build 검증 대기 |
@@ -398,6 +430,14 @@ UI의 운영 소스는 `96e2549 Add live transit tracking and subway schedules`�
 같은 foundation 브랜치에 push했습니다. 동일 소스 이미지
 `sha256:f497c9a5…`를 2026-07-27 14:28 KST 공개 승격했습니다.
 
+지하철 routing과 보정 경로의 시간표 metadata 보존은 `052dac6`, `7a99e03`으로
+같은 foundation branch에 push했습니다. `7a99e03`의 production image
+`sha256:6cbd51c8…`와 staging image `sha256:7befecd1…`를 15:51 KST에 build했고,
+production은 15:51, staging은 16:37 KST에 각각 기동했습니다. 16:48 KST 두
+공개 hostname의 health HTTP 200을 확인했습니다. staging readiness는 교통 seed
+미완료 때문에 503이며 production 전체 회귀·백업 검증 시각은 앞선 14:29 KST
+기록과 구분합니다.
+
 기본 브랜치 `main`은 `321ef96`으로 아직 초기 상태이며 보호 설정도 꺼져
 있습니다. `feat/tago-transit`→`main` draft PR #1이 열려 있으며, 검토·병합,
 병합 후 수동 `Public live E2E`와 foundation 다섯 CI job의 필수 check 지정이
@@ -405,6 +445,12 @@ UI의 운영 소스는 `96e2549 Add live transit tracking and subway schedules`�
 
 ## 9. 현재 한계와 확장 조건
 
+- staging은 HTTPS/API/auth와 정류장 import까지 준비됐지만 노선·노선 관계·지하철
+  seed가 없어 readiness 503입니다. 실제 추천과 iPhone E2E 전에
+  [staging 환경 운영서](./staging-environment.md)의 적재 절차를 완료해야 합니다.
+- iOS는 CNG/CI 기반이 구현됐지만 iPhone 12 Pro 실기기, Light 고정,
+  deployment target 17.0, staging App Store Connect/EAS store profile 검증이
+  남았습니다. [iOS 개발 운영서](./ios-development.md)를 release gate로 사용합니다.
 - 전국 정류장은 적재했지만 노선과 노선-정류장 관계는 사용 지역을 중심으로
   점진적으로 동기화합니다.
 - API는 프로세스 로컬 캐시와 rate limit을 사용하므로 단일 인스턴스로

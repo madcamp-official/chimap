@@ -1,6 +1,11 @@
 # CHIMap 최종 cross-platform 계획
 
-기준일: 2026-07-26
+> 현재 구현·배포 상태는 [구현·운영 현황](./current-state.md), staging 운용은
+> [staging 환경 운영서](./staging-environment.md), iOS 로컬 작업은
+> [iOS 개발 운영서](./ios-development.md)를 기준으로 합니다. 이 문서는 설계 결정과
+> 단계별 전환 범위를 보존하는 장기 계획입니다.
+
+기준일: 2026-07-27
 대상: Web, iOS, Android, 공통 Backend
 확정 모바일 기술: React Native + Expo Development Build
 제외: Expo Go, WebView 기반 앱, iOS SwiftUI 선행 후 Android 재작성
@@ -25,6 +30,10 @@ CHIMap은 다음 네 단위로 운영한다.
 | Web | 선택 | 장소 검색·추천·지도 등 모든 핵심 기능 허용 |
 | iOS | 선택(Kakao/Apple) | 장소·추천·지도 핵심 기능 허용 |
 | Android | 선택(Kakao) | 장소·추천·지도 핵심 기능 허용 |
+
+첫 내부 iOS TestFlight에서는 iOS의 Apple 로그인 코드를 제거하지 않되 server
+`appleEnabled=false`로 UI를 숨기고 guest·HealthKit·Kakao·session lifecycle만
+release gate로 삼습니다. Apple 로그인은 외부 TestFlight 전 별도 gate입니다.
 
 모바일 개발은 실제 테스트 폰과 Xcode/Android Studio를 사용한다. 네이티브
 NAVER 지도, Kakao SDK, HealthKit/Health Connect가 필요하므로 Expo Go는
@@ -820,7 +829,7 @@ recommendation failure, provider latency, DB pool, backup/restore에 alert를 �
 4. staging 실제 web login/cancel/logout E2E
 5. auth monitoring 추가
 6. web/backend 운영 배포
-7. Apple/Kakao/NAVER 개발 credential을 development bundle ID에 등록
+7. Kakao/NAVER staging credential을 staging bundle ID에 등록하고 Apple UI는 flag로 숨김
 8. iPhone용 Expo Development Build 설치와 native SDK 기술 spike
 9. 실제 device에서 guest 추천, 선택 로그인, SecureStore와 grace retry 검증
 10. TestFlight
@@ -836,7 +845,8 @@ recommendation failure, provider latency, DB pool, backup/restore에 alert를 �
 
 - Web: 익명 전체 기능과 선택형 Kakao login이 공개 환경에서 동작
 - Backend: web cookie와 mobile bearer가 같은 user identity를 사용
-- iOS: guest+선택 Kakao/Apple login, HealthKit, NAVER map, 전체 추천 흐름 공개
+- iOS 내부 TestFlight: guest+선택 Kakao login, HealthKit, NAVER map, 전체 추천 흐름 공개
+- iOS 외부 TestFlight 전: 선택 Apple login과 grant lifecycle 추가 검증
 - Android: guest+선택 Kakao login, Health Connect, NAVER map, 전체 추천 흐름 공개
 - 세 frontend가 같은 versioned API contract를 사용
 - 각 frontend를 독립 build/deploy/rollback 가능

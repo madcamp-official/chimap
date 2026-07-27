@@ -1,0 +1,84 @@
+name: chimap-staging
+
+services:
+  postgres:
+    image: postgis/postgis:18-3.6-alpine@sha256:4f8df0958dd321f520f917be5d0b338802928e4e1ebc4720f774168f4bbc2836
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=30
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - internal
+
+  api:
+    image: chimap:staging
+    build:
+      context: .
+      args:
+        NAVER_MAP_BROWSER_CLIENT_ID: ${VITE_NAVER_MAP_NCP_KEY_ID:?VITE_NAVER_MAP_NCP_KEY_ID is required}
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      WEB_ORIGIN: https://staging.chimap.madcamp-kaist.org
+      WEB_DIST_PATH: /app/web
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SSL_MODE: disable
+      METRICS_ENABLED: "0"
+      APP_COMMIT_SHA: ${APP_COMMIT_SHA:-unknown}
+      SUBWAY_STATIONS_DATA_PATH: /data/subway_data.csv
+      SUBWAY_TOPOLOGY_DATA_DIR: /data/subway-topology
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/api/v1/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ports:
+      - 127.0.0.1:3001:3000
+    volumes:
+      - ./data/subway_data.csv:/data/subway_data.csv:ro
+      - ./data/subway_service_lines.csv:/data/subway-topology/subway_service_lines.csv:ro
+      - ./data/subway_line_stations.csv:/data/subway-topology/subway_line_stations.csv:ro
+      - ./data/subway_segments.csv:/data/subway-topology/subway_segments.csv:ro
+      - ./data/subway_headways_fallback.csv:/data/subway-topology/subway_headways_fallback.csv:ro
+      - ./data/subway_transfer_edges.csv:/data/subway-topology/subway_transfer_edges.csv:ro
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
+
+volumes:
+  postgres-data:
+    name: chimap-staging-postgres

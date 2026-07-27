@@ -49,13 +49,13 @@ git diff --check
 - contracts: 12개
 - app-core: 3개
 - alert-relay: 3개
-- API: 96개
-- web: 54개
+- API: 103개
+- web: 56개
 - mobile: 14개
-- 합계: 182개
+- 합계: 191개
 
 PostgreSQL 전용 8개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
-건너뜁니다. 격리 PostGIS까지 포함한 전체는 190개입니다.
+건너뜁니다. 격리 PostGIS까지 포함한 전체는 199개입니다.
 
 ## 3. 공급자 테스트
 
@@ -310,6 +310,21 @@ UI 전체 흐름:
 
 실기기 gate는 카카오톡 설치/미설치 복귀, Apple 로그인, NAVER 지도 렌더링,
 HealthKit/Health Connect 실제·빈 자료, 권한 거부, process eviction을 포함합니다.
+
+### 환경·플랫폼 격리 smoke
+
+- production과 staging의 Compose project, network, PostgreSQL volume 이름이 다름
+- staging API가 `127.0.0.1:3001`, production API가 `127.0.0.1:3000`에만 bind
+- 각 API의 `DATABASE_URL` host는 자기 Compose의 `postgres`이며 host DB port 미노출
+- staging 계정·session 생성이 production DB row 수를 바꾸지 않음
+- 같은 staging API를 쓰는 Web·iOS·Android는 server 계정·교통 seed를 공유함
+- mobile AsyncStorage/SecureStore key가 environment·OS·user hash별로 분리됨
+- iOS staging build에 production API host나 Android NAVER Client ID가 포함되지 않음
+- `.env`, `.env.staging`, `apps/mobile/.env.local`이 Git 추적·Docker image·공개 asset에 없음
+
+현재 staging은 health와 mobile config까지 통과했지만 노선·노선-정류장·지하철
+seed가 0이어서 readiness 503이 정상입니다. readiness 200과 추천 E2E는
+[staging 환경 운영서](./staging-environment.md)의 seed 완료 뒤 실행합니다.
 
 ## 12. 배포 보안 검사
 

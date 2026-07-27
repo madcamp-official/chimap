@@ -13,6 +13,12 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 이미지 승격에서도 반복합니다. iOS/Android 스토어 binary 배포는 이 Compose
 승격과 별도 release입니다.
 
+15:51 KST에는 지하철 routing과 보정 경로 metadata 수정을 포함한 `7a99e03`
+이미지 `sha256:6cbd51c8...`를 production에 기동했고 health 200을 재확인했습니다.
+마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
+staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
+사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
+
 ## 1. 사전 조건
 
 - Node.js 24, pnpm 10, Docker와 Docker Compose
@@ -49,12 +55,56 @@ NAVER_MAP_CLIENT_ID_IOS=
 NAVER_MAP_CLIENT_ID_ANDROID=
 KAKAO_NATIVE_APP_KEY=
 APP_ENV=development|staging|production
-EXPO_PUBLIC_API_BASE_URL=https://chimap.madcamp-kaist.org
+EXPO_PUBLIC_API_BASE_URL=https://<해당 환경의 API host>
 ```
 
 server `.env`의 Apple private key, NAVER Client Secret, refresh retry 암호화 key는
 mobile binary에 넣지 않습니다. Web/API Compose 승격은 App Store·Play 배포를
 자동으로 의미하지 않으며 각 mobile store artifact를 독립적으로 rollback합니다.
+`APP_ENV=staging`에는 staging 전용 API/DB만 연결하고 production host를 대입하지
+않습니다. production 주소는 production profile과 승인된 guest smoke에만 씁니다.
+
+내부 staging의 NAVER server/Web 세 값은 기존 Maps Application을 재사용할 수
+있으며 이 경우 Client ID 기준 사용량·과금·한도와 key rotation 영향이
+production과 합산됩니다. mobile native Client ID는 CHIMap release 정책상 Web과
+분리하고 iOS/Android도 서로 다른 Application을 사용합니다.
+
+Kakao는 CHIMap 서비스 앱 하나를 유지하고 `staging-server` REST key와
+`staging-mobile` Native key를 추가합니다. 두 환경의 key·허용 IP·callback·Bundle
+ID는 나누되 App ID와 앱 단위 동의·quota는 공유합니다. 완전히 다른 Kakao App
+ID가 필요한 경우에는 test app과 서비스 정책을 먼저 확인합니다.
+
+### Staging 기동 요약
+
+staging 명령에는 항상 두 파일을 함께 명시합니다.
+
+```bash
+docker compose \
+  --env-file .env.staging \
+  -f compose.staging.yml \
+  config --quiet
+
+export APP_COMMIT_SHA="$(git rev-parse HEAD)"
+docker compose \
+  --env-file .env.staging \
+  -f compose.staging.yml \
+  up -d --build --wait postgres api
+```
+
+고정 경계는 project `chimap-staging`, loopback 3001, volume
+`chimap-staging-postgres`입니다. `.env.staging`, production `.env`, 공개 교통 원본
+CSV는 commit하지 않습니다. `down -v`는 명시적인 staging DB 초기화 승인 없이는
+사용하지 않습니다.
+
+```bash
+curl -fsS http://127.0.0.1:3001/api/v1/health
+curl -fsS https://staging.chimap.madcamp-kaist.org/api/v1/health
+curl -fsS https://staging.chimap.madcamp-kaist.org/api/v1/mobile-config
+```
+
+readiness 200에는 공개 정류장 import뿐 아니라 노선·노선-정류장과 공급자 key가
+필요합니다. 지하철 기능 E2E 전에는 역·토폴로지 import와 TAGO 매핑도 완료합니다.
+전체 명령은 [staging 환경 운영서](./staging-environment.md)를 따릅니다.
 
 운영 배포 전:
 
@@ -307,7 +357,8 @@ systemctl list-timers --all \
 ## 10. 후보 이미지 smoke
 
 현재 운영 컨테이너를 바꾸기 전에 별도 loopback 포트에서 새 이미지를
-기동할 수 있습니다.
+기동할 수 있습니다. 3001은 staging origin이 사용하므로 후보 이미지는 3002를
+고정합니다.
 
 ```bash
 docker run --rm -d \
@@ -316,17 +367,17 @@ docker run --rm -d \
   --env-file .env \
   -e NODE_ENV=production \
   -e PORT=3000 \
-  -e WEB_ORIGIN=http://127.0.0.1:3001 \
+  -e WEB_ORIGIN=http://127.0.0.1:3002 \
   -e WEB_DIST_PATH=/app/web \
-  -p 127.0.0.1:3001:3000 \
+  -p 127.0.0.1:3002:3000 \
   --entrypoint sh \
   chimap:actual-data \
   -lc 'export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"; exec node dist/server.js'
 
-curl -fsS http://127.0.0.1:3001/api/v1/health
-curl -fsS http://127.0.0.1:3001/api/v1/readiness
-curl -fsS http://127.0.0.1:3001/api/v1/auth/session
-curl -fsS http://127.0.0.1:3001/api/v1/mobile-config
+curl -fsS http://127.0.0.1:3002/api/v1/health
+curl -fsS http://127.0.0.1:3002/api/v1/readiness
+curl -fsS http://127.0.0.1:3002/api/v1/auth/session
+curl -fsS http://127.0.0.1:3002/api/v1/mobile-config
 ```
 
 검증 후 정확한 `chimap-api-candidate` 컨테이너만 중지합니다. 같은 이름의
@@ -472,6 +523,22 @@ draft PR #1을 먼저 병합한 뒤 foundation branch를 갱신된 `main`에 reb
 - security: 추적 파일·공개 bundle·최근 운영 log에서 서버 비밀값 0건
 - monitoring: target 3개 `up`, rule 20개 healthy, Alertmanager ready,
   지하철 미매핑 gauge 391
+
+### 2026-07-27 지하철 routing 보정과 staging 기동 기록
+
+- source: `7a99e03057cf3764415a2d5114678c08eceb30dd`
+- production image: `sha256:6cbd51c8…`, 15:51 KST 기동
+- staging image: `sha256:7befecd1…`, 16:37 KST 기동
+- production/staging local·external health: 16:48 KST HTTP 200
+- staging project/volume: `chimap-staging` / `chimap-staging-postgres`
+- staging mobile config: guest/Kakao true, Apple false
+- staging database: PostGIS·migration current, provider 모두 configured
+- staging transit: 정류장 227,054개·연결 7개, 노선/관계/지하철 0
+- staging readiness: seed 미완료로 HTTP 503
+
+production의 마지막 전체 strict E2E·백업·restore는 앞선 14:29 KST 기록을
+유지합니다. staging은 [staging 환경 운영서](./staging-environment.md)의 노선·
+지하철 seed 뒤 readiness 200과 실제 추천을 별도로 검증합니다.
 
 ## 12. 공개 번들 비밀값 검사
 
