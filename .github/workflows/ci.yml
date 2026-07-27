@@ -1,0 +1,284 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: API and Web quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: |
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+          pnpm --filter @chimap/api typecheck
+          pnpm --filter @chimap/alert-relay typecheck
+          pnpm --filter @chimap/web typecheck
+
+      - name: Deterministic tests
+        run: |
+          pnpm boundaries:check
+          pnpm --filter @chimap/contracts test
+          pnpm --filter @chimap/app-core test
+          pnpm --filter @chimap/api test
+          pnpm --filter @chimap/alert-relay test
+          pnpm --filter @chimap/web test
+
+      - name: Production build
+        run: pnpm build
+
+      - name: First-party actual-data boundary
+        shell: bash
+        run: |
+          if grep -RniE '\b(mock|fake|dummy|demo)\b' \
+            apps packages scripts docs README.md \
+            Dockerfile .env.example package.json \
+            --exclude-dir=node_modules --exclude-dir=dist \
+            --exclude='*.test.ts' --exclude='*.test.tsx' \
+            --exclude='*.tsbuildinfo'; then
+            exit 1
+          fi
+
+      - name: Browser bundle secret boundary
+        shell: bash
+        run: |
+          if grep -RniE \
+            'KAKAO_REST_API_KEY|NAVER_MAP_NCP_KEY([^_I]|$)|DATA_GO_KR_SERVICE_KEY|TAGO_BUS_.*_SERVICE_KEY' \
+            apps/web/dist; then
+            exit 1
+          fi
+
+      - name: Validate Prometheus configuration
+        run: |
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/ops/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/ops/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
+            check rules /etc/prometheus/chimap-alerts.yml
+
+      - name: Validate Alertmanager configuration
+        run: |
+          docker run --rm \
+            --entrypoint /bin/amtool \
+            -v "$PWD/ops/alertmanager:/etc/alertmanager:ro" \
+            prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Validate Compose model
+        env:
+          POSTGRES_DB: chimap
+          POSTGRES_USER: chimap
+          POSTGRES_PASSWORD: ci-only-password
+          VITE_NAVER_MAP_NCP_KEY_ID: ci-public-client-id
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+  mobile:
+    name: Expo iOS and Android JavaScript quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: development
+      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
+      NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
+      EXPO_PUBLIC_API_BASE_URL: https://api.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared platform-neutral packages
+        run: |
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+
+      - name: Check native config and TypeScript
+        run: |
+          pnpm --filter @chimap/mobile exec expo config --type public
+          pnpm --filter @chimap/mobile exec expo prebuild --clean --no-install
+          node scripts/verify-mobile-native-config.mjs all
+          pnpm --filter @chimap/mobile typecheck
+
+      - name: Test lifecycle and platform adapters
+        run: pnpm --filter @chimap/mobile test
+
+      - name: Bundle iOS and Android JavaScript independently
+        run: pnpm --filter @chimap/mobile build
+
+  ios-native:
+    name: iOS native compile
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      APP_ENV: development
+      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
+      NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
+      EXPO_PUBLIC_API_BASE_URL: https://api.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies and build shared packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+
+      - name: Generate iOS and install CocoaPods
+        run: |
+          pnpm --filter @chimap/mobile exec expo prebuild --clean --platform ios --no-install
+          node scripts/verify-mobile-native-config.mjs ios
+          cd apps/mobile/ios
+          pod install
+
+      - name: Compile unsigned iOS simulator app
+        run: >-
+          xcodebuild
+          -workspace apps/mobile/ios/CHIMapDev.xcworkspace
+          -scheme CHIMapDev
+          -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  android-native:
+    name: Android native compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      APP_ENV: development
+      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
+      NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
+      EXPO_PUBLIC_API_BASE_URL: https://api.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies and build shared packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @chimap/contracts build
+          pnpm --filter @chimap/app-core build
+          pnpm --filter @chimap/design-tokens build
+
+      - name: Generate and compile Android debug app
+        run: |
+          pnpm --filter @chimap/mobile exec expo prebuild --clean --platform android --no-install
+          node scripts/verify-mobile-native-config.mjs android
+          cd apps/mobile/android
+          ./gradlew :app:assembleDebug --no-daemon --max-workers=2
+
+  postgis:
+    name: PostgreSQL and PostGIS integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6-alpine@sha256:4f8df0958dd321f520f917be5d0b338802928e4e1ebc4720f774168f4bbc2836
+        env:
+          POSTGRES_DB: chimap_test
+          POSTGRES_USER: chimap_test
+          POSTGRES_PASSWORD: chimap_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chimap_test -d chimap_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared contracts
+        run: pnpm --filter @chimap/contracts build
+
+      - name: Run real-data PostGIS scenarios
+        env:
+          DATABASE_TEST_URL: postgresql://chimap_test:chimap_test@127.0.0.1:5432/chimap_test
+        run: >-
+          pnpm --filter @chimap/api exec vitest run
+          src/transit/transit-repository.integration.test.ts
+          src/auth/mobile-auth-repository.integration.test.ts

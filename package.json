@@ -1,0 +1,40 @@
+{
+  "name": "chimap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "목적지는 그대로, 가는 길은 더 건강하게.",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "pnpm@10.15.1",
+  "scripts": {
+    "build": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm --filter @chimap/api build && pnpm --filter @chimap/alert-relay build && pnpm --filter @chimap/web build",
+    "build:mobile": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm --filter @chimap/mobile build",
+    "build:all": "pnpm build && pnpm build:mobile",
+    "dev": "pnpm --filter @chimap/contracts build && pnpm --parallel --filter @chimap/api --filter @chimap/web dev",
+    "format:check": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r format:check",
+    "boundaries:check": "node scripts/check-workspace-boundaries.mjs",
+    "tago:health": "pnpm --filter @chimap/api tago:health",
+    "tago:test-nearby": "pnpm --filter @chimap/api tago:test-nearby",
+    "tago:test-arrivals": "pnpm --filter @chimap/api tago:test-arrivals",
+    "tago:test-route-stops": "pnpm --filter @chimap/api tago:test-route-stops",
+    "tago:test-vehicles": "pnpm --filter @chimap/api tago:test-vehicles",
+    "bus:import-stops": "pnpm --filter @chimap/api bus:import-stops",
+    "bus:sync-route": "pnpm --filter @chimap/api bus:sync-route",
+    "bus:sync-area": "pnpm --filter @chimap/api bus:sync-area",
+    "bus:sync-areas": "pnpm --filter @chimap/api bus:sync-areas",
+    "bus:stats": "pnpm --filter @chimap/api bus:stats",
+    "subway:import-stations": "pnpm --filter @chimap/api subway:import-stations",
+    "subway:import-topology": "pnpm --filter @chimap/api subway:import-topology",
+    "subway:import-provider-map": "pnpm --filter @chimap/api subway:import-provider-map",
+    "transit:build-transfers": "pnpm --filter @chimap/api transit:build-transfers",
+    "subway:sync-stations": "pnpm --filter @chimap/api subway:sync-stations",
+    "subway:test-departures": "pnpm --filter @chimap/api subway:test-departures",
+    "subway:stats": "pnpm --filter @chimap/api subway:stats",
+    "test": "pnpm boundaries:check && pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present test",
+    "test:coverage": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present test:coverage",
+    "test:e2e": "pnpm --filter @chimap/web test:e2e",
+    "typecheck": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present typecheck"
+  }
+}

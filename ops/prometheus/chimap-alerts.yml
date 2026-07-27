@@ -1,0 +1,218 @@
+groups:
+  - name: chimap-availability
+    rules:
+      - alert: ChimapApiMetricsDown
+        expr: up{job="chimap-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap API metrics endpoint is unavailable
+          description: Prometheus could not scrape the internal CHIMap API for 2 minutes.
+
+      - alert: ChimapDatabaseNotReady
+        expr: chimap_database_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap PostgreSQL readiness failed
+          description: PostgreSQL, PostGIS, or the migration checksum is not ready.
+
+      - alert: ChimapProviderConfigurationMissing
+        expr: chimap_provider_configured == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap provider configuration is incomplete
+          description: A required Kakao, NAVER, or TAGO credential is missing.
+
+      - alert: ChimapAlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap Alertmanager is unavailable
+          description: Prometheus could not reach Alertmanager for 2 minutes.
+
+      - alert: ChimapAlertRelayDown
+        expr: up{job="chimap-alert-relay"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap alert relay is unavailable
+          description: Alertmanager cannot hand alerts to the external notification relay.
+
+      - alert: ChimapAlertDeliveryNotConfigured
+        expr: |
+          chimap_alert_relay_enabled == 1
+          and on(provider)
+          chimap_alert_relay_configured == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap external alert destination is not configured
+          description: Set ALERT_NOTIFICATION_PROVIDER and ALERT_WEBHOOK_URL, then recreate alert-relay.
+
+      - alert: ChimapAlertDeliveryFailed
+        expr: |
+          increase(chimap_alert_relay_delivery_total{outcome="error"}[10m]) > 0
+          and on(provider)
+          chimap_alert_relay_configured == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap external alert delivery failed
+          description: The configured operator webhook rejected or timed out while receiving an alert.
+
+  - name: chimap-api-quality
+    rules:
+      - alert: ChimapHttp5xxRatioHigh
+        expr: |
+          (
+            sum(rate(chimap_http_requests_total{status_class="5xx"}[5m]))
+            /
+            clamp_min(sum(rate(chimap_http_requests_total[5m])), 0.001)
+          ) > 0.05
+          and
+          sum(increase(chimap_http_requests_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap 5xx ratio is above 5%
+          description: More than 5% of API requests failed with 5xx responses for 5 minutes.
+
+      - alert: ChimapApiP95Slow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(chimap_http_request_duration_seconds_bucket[5m])
+            )
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap API p95 latency is above 10 seconds
+          description: The API p95 latency remained above 10 seconds for 5 minutes.
+
+      - alert: ChimapRateLimitObserved
+        expr: increase(chimap_http_requests_total{status="429"}[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap or an upstream provider returned 429
+          description: At least one rate-limit response occurred in the last 10 minutes.
+
+      - alert: ChimapPlaceEmptyRatioHigh
+        expr: |
+          (
+            sum(rate(chimap_place_search_requests_total{outcome="empty"}[15m]))
+            /
+            clamp_min(sum(rate(chimap_place_search_requests_total[15m])), 0.001)
+          ) > 0.5
+          and
+          sum(increase(chimap_place_search_requests_total[15m])) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap place-search empty result ratio is high
+          description: More than half of place searches returned no result.
+
+      - alert: ChimapNaverFallbackRatioHigh
+        expr: |
+          (
+            sum(rate(chimap_place_search_requests_total{provider="NAVER",fallback="true"}[15m]))
+            /
+            clamp_min(sum(rate(chimap_place_search_requests_total[15m])), 0.001)
+          ) > 0.25
+          and
+          sum(increase(chimap_place_search_requests_total[15m])) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: NAVER address fallback ratio is above 25%
+          description: Kakao results may be degraded or address-heavy traffic increased.
+
+      - alert: ChimapDatabasePoolWaiting
+        expr: chimap_database_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap PostgreSQL pool has waiting requests
+          description: Requests have waited for a PostgreSQL connection for 5 minutes.
+
+      - alert: ChimapTagoTimeout
+        expr: increase(chimap_api_errors_total{provider="TAGO",code="UPSTREAM_TIMEOUT"}[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: TAGO request timeout observed
+          description: A TAGO request timed out in the last 10 minutes.
+
+  - name: chimap-backup
+    rules:
+      - alert: ChimapBackupMissing
+        expr: chimap_backup_last_success_timestamp_seconds == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap PostgreSQL backup status is missing
+          description: The API cannot read a successful backup status file.
+
+      - alert: ChimapBackupStale
+        expr: time() - chimap_backup_last_success_timestamp_seconds > 129600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: CHIMap PostgreSQL backup is older than 36 hours
+          description: No successful daily backup has been recorded for 36 hours.
+
+      - alert: ChimapBackupUnexpectedlySmall
+        expr: chimap_backup_last_size_bytes < 1048576
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap PostgreSQL backup is unexpectedly small
+          description: The latest backup is smaller than 1 MiB.
+
+  - name: chimap-transit-sync
+    rules:
+      - alert: ChimapTransitSyncMissing
+        expr: chimap_transit_sync_last_success_timestamp_seconds == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap scheduled transit sync has no successful record
+          description: Run the transit sync service and inspect its systemd journal.
+
+      - alert: ChimapTransitSyncStale
+        expr: time() - chimap_transit_sync_last_success_timestamp_seconds > 129600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap scheduled transit data is stale
+          description: No fully successful route and route-stop refresh was recorded for 36 hours.
+
+      - alert: ChimapTransitSyncFailed
+        expr: chimap_transit_sync_last_attempt_success == 0 and chimap_transit_sync_last_success_timestamp_seconds > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: CHIMap scheduled transit sync failed
+          description: The latest refresh had failed routes; existing real data remains available.

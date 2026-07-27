@@ -1,0 +1,14 @@
+[Unit]
+Description=CHIMap daily PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/chimap
+Environment=CHIMAP_REPO_ROOT=/root/chimap
+ExecStart=/root/chimap/ops/backup-postgres.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077

@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify CHIMap PostgreSQL backup every month
+
+[Timer]
+OnCalendar=*-*-01 04:30:00 Asia/Seoul
+RandomizedDelaySec=30m
+Persistent=true
+Unit=chimap-backup-verify.service
+
+[Install]
+WantedBy=timers.target

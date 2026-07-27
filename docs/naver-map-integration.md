@@ -1,0 +1,242 @@
+# NAVER 지도와 Geocoding
+
+NAVER는 Web·iOS·Android 지도 렌더링과 Kakao 주소 검색 보완을 담당합니다.
+NAVER Cloud는 한 Application에서 여러 환경·플랫폼을 등록할 수 있지만 CHIMap은
+Web/REST, iOS, Android native identity를 운영 정책상 분리합니다. 브라우저·서버·
+native 자격 증명의 노출 범위도 엄격히 구분합니다.
+
+이 문서는 현재 작업 트리의 구현과 2026-07-27에 확인한 NAVER Cloud 공식
+문서를 기준으로 합니다. 실제 공개 asset 반영 여부는
+[구현·운영 현황](./current-state.md)에서 별도로 관리합니다.
+
+## 1. 자격 증명
+
+| 변수 | 위치 | 값 |
+| --- | --- | --- |
+| `VITE_NAVER_MAP_NCP_KEY_ID` | 브라우저 bundle | 공개 Client ID |
+| `NAVER_MAP_NCP_KEY_ID` | 서버 runtime | REST 요청 Client ID |
+| `NAVER_MAP_NCP_KEY` | 서버 runtime | Client Secret |
+| `NAVER_MAP_CLIENT_ID_IOS` | iOS binary/Info.plist | iOS 전용 공개 Client ID |
+| `NAVER_MAP_CLIENT_ID_ANDROID` | Android binary/manifest | Android 전용 공개 Client ID |
+
+같은 Web/REST Maps Application에서 Dynamic Map, Geocoding, Reverse Geocoding을
+선택했다면 Web·server ID는 같은 Client ID를 사용할 수 있습니다. iOS와 Android는
+Web 및 서로의 Client ID를 재사용하지 않고 각각 별도 Maps Application을 사용합니다.
+production Expo config는 Web Client ID가 전달됐는데 native ID와 같으면 build를
+거절하며 iOS·Android ID가 같아도 항상 거절합니다.
+
+내부 staging의 Web Dynamic Map과 서버 REST는 현재 production Web/REST
+Application 값을 재사용할 수 있습니다. 이 경우 Web 서비스 URL에
+`https://staging.chimap.madcamp-kaist.org`를 추가해야 하며, Client ID 기준
+사용량·과금·한도와 key rotation 영향은 production과 합산됩니다. 이는 API
+credential만 공유하는 것이며 production/staging의 PostgreSQL, 계정, session,
+추천 데이터가 합쳐진다는 뜻은 아닙니다.
+
+Client Secret은 어떤 경우에도 `VITE_` 변수, Docker build argument, 정적
+asset, 문서와 로그에 넣지 않습니다. 서버 설정은 공개 ID와 Client Secret이
+같으면 기동을 거절합니다.
+
+## 2. Maps Application 설정
+
+NAVER Cloud Platform에서:
+
+1. Application Services→Maps→Application
+2. CHIMap Web/REST, iOS, Android Application을 각각 등록 또는 수정
+3. Web/REST에는 Dynamic Map, Geocoding, Reverse Geocoding 선택
+4. Web 서비스 URL에 `https://chimap.madcamp-kaist.org` 등록
+5. 같은 Web Application을 staging에서 재사용하면
+   `https://staging.chimap.madcamp-kaist.org`도 등록
+6. iOS Bundle ID와 Android package를 각 native Application에 정확히 등록
+7. 각 Application Client ID와 Web/REST Client Secret 확인
+8. Web·iOS·Android별 이용 한도와 임계치 알림 설정
+
+Web 서비스 URL에는 port와 path를 넣지 않습니다. localhost를 추가로
+사용하려면 콘솔 정책에 맞는 별도 URL을 등록합니다.
+
+API가 선택되지 않으면 429 Quota Exceeded로 보일 수 있으므로 실제 사용량만
+확인하지 말고 Application의 API 선택 상태도 확인합니다.
+
+## 3. Web Dynamic Map
+
+SDK 요청:
+
+```text
+https://oapi.map.naver.com/openapi/v3/maps.js
+  ?ncpKeyId=${VITE_NAVER_MAP_NCP_KEY_ID}
+  &callback=__chimapNaverMapsReady
+```
+
+현재 로더:
+
+- script element ID를 고정해 중복 load 방지
+- load timeout 12초
+- namespace 확인 후 500ms 인증 안정화
+- `navermap_authFailure` 감지
+- 실패 시 script·map·overlay 정리
+- 사용자 재시도 시 SDK 재요청
+
+지도에는 추천 경로 polyline, 출발·도착, 운동 구간, 첫 승차·환승·최종
+하차를 표시합니다. 차량은 도착 600초 이하일 때 승차 전 가장 가까운 1대와
+승차~하차 정류장 순서 안에서 운행 중인 모든 차량을 중복 없이 표시합니다.
+버스 중간 정류장은 마커로 표시하지 않습니다. 버스 polyline은
+TAGO 정류장 순서를 Kakao Mobility Directions 도로 vertex에 매칭한 좌표를
+사용합니다. 순서를 모르는 차량, 승차 전 ETA가 600초를 넘는 차량과 하차
+지점을 지난 차량은 표시하지 않으며 차량 좌표는 지도 bounds 계산에서
+제외합니다.
+
+차량 marker는 240×240 RGBA 원본 `bus_icon.webp`를 60×60 CSS marker로
+사용합니다. 중앙에는 흰 전광판을 겹치고 길이에 따라 축소한 검은색 굵은 노선번호를
+겹치고, 이미지 alt는 비우되 marker role/title에는 도착 분 또는 `이동 구간
+운행 중` 상태를 제공합니다. anchor는 이미지 하단 중앙입니다. SVG fallback도
+같은 PNG와 노선번호·title 규칙을 사용합니다.
+
+경로 polyline·출발/도착·승하차 marker와 차량 marker는 별도 overlay 배열로
+관리합니다. 차량 query는 화면이 보일 때 10초마다 다시 조회하지만 차량
+overlay만 교체합니다. camera signature는 추천 request ID, 선택 route ID,
+출발·도착과 route geometry를 포함하며 signature가 바뀌거나 SDK 재시도를 한
+경우에만 `fitBounds`/`setCenter`/`setZoom`을 실행합니다. 카드 hover/focus와
+차량·도착정보 갱신은 사용자가 이동한 중심과 줌을 바꾸지 않습니다.
+
+여러 추천을 동시에 비교할 때 선택하지 않은 경로는 opacity 0.18, 카드
+hover/focus 경로는 0.55, 선택 경로는 0.95로 그립니다. 카드 선택·hover·
+focus와 지도 경로는 같은 route ID로 동기화됩니다. SDK fallback SVG는 같은
+추천 좌표와 0.18/0.55/1.0 규칙을 사용합니다. OS 또는 서비스 설정에서 동작
+줄이기가 활성화되면 경로 그리기·opacity 전환과 위치 이동 animation을
+제거합니다.
+
+SDK 인증·network·timeout 장애가 발생해도 추천 데이터는 제거하지 않습니다.
+동일 추천 응답의 실제 좌표를 SVG로 표시하고 카드와 텍스트 이동 단계를
+유지합니다.
+
+### 3.1 iOS·Android Native Map
+
+`app.config.ts`는 iOS Client ID를 `Info.plist`의 `NMFNcpKeyId`, Android Client
+ID를 manifest의 `com.naver.maps.map.NCP_KEY_ID` metadata에 각각 주입합니다.
+두 값을 `extra`나 JavaScript public config 하나로 합치지 않습니다. CNG 생성 후
+다음을 각각 실행해 반대 OS ID가 binary 설정에 섞이지 않았는지 확인합니다.
+
+```bash
+node scripts/verify-mobile-native-config.mjs ios
+node scripts/verify-mobile-native-config.mjs android
+```
+
+Android NAVER Maven repository는 `com.naver.maps` group에만 exclusive하게 적용해
+Fresco·React Native 같은 공통 artifact가 NAVER repository에서 resolve되지 않게
+합니다. 실제 rendering과 quota 인증은 Expo Go가 아닌 Development Build와 실제
+iPhone/Android 기기에서 최종 확인합니다.
+
+## 4. 서버 Geocoding
+
+공통 host:
+
+```text
+https://maps.apigw.ntruss.com
+```
+
+요청 header:
+
+```http
+x-ncp-apigw-api-key-id: ${NAVER_MAP_NCP_KEY_ID}
+x-ncp-apigw-api-key: ${NAVER_MAP_NCP_KEY}
+Accept: application/json
+```
+
+endpoint:
+
+| 목적 | endpoint |
+| --- | --- |
+| 주소→좌표 | `GET /map-geocode/v2/geocode` |
+| 좌표→주소 | `GET /map-reversegeocode/v2/gc` |
+
+이전 `naveropenapi.apigw.ntruss.com` host를 사용하지 않습니다.
+
+Geocoding은 최대 10개 결과 중 요청 limit만 사용하고 건물명→도로명→지번
+순서로 Place 이름을 구성합니다. Reverse Geocoding은
+`roadaddr,addr,admcode,legalcode` 순서로 요청해 상세 주소가 없는 지역도
+행정·법정동을 확인할 수 있게 합니다.
+
+## 5. 보완 조건
+
+NAVER 서버 API는 다음 경우에만 호출합니다.
+
+- Kakao 주소 결과 0건
+- Kakao timeout
+- Kakao network 오류
+- Kakao 429
+- Kakao 5xx
+
+Kakao 400·401·403은 설정 오류를 숨기지 않고 즉시 실패합니다.
+NAVER Geocoding은 주소와 건물 주소만 제공하며 일반 상호명 POI 검색을
+대체하지 않습니다.
+
+NAVER까지 정상 0건이면 검색은 빈 목록, 역지오코딩은 `place: null`을
+반환합니다. NAVER 자체가 실패하면 정상 0건으로 숨기지 않습니다.
+
+## 6. 오류 처리
+
+| HTTP/상태 | 처리 | 운영 확인 |
+| --- | --- | --- |
+| 200 + 정상 결과 | 정규화 | 결과 수 |
+| 200 + 정상 0건 | `NONE` 또는 `place:null` | query/좌표 |
+| 400 | 공급자 오류 | parameter |
+| 401/403 | 즉시 설정 오류 | ID·Secret·Application |
+| 429 | 한 번 제한 재시도 | API 선택·quota·throttle |
+| 500/502/503/504 | 한 번 제한 재시도 | 서비스 상태 |
+| timeout/network | 한 번 제한 재시도 | outbound/network |
+
+NAVER REST timeout은 3초이고 최대 두 번 시도합니다.
+
+host에서는 연결되지만 Docker 컨테이너에서 TLS handshake만 timeout 되면
+인증보다 먼저 bridge path MTU를 확인합니다. CHIMap Compose network는
+다음 값을 고정합니다.
+
+```yaml
+driver_opts:
+  com.docker.network.driver.mtu: "1400"
+```
+
+변경 후 network를 실제로 재생성하고 운영 컨테이너 안에서 geocode와 reverse
+HTTP 200을 다시 확인합니다. host 호출 성공만으로 서버 보완 경로가
+정상이라고 판정하지 않습니다.
+
+## 7. 배포 전·후 검증
+
+배포 전:
+
+1. 알려진 주소→좌표 HTTP 200
+2. KAIST 인근 좌표→주소 HTTP 200
+3. 공개 Client ID와 서버 Client Secret이 다른지 확인
+4. 운영 URL에 port/path가 없는지 확인
+
+배포 후:
+
+1. `/v3/auth` 및 SDK load 성공
+2. map instance 생성
+3. 추천 polyline과 marker 표시
+4. WebP 차량 marker와 흰 전광판·검은 노선번호·접근성 title 표시
+5. 차량을 두 번 이상 갱신해도 camera fit 횟수와 사용자가 바꾼 시점 유지
+6. `E2E_REQUIRE_NAVER_MAP=1` Playwright 통과
+7. 공개 JavaScript asset에서 서버 Client Secret 미검출
+
+## 8. Client Secret 재발급
+
+과거 bundle 노출 가능성이 있는 Client Secret은 재사용하지 않습니다.
+
+1. Maps Application→인증 정보
+2. Client Secret `[재발급]`
+3. `.env`의 `NAVER_MAP_NCP_KEY`만 교체
+4. API 재build·재배포
+5. geocode/reverse와 strict 지도 E2E 재검증
+6. 공개 asset 비밀값 검사
+
+Client ID는 Web Dynamic Map 인증에 쓰이는 공개 식별자이지만 Client Secret은
+서버 밖으로 노출하지 않습니다.
+
+## 9. 공식 참고자료
+
+- [NAVER Maps Application](https://guide.ncloud-docs.com/docs/application-maps-app-vpc)
+- [NAVER Maps API 공통 설정](https://api.ncloud-docs.com/docs/application-maps-overview)
+- [NAVER Geocoding](https://api.ncloud-docs.com/docs/ko/application-maps-geocoding)
+- [NAVER Reverse Geocoding](https://api.ncloud-docs.com/docs/application-maps-reversegeocoding)
+- [NAVER 지도 JavaScript Client ID](https://navermaps.github.io/maps.js.ncp/docs/tutorial-1-Getting-Client-ID.html)
+- [NAVER Maps 문제 해결](https://guide.ncloud-docs.com/docs/application-maps-troubleshoot)

@@ -1,0 +1,75 @@
+{
+  "provider": "TAGO",
+  "capturedAt": "2026-07-27T03:29:04.000Z",
+  "credentialIncluded": false,
+  "captures": [
+    {
+      "operation": "GetKwrdFndSubwaySttnList",
+      "request": {
+        "subwayStationName": "대전"
+      },
+      "checksum": "6d13abb18973a81bdf30e79a033876e304cb7ecbe6a3867ee1179a61af70403f",
+      "response": [
+        {
+          "stationId": "MTRDJ10001",
+          "name": "판암(대전대)",
+          "routeName": "1호선"
+        },
+        {
+          "stationId": "MTRDJ10004",
+          "name": "대전",
+          "routeName": "1호선"
+        },
+        {
+          "stationId": "MTRDJ10007",
+          "name": "서대전네거리",
+          "routeName": "1호선"
+        }
+      ]
+    },
+    {
+      "operation": "GetSubwaySttnAcctoSchdulList",
+      "request": {
+        "subwayStationId": "MTRDJ10004",
+        "dailyTypeCode": "01",
+        "upDownTypeCode": "U"
+      },
+      "checksum": "cdfd91d2a25bdc5a8a84441009bba739bd28df6e5718db86c2ba0869c7b870bb",
+      "response": [
+        {
+          "stationId": "MTRDJ10004",
+          "stationName": "대전",
+          "subwayRouteId": "MTRDJ1",
+          "terminalStationId": "MTRDJ10001",
+          "terminalStationName": "판암(대전대)",
+          "departureTime": "000600",
+          "arrivalTime": "000600",
+          "dailyTypeCode": "01",
+          "direction": "U"
+        },
+        {
+          "stationId": "MTRDJ10004",
+          "stationName": "대전",
+          "subwayRouteId": "MTRDJ1",
+          "terminalStationId": "MTRDJ10001",
+          "terminalStationName": "판암(대전대)",
+          "departureTime": "054500",
+          "arrivalTime": "054500",
+          "dailyTypeCode": "01",
+          "direction": "U"
+        },
+        {
+          "stationId": "MTRDJ10004",
+          "stationName": "대전",
+          "subwayRouteId": "MTRDJ1",
+          "terminalStationId": "MTRDJ10001",
+          "terminalStationName": "판암(대전대)",
+          "departureTime": "055500",
+          "arrivalTime": "055500",
+          "dailyTypeCode": "01",
+          "direction": "U"
+        }
+      ]
+    }
+  ]
+}

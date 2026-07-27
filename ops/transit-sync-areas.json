@@ -1,0 +1,20 @@
+{
+  "areas": [
+    {
+      "id": "kaist",
+      "name": "한국과학기술원",
+      "lat": 36.3723,
+      "lng": 127.3604,
+      "radiusMeters": 1200,
+      "maxRoutes": 60
+    },
+    {
+      "id": "daejeon-station",
+      "name": "대전역",
+      "lat": 36.3321,
+      "lng": 127.4342,
+      "radiusMeters": 500,
+      "maxRoutes": 60
+    }
+  ]
+}

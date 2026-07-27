@@ -1,0 +1,204 @@
+import type { Coordinate, Place } from "@chimap/contracts";
+import { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+
+import { chimapTheme } from "../../theme/chimap-theme";
+import { searchPlaces } from "./place-api";
+
+export function PlaceSearchField({
+  apiBaseUrl,
+  label,
+  placeholder,
+  value,
+  center,
+  onSelect,
+  onClear,
+  onFocus,
+}: {
+  apiBaseUrl: string;
+  label: string;
+  placeholder: string;
+  value: Place | null;
+  center?: Coordinate;
+  onSelect(place: Place): void;
+  onClear(): void;
+  onFocus?(): void;
+}) {
+  const [query, setQuery] = useState(value?.name ?? "");
+  const [results, setResults] = useState<Place[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const requestSequence = useRef(0);
+
+  useEffect(() => {
+    setQuery(value?.name ?? "");
+    setResults([]);
+    setMessage(null);
+  }, [value?.id, value?.name]);
+
+  useEffect(() => {
+    const normalized = query.trim();
+    if (normalized.length < 2 || normalized === value?.name) {
+      setLoading(false);
+      setResults([]);
+      setMessage(null);
+      return undefined;
+    }
+    const sequence = requestSequence.current + 1;
+    requestSequence.current = sequence;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setLoading(true);
+      setMessage(null);
+      void searchPlaces({
+        apiBaseUrl,
+        query: normalized,
+        ...(center === undefined ? {} : { center }),
+        signal: controller.signal,
+      })
+        .then((places) => {
+          if (requestSequence.current !== sequence) {
+            return;
+          }
+          setResults(places);
+          setMessage(places.length === 0 ? "검색 결과가 없습니다." : null);
+        })
+        .catch((error: unknown) => {
+          if (
+            requestSequence.current === sequence &&
+            !(error instanceof Error && error.name === "AbortError")
+          ) {
+            setMessage("장소 검색에 실패했습니다. 다시 입력해 주세요.");
+          }
+        })
+        .finally(() => {
+          if (requestSequence.current === sequence) {
+            setLoading(false);
+          }
+        });
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [apiBaseUrl, center, query, value?.name]);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.inputWrap}>
+        <View style={styles.placeDot} />
+        <TextInput
+          accessibilityLabel={`${label} 검색`}
+          autoCorrect={false}
+          onChangeText={(text) => {
+            setQuery(text);
+            if (value !== null && text !== value.name) {
+              onClear();
+            }
+          }}
+          onFocus={onFocus}
+          onSubmitEditing={Keyboard.dismiss}
+          placeholder={placeholder}
+          placeholderTextColor="#8A9694"
+          returnKeyType="search"
+          style={styles.input}
+          value={query}
+        />
+        {loading ? (
+          <ActivityIndicator color={chimapTheme.teal} size="small" />
+        ) : query.length > 0 ? (
+          <Pressable
+            accessibilityLabel={`${label} 지우기`}
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={() => {
+              setQuery("");
+              setResults([]);
+              onClear();
+            }}
+            style={styles.clearButton}
+          >
+            <Text style={styles.clearText}>×</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {message === null ? null : <Text style={styles.message}>{message}</Text>}
+      {results.length === 0 ? null : (
+        <View style={styles.results}>
+          {results.map((place) => (
+            <Pressable
+              accessibilityRole="button"
+              key={place.id}
+              onPress={() => {
+                onSelect(place);
+                setQuery(place.name);
+                setResults([]);
+                Keyboard.dismiss();
+              }}
+              style={styles.result}
+            >
+              <View style={styles.resultCopy}>
+                <Text style={styles.resultTitle}>{place.name}</Text>
+                <Text style={styles.resultAddress} numberOfLines={1}>
+                  {place.roadAddress || place.address}
+                </Text>
+              </View>
+              <Text style={styles.resultArrow}>›</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { gap: 6 },
+  label: { marginLeft: 3, color: chimapTheme.muted, fontSize: 11, fontWeight: "800" },
+  inputWrap: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: chimapTheme.line,
+    borderRadius: 13,
+    backgroundColor: chimapTheme.white,
+  },
+  placeDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: chimapTheme.teal },
+  input: { minWidth: 0, flex: 1, color: chimapTheme.ink, fontSize: 15, fontWeight: "700" },
+  clearButton: { minWidth: 28, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  clearText: { color: chimapTheme.muted, fontSize: 24, lineHeight: 26 },
+  message: { marginHorizontal: 3, color: chimapTheme.danger, fontSize: 12, lineHeight: 17 },
+  results: {
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: chimapTheme.line,
+    borderRadius: 13,
+    backgroundColor: chimapTheme.white,
+  },
+  result: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: chimapTheme.line,
+  },
+  resultCopy: { minWidth: 0, flex: 1, gap: 3 },
+  resultTitle: { color: chimapTheme.ink, fontSize: 14, fontWeight: "800" },
+  resultAddress: { color: chimapTheme.muted, fontSize: 11 },
+  resultArrow: { color: chimapTheme.teal, fontSize: 24 },
+});

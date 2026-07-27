@@ -1,0 +1,16 @@
+export const chimapTheme = {
+  navy: "#123C48",
+  navyStrong: "#082D37",
+  teal: "#1D6C68",
+  orange: "#F47B35",
+  green: "#2A9864",
+  purple: "#7957B8",
+  busBlue: "#2E6DD8",
+  ink: "#173137",
+  muted: "#647276",
+  line: "#DFE3DE",
+  paper: "#FFFEF9",
+  canvas: "#F6F4EE",
+  white: "#FFFFFF",
+  danger: "#A83B32",
+} as const;

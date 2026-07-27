@@ -1,0 +1,13 @@
+[Unit]
+Description=CHIMap monthly PostgreSQL restore verification
+Requires=docker.service
+After=docker.service chimap-backup.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/chimap
+ExecStart=/root/chimap/ops/verify-postgres-backup.sh
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
