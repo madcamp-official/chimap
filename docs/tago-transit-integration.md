@@ -262,10 +262,16 @@ CLI는 root `.env`를 Node `process.loadEnvFile`로 읽고 DB pool을 최대
 headway입니다. 예정 승차가 현재보다 10분 이후이면 현재 실시간 값을 사용하지
 않습니다. 모든 결과 leg에는 `timingSource`, `isRealtime`, `stale`이 들어갑니다.
 
-서울 API base URL은 HTTPS만 허용합니다. 운영 환경에서 HTTPS smoke가 확인되기
-전에는 `SEOUL_SUBWAY_ENABLED=0`을 유지하며, 이때 TAGO/정적 fallback이 경로를
-계속 제공합니다. `shadow` 모드는 기존 결과를 반환하면서 새 그래프만 실행하고,
-`legacy`는 즉시 기존 탐색기로 되돌리는 롤백 스위치입니다.
+서울시 실시간 지하철 endpoint는 현재 공식 `swopenapi.seoul.go.kr`의 HTTP
+주소만 응답합니다. 그래서 일반 HTTP URL은 계속 거절하되, 정확한 공식 host와
+80번 port에 한해 `SEOUL_SUBWAY_ALLOW_INSECURE_HTTP=1`로 위험을 명시적으로
+수락해야 활성화할 수 있습니다. API key가 평문 전송된다는 제한 때문에 서버
+전용으로만 호출하고 redirect를 따르지 않으며, 일일 공식 한도 1,000회보다 낮은
+900회 process-local guard를 둡니다. 운영 Docker bridge에서 Node `fetch`와 공식
+서버의 호환 문제가 확인되어 HTTP 호출만 `node:http`와 `Connection: close`를
+사용합니다. 실패 시 TAGO/정적 fallback이 경로를 계속 제공합니다. `shadow`
+모드는 기존 결과를 반환하면서 새 그래프만 실행하고, `legacy`는 즉시 기존
+탐색기로 되돌리는 롤백 스위치입니다.
 
 ## 13. 공식 자료
 

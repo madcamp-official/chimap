@@ -1,6 +1,62 @@
+import { get as httpGet } from "node:http";
+
 import type { AppConfig } from "../config.js";
 
 type JsonRecord = Record<string, unknown>;
+
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+type JsonHttpResponse = {
+  ok: boolean;
+  status: number;
+  payload: unknown;
+};
+
+function nodeHttpJsonRequest(
+  url: string,
+  signal: AbortSignal,
+): Promise<JsonHttpResponse> {
+  return new Promise((resolve, reject) => {
+    const request = httpGet(url, {
+      headers: {
+        Accept: "application/json",
+        "Accept-Encoding": "identity",
+        Connection: "close",
+        "User-Agent": "CHIMap/1.0",
+      },
+      signal,
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      let receivedBytes = 0;
+      response.on("data", (chunk: Buffer | string) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        receivedBytes += buffer.length;
+        if (receivedBytes > MAX_RESPONSE_BYTES) {
+          response.destroy(new Error("서울 지하철 API 응답이 너무 큽니다."));
+          return;
+        }
+        chunks.push(buffer);
+      });
+      response.on("error", reject);
+      response.on("end", () => {
+        const ok = response.statusCode !== undefined &&
+          response.statusCode >= 200 && response.statusCode < 300;
+        try {
+          resolve({
+            ok,
+            status: response.statusCode ?? 0,
+            payload: ok
+              ? JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              : undefined,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on("error", reject);
+  });
+}
 
 export type SeoulSubwayArrival = {
   subwayId: string;
@@ -78,15 +134,38 @@ export class SeoulSubwayApiError extends Error {
 
 export class SeoulSubwayClient {
   readonly #config: AppConfig["seoulSubway"];
-  readonly #fetch: typeof fetch;
+  readonly #fetch: typeof fetch | undefined;
+  #quotaDate = "";
+  #requestCount = 0;
 
-  public constructor(config: AppConfig, fetchImplementation = fetch) {
+  public constructor(config: AppConfig, fetchImplementation?: typeof fetch) {
     this.#config = config.seoulSubway;
     this.#fetch = fetchImplementation;
   }
 
   public get enabled(): boolean {
     return this.#config.enabled && this.#config.apiKey !== undefined;
+  }
+
+  #consumeRequestQuota(): void {
+    const quotaDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    if (this.#quotaDate !== quotaDate) {
+      this.#quotaDate = quotaDate;
+      this.#requestCount = 0;
+    }
+    if (this.#requestCount >= this.#config.dailyRequestLimit) {
+      throw new SeoulSubwayApiError(
+        "DAILY_REQUEST_LIMIT",
+        "서울 지하철 API 일일 요청 한도에 도달했습니다.",
+        false,
+      );
+    }
+    this.#requestCount += 1;
   }
 
   async #request(
@@ -119,10 +198,27 @@ export class SeoulSubwayClient {
         ? timeout
         : AbortSignal.any([signal, timeout]);
       try {
-        const response = await this.#fetch(url, {
-          headers: { Accept: "application/json" },
-          signal: requestSignal,
-        });
+        this.#consumeRequestQuota();
+        const response = this.#fetch !== undefined ||
+            new URL(url).protocol === "https:"
+          ? await (this.#fetch ?? fetch)(url, {
+              headers: { Accept: "application/json" },
+              signal: requestSignal,
+              redirect: "error",
+              cache: "no-store",
+              referrerPolicy: "no-referrer",
+            }).then(async (result): Promise<JsonHttpResponse> => {
+              const response: JsonHttpResponse = {
+                ok: result.ok,
+                status: result.status,
+                payload: undefined,
+              };
+              if (result.ok) {
+                response.payload = await result.json() as unknown;
+              }
+              return response;
+            })
+          : await nodeHttpJsonRequest(url, requestSignal);
         if (!response.ok) {
           const retryable = response.status >= 500;
           if (retryable && attempt < 2) {
@@ -135,7 +231,7 @@ export class SeoulSubwayClient {
             retryable,
           );
         }
-        const payload = await response.json() as unknown;
+        const payload = response.payload;
         if (!isRecord(payload)) {
           throw new SeoulSubwayApiError(
             "INVALID_RESPONSE",

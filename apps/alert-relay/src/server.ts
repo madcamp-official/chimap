@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   formatNotification,
   parseAlertmanagerPayload,
+  parseExternalAlertsEnabled,
   summarizeAlerts,
   type NotificationProvider,
 } from "./notification.js";
@@ -30,6 +31,9 @@ function parseProvider(value: string | undefined): NotificationProvider {
 }
 
 const port = parsePort(process.env.ALERT_RELAY_PORT);
+const externalAlertsEnabled = parseExternalAlertsEnabled(
+  process.env.EXTERNAL_ALERTS_ENABLED,
+);
 const provider = parseProvider(process.env.ALERT_NOTIFICATION_PROVIDER);
 const webhookUrl = process.env.ALERT_WEBHOOK_URL?.trim() || undefined;
 const statusUrl = process.env.ALERT_STATUS_URL?.trim() || undefined;
@@ -74,6 +78,9 @@ function metrics(): string {
     "# HELP chimap_alert_relay_configured 외부 장애 알림 webhook 설정 상태",
     "# TYPE chimap_alert_relay_configured gauge",
     `chimap_alert_relay_configured{provider="${provider}"} ${webhookUrl === undefined ? 0 : 1}`,
+    "# HELP chimap_alert_relay_enabled 외부 장애 알림 기능 활성화 상태",
+    "# TYPE chimap_alert_relay_enabled gauge",
+    `chimap_alert_relay_enabled{provider="${provider}"} ${externalAlertsEnabled ? 1 : 0}`,
     "# HELP chimap_alert_relay_received_total Alertmanager에서 받은 알림 묶음 수",
     "# TYPE chimap_alert_relay_received_total counter",
     `chimap_alert_relay_received_total ${receivedTotal}`,
@@ -92,6 +99,10 @@ async function handleAlerts(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
+  if (!externalAlertsEnabled) {
+    json(response, 202, { status: "disabled" });
+    return;
+  }
   if (webhookUrl === undefined) {
     json(response, 503, {
       error: "notification_not_configured",
@@ -171,7 +182,12 @@ const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://alert-relay.internal");
   if (request.method === "GET" && url.pathname === "/health") {
     json(response, 200, {
-      status: webhookUrl === undefined ? "needs_configuration" : "ok",
+      status: !externalAlertsEnabled
+        ? "disabled"
+        : webhookUrl === undefined
+          ? "needs_configuration"
+          : "ok",
+      enabled: externalAlertsEnabled,
       provider,
       configured: webhookUrl !== undefined,
     });
@@ -198,6 +214,7 @@ server.listen(port, "0.0.0.0", () => {
       level: "info",
       event: "alert_relay.started",
       port,
+      enabled: externalAlertsEnabled,
       provider,
       configured: webhookUrl !== undefined,
     })}\n`,

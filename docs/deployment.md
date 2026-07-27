@@ -300,15 +300,23 @@ Kakao 실제 보행 경로가 500m 이하인 결과만 upsert합니다. 실패�
 
 서울 실시간 연동은 다음 조건을 모두 확인한 뒤에만 켭니다.
 
-```bash
-# 키를 출력하지 않는 별도 HTTPS smoke 후 설정
+```dotenv
 SEOUL_SUBWAY_ENABLED=1
+SEOUL_SUBWAY_ALLOW_INSECURE_HTTP=1
+SEOUL_SUBWAY_BASE_URL=http://swopenAPI.seoul.go.kr
+SEOUL_SUBWAY_DAILY_REQUEST_LIMIT=900
 ```
 
-- `SEOUL_SUBWAY_BASE_URL`이 `https://`로 시작함
-- 실시간 도착 endpoint가 TLS로 응답함
+- 공식 host `swopenapi.seoul.go.kr`의 80번 port만 사용함
+- 키를 출력하지 않는 도착·위치 smoke가 각각 `INFO-000`으로 응답함
+- redirect를 따르지 않고 API key가 서버 밖 로그·응답에 노출되지 않음
+- 하루 1,000회 공식 한도보다 낮은 process-local guard를 설정함
 - 로그와 browser bundle에 인증키/전체 요청 URL이 없음
 - 장애 시 TAGO 시간표와 headway fallback으로 추천이 유지됨
+
+이 예외는 CHIMap의 수신 HTTPS나 Certbot 인증과 별개인 outbound 연결입니다.
+서울시 endpoint가 TLS를 제공하기 전까지 API key가 네트워크 구간에서 평문으로
+전송되는 잔여 위험이 있으므로 다른 HTTP host에는 절대 재사용하지 않습니다.
 
 ## 7. 배포 전 백업
 
@@ -702,6 +710,7 @@ host에 publish하지 않습니다. 교통 동기화 성공 시각·최근 실�
 외부 URL은 루트 `.env`에만 둡니다.
 
 ```dotenv
+EXTERNAL_ALERTS_ENABLED=1
 ALERT_NOTIFICATION_PROVIDER=slack
 ALERT_WEBHOOK_URL=
 ```
@@ -715,14 +724,14 @@ docker compose up -d --no-build --force-recreate alert-relay
 
 확인 스크립트는 Alertmanager API에 실제 점검 경보를 넣고 relay의 마지막
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
-외부 URL이 아직 없다면 아래의 구성 지표 `0`과 설정 필요 경보가 정상입니다.
+현재처럼 외부 알림을 사용하지 않으면 `EXTERNAL_ALERTS_ENABLED=0`으로 둡니다.
+이때 relay는 `/alerts`를 `202 disabled`로 수신 종료하고 health에
+`enabled:false`를 표시하며, `ChimapAlertDeliveryNotConfigured` 경보도
+평가하지 않습니다. 사용을 시작할 때만 flag와 URL을 함께 설정하고 아래 전달
+검사를 실행합니다.
 
-2026-07-26 01:26 KST 현재 Alertmanager와 relay health, 라우팅 설정과
-격리 수신처 메시지 변환은 정상입니다. 외부 URL은 비어 있어
-`chimap_alert_relay_configured=0`과
-`ChimapAlertDeliveryNotConfigured`가 발생하는 상태가 정상입니다. URL 입력
-후에는 구성 지표가 `1`인지, 점검 경보와 복구 알림이 실제 운영 채널에 모두
-도착했는지 확인해야 활성화가 완료됩니다.
+외부 알림을 다시 켠 뒤에는 구성 지표가 `1`인지, 점검 경보와 복구 알림이 실제
+운영 채널에 모두 도착했는지 확인해야 활성화가 완료됩니다.
 
 ## 16. 롤백
 

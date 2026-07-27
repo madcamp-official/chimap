@@ -121,17 +121,21 @@ const environmentSchema = z
     SEOUL_SUBWAY_API_KEY: optionalSecret,
     SEOUL_SUBWAY_BASE_URL: z
       .url()
-      .refine((value) => value.startsWith("https://"), {
-        message: "서울 지하철 API는 HTTPS URL만 사용할 수 있습니다.",
-      })
       .default("https://swopenAPI.seoul.go.kr"),
     SEOUL_SUBWAY_ENABLED: z.enum(["0", "1"]).default("0"),
+    SEOUL_SUBWAY_ALLOW_INSECURE_HTTP: z.enum(["0", "1"]).default("0"),
     SEOUL_SUBWAY_HTTP_TIMEOUT_MS: z.coerce
       .number()
       .int()
       .min(500)
       .max(10_000)
       .default(3000),
+    SEOUL_SUBWAY_DAILY_REQUEST_LIMIT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(900),
     SEOUL_SUBWAY_ARRIVAL_CACHE_TTL_SECONDS: z.coerce
       .number()
       .int()
@@ -369,6 +373,40 @@ const environmentSchema = z
           "서울 지하철 실시간 연동을 켜려면 SEOUL_SUBWAY_API_KEY가 필요합니다.",
       });
     }
+    const seoulSubwayUrl = new URL(environment.SEOUL_SUBWAY_BASE_URL);
+    if (seoulSubwayUrl.protocol === "http:") {
+      const approvedOfficialHost =
+        seoulSubwayUrl.hostname.toLowerCase() ===
+          "swopenapi.seoul.go.kr" &&
+        (seoulSubwayUrl.port === "" || seoulSubwayUrl.port === "80") &&
+        (seoulSubwayUrl.pathname === "" || seoulSubwayUrl.pathname === "/") &&
+        seoulSubwayUrl.search === "" &&
+        seoulSubwayUrl.hash === "" &&
+        seoulSubwayUrl.username === "" &&
+        seoulSubwayUrl.password === "";
+      if (!approvedOfficialHost) {
+        context.addIssue({
+          code: "custom",
+          path: ["SEOUL_SUBWAY_BASE_URL"],
+          message:
+            "암호화되지 않은 서울 지하철 API는 공식 swopenapi.seoul.go.kr 호스트만 사용할 수 있습니다.",
+        });
+      }
+      if (environment.SEOUL_SUBWAY_ALLOW_INSECURE_HTTP !== "1") {
+        context.addIssue({
+          code: "custom",
+          path: ["SEOUL_SUBWAY_ALLOW_INSECURE_HTTP"],
+          message:
+            "서울시 공식 HTTP API를 사용하려면 비암호화 전송을 명시적으로 허용해야 합니다.",
+        });
+      }
+    } else if (seoulSubwayUrl.protocol !== "https:") {
+      context.addIssue({
+        code: "custom",
+        path: ["SEOUL_SUBWAY_BASE_URL"],
+        message: "서울 지하철 API는 HTTP 또는 HTTPS URL이어야 합니다.",
+      });
+    }
   });
 
 export type TagoServiceKind =
@@ -442,7 +480,9 @@ export type AppConfig = {
     enabled: boolean;
     apiKey?: string;
     baseUrl: string;
+    allowInsecureHttp: boolean;
     timeoutMs: number;
+    dailyRequestLimit: number;
     arrivalCacheTtlSeconds: number;
     positionCacheTtlSeconds: number;
   };
@@ -601,7 +641,10 @@ export function loadConfig(
         ? {}
         : { apiKey: parsed.SEOUL_SUBWAY_API_KEY }),
       baseUrl: parsed.SEOUL_SUBWAY_BASE_URL.replace(/\/+$/u, ""),
+      allowInsecureHttp:
+        parsed.SEOUL_SUBWAY_ALLOW_INSECURE_HTTP === "1",
       timeoutMs: parsed.SEOUL_SUBWAY_HTTP_TIMEOUT_MS,
+      dailyRequestLimit: parsed.SEOUL_SUBWAY_DAILY_REQUEST_LIMIT,
       arrivalCacheTtlSeconds:
         parsed.SEOUL_SUBWAY_ARRIVAL_CACHE_TTL_SECONDS,
       positionCacheTtlSeconds:

@@ -294,12 +294,12 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 교통 갱신: systemd timer가 매일 KAIST 1.2km·대전역 500m 노선 동기화
 - 관측: Prometheus 15초 수집, 15일·2GiB 보존, loopback UI `:9090`
 - 경보: API·검색·DB·TAGO·백업·동기화·알림 전달 20개
-- 전달: Alertmanager→alert-relay→Slack/Discord/일반 webhook
+- 전달: 필요할 때만 `EXTERNAL_ALERTS_ENABLED=1`로 Alertmanager→alert-relay→Slack/Discord/일반 webhook
 - 로그 제외: 검색어, 좌표, 키, 외부 원문
 
 Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
-검증됐습니다. 외부 운영 채널은 `ALERT_WEBHOOK_URL` 입력 전이므로 아직
-활성화되지 않았습니다. webhook 설정과 실제 전달 확인 순서는
+검증됐습니다. 외부 운영 채널은 현재 `EXTERNAL_ALERTS_ENABLED=0`으로 명시적으로
+비활성화되어 있습니다. webhook 설정과 실제 전달 확인 순서는
 [배포·백업·복구 운영서](./docs/deployment.md)의 장애 알림 절차를 따릅니다.
 
 ## 문서
