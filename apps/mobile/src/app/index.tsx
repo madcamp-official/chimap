@@ -1,145 +1,183 @@
-import { colors, radii, spacing } from "@chimap/design-tokens";
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useMobileConfig } from "../features/api/mobile-config";
 import { apiBaseUrl } from "../features/api/runtime-config";
+import { kakaoLoginErrorMessage } from "../features/auth/kakao-login-error";
+import { MobileApiError } from "../features/auth/mobile-api-error";
 import { useMobileSession } from "../features/auth/mobile-session";
+import { WalkingProfileScreen } from "../features/profile/walking-profile-screen";
+import { useWalkingProfile } from "../features/profile/walking-profile";
 import { AuthenticatedDataBoundary } from "../features/routes/authenticated-data-boundary";
 import { PlannerScreen } from "../features/routes/planner-screen";
-import { AppleLoginButton } from "../platform/apple/apple-login-button";
 import { requestKakaoAccessToken } from "../platform/kakao/kakao-login";
+import { chimapTheme } from "../theme/chimap-theme";
 
-export default function HomeScreen() {
+function FullScreenLoader({ label }: { label: string }) {
+  return (
+    <SafeAreaView style={styles.center}>
+      <ActivityIndicator color={chimapTheme.teal} />
+      <Text style={styles.loadingText}>{label}</Text>
+    </SafeAreaView>
+  );
+}
+
+function KakaoLoginScreen({ message }: { message: string | null }) {
   const mobileConfig = useMobileConfig();
-  const {
-    state,
-    completeAppleLogin,
-    completeKakaoLogin,
-    deleteAccount,
-    logout,
-  } = useMobileSession();
+  const { completeKakaoLogin, prepareKakaoLogin } = useMobileSession();
   const [working, setWorking] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const kakaoDisabled = mobileConfig?.authentication.kakaoEnabled === false;
 
-  if (state.status === "booting") {
-    return (
-      <SafeAreaView style={styles.center}>
-        <ActivityIndicator accessibilityLabel="세션 복원 중" />
-      </SafeAreaView>
-    );
-  }
-
-  const kakaoLogin = async () => {
+  const login = async () => {
     setWorking(true);
-    setMessage(null);
+    setError(null);
+    prepareKakaoLogin();
+
+    let accessToken: string;
     try {
-      await completeKakaoLogin(await requestKakaoAccessToken());
-    } catch {
-      setMessage("카카오 로그인을 완료하지 못했습니다. 다시 시도해 주세요.");
+      accessToken = await requestKakaoAccessToken();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "알 수 없는 오류";
+      console.error(`[CHIMap Kakao] native login failed: ${message}`);
+      setError(kakaoLoginErrorMessage(caught));
+      setWorking(false);
+      return;
+    }
+
+    try {
+      await completeKakaoLogin(accessToken);
+    } catch (caught) {
+      if (caught instanceof MobileApiError) {
+        console.error(
+          `[CHIMap auth] ${caught.code} status=${caught.status ?? "unknown"} requestId=${caught.requestId ?? "unknown"}`,
+        );
+        setError(kakaoLoginErrorMessage(caught));
+      } else {
+        const message = caught instanceof Error ? caught.message : "알 수 없는 오류";
+        console.error(`[CHIMap auth] session completion failed: ${message}`);
+        setError(
+          "카카오 인증은 완료했지만 앱 세션을 저장하지 못했습니다. 앱을 다시 열어 시도해 주세요.",
+        );
+      }
     } finally {
       setWorking(false);
     }
   };
 
-  const accountPanel =
-    state.status === "authenticated" ? (
-      <View style={styles.accountCard}>
-        <View style={styles.accountCopy}>
-          <Text style={styles.accountTitle}>
-            {state.pair.user.displayName ?? "사용자"}님
-          </Text>
-          <Text style={styles.accountBody}>
-            {state.pair.user.provider === "APPLE" ? "Apple" : "카카오"} 계정으로 로그인했습니다.
-          </Text>
-        </View>
-        <View style={styles.actionRow}>
-          <Pressable accessibilityRole="button" onPress={() => void logout()} style={styles.secondaryButton}>
-            <Text style={styles.secondaryText}>로그아웃</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() =>
-              Alert.alert(
-                "계정을 삭제할까요?",
-                "서버 계정, 로그인 세션과 이 기기의 저장된 경로가 영구 삭제됩니다.",
-                [
-                  { text: "취소", style: "cancel" },
-                  {
-                    text: "계정 삭제",
-                    style: "destructive",
-                    onPress: () => {
-                      setWorking(true);
-                      setMessage(null);
-                      void deleteAccount()
-                        .catch(() => setMessage("계정을 삭제하지 못했습니다. 다시 시도해 주세요."))
-                        .finally(() => setWorking(false));
-                    },
-                  },
-                ],
-              )
-            }
-            style={styles.secondaryButton}
-          >
-            <Text style={styles.deleteText}>계정 삭제</Text>
-          </Pressable>
-        </View>
-        {working ? <ActivityIndicator accessibilityLabel="계정 처리 중" /> : null}
-        {message === null ? null : <Text style={styles.error}>{message}</Text>}
-      </View>
-    ) : (
-      <View style={styles.accountCard}>
-        <View style={styles.accountCopy}>
-          <Text style={styles.accountTitle}>게스트로 이용 중</Text>
-          <Text style={styles.accountBody}>
-            로그인 없이 추천을 사용할 수 있습니다. 로그인하면 계정 기반 기능을 확장할 수 있습니다.
-          </Text>
-        </View>
-        {state.message === null ? null : <Text style={styles.error}>{state.message}</Text>}
-        {message === null ? null : <Text style={styles.error}>{message}</Text>}
-        {working ? (
-          <ActivityIndicator accessibilityLabel="로그인 중" />
-        ) : (
-          <View style={styles.loginActions}>
-            {mobileConfig?.authentication.appleEnabled === true ? (
-              <AppleLoginButton
-                disabled={working}
-                onCredential={(payload) => {
-                  setWorking(true);
-                  setMessage(null);
-                  void completeAppleLogin(payload)
-                    .catch(() => setMessage("Apple 로그인을 완료하지 못했습니다."))
-                    .finally(() => setWorking(false));
-                }}
-                onError={() => setMessage("Apple 로그인을 완료하지 못했습니다.")}
-              />
-            ) : null}
-            {mobileConfig?.authentication.kakaoEnabled === true ? (
-              <Pressable accessibilityRole="button" onPress={() => void kakaoLogin()} style={styles.kakaoButton}>
-                <Text style={styles.kakaoText}>카카오로 로그인</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        )}
-      </View>
-    );
-
-  const ownerId = state.status === "authenticated" ? state.pair.user.id : "guest-local";
-  const token = state.status === "authenticated" ? state.pair.accessToken : "";
   return (
-    <AuthenticatedDataBoundary ownerId={ownerId}>
-      <PlannerScreen
-        accessToken={token}
-        accountPanel={accountPanel}
-        apiBaseUrl={apiBaseUrl()}
+    <SafeAreaView edges={["top", "bottom"]} style={styles.loginSafeArea}>
+      <View style={styles.loginHero}>
+        <View style={styles.orbitLarge} />
+        <View style={styles.orbitSmall} />
+        <View style={styles.loginBrandMark}>
+          <Text style={styles.loginBrandArrow}>↗</Text>
+        </View>
+        <Text style={styles.loginBrand}>CHIMap</Text>
+        <Text style={styles.loginTagline}>가는 길을 더 건강하게</Text>
+      </View>
+
+      <View style={styles.loginSheet}>
+        <Text style={styles.loginEyebrow}>지금 출발 기준 건강 경로</Text>
+        <Text style={styles.loginTitle}>카카오로 시작하세요</Text>
+        <Text style={styles.loginDescription}>
+          로그인하면 개인 보폭과 오늘의 걸음을 안전하게 구분해 나에게 맞는
+          경로를 추천합니다.
+        </Text>
+        {message === null ? null : <Text style={styles.loginError}>{message}</Text>}
+        {error === null ? null : <Text style={styles.loginError}>{error}</Text>}
+        {kakaoDisabled ? (
+          <Text style={styles.loginError}>
+            현재 카카오 로그인을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.
+          </Text>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          disabled={working || kakaoDisabled}
+          onPress={() => void login()}
+          style={[
+            styles.kakaoButton,
+            (working || kakaoDisabled) && styles.disabled,
+          ]}
+        >
+          {working ? (
+            <ActivityIndicator color="#191919" />
+          ) : (
+            <Text style={styles.kakaoText}>카카오로 계속하기</Text>
+          )}
+        </Pressable>
+        <Text style={styles.loginFootnote}>
+          CHIMap 앱은 카카오 로그인이 필요합니다.
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function AuthenticatedExperience({
+  displayName,
+  accessToken,
+}: {
+  displayName: string | null;
+  accessToken: string;
+}) {
+  const { logout, deleteAccount } = useMobileSession();
+  const profile = useWalkingProfile();
+  const [editingProfile, setEditingProfile] = useState(false);
+
+  if (profile.loading) {
+    return <FullScreenLoader label="개인화 설정을 불러오는 중" />;
+  }
+  if (profile.value === null || editingProfile) {
+    return (
+      <WalkingProfileScreen
+        {...(profile.value === null
+          ? {}
+          : {
+              initialProfile: profile.value.walkingProfile,
+              initialDailyGoalSteps: profile.value.dailyGoalSteps,
+              onCancel: () => setEditingProfile(false),
+            })}
+        onSave={async (walkingProfile, dailyGoalSteps) => {
+          await profile.save(walkingProfile, dailyGoalSteps);
+          setEditingProfile(false);
+        }}
+      />
+    );
+  }
+  return (
+    <PlannerScreen
+      accessToken={accessToken}
+      apiBaseUrl={apiBaseUrl()}
+      displayName={displayName ?? "CHIMap 사용자"}
+      onDeleteAccount={deleteAccount}
+      onEditProfile={() => setEditingProfile(true)}
+      onLogout={logout}
+      profile={profile.value}
+    />
+  );
+}
+
+export default function HomeScreen() {
+  const { state } = useMobileSession();
+  if (state.status === "booting") {
+    return <FullScreenLoader label="로그인 정보를 확인하는 중" />;
+  }
+  if (state.status === "guest") {
+    return <KakaoLoginScreen message={state.message} />;
+  }
+  return (
+    <AuthenticatedDataBoundary ownerId={state.pair.user.id}>
+      <AuthenticatedExperience
+        accessToken={state.pair.accessToken}
+        displayName={state.pair.user.displayName}
       />
     </AuthenticatedDataBoundary>
   );
@@ -150,39 +188,74 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.background,
+    gap: 12,
+    backgroundColor: chimapTheme.canvas,
   },
-  accountCard: {
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.lg,
-    backgroundColor: colors.surface,
-  },
-  accountCopy: { gap: spacing.xs },
-  accountTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
-  accountBody: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
-  actionRow: { flexDirection: "row", gap: spacing.sm },
-  loginActions: { gap: spacing.sm },
-  secondaryButton: {
+  loadingText: { color: chimapTheme.muted, fontSize: 13, fontWeight: "700" },
+  loginSafeArea: { flex: 1, backgroundColor: chimapTheme.orange },
+  loginHero: {
+    minHeight: 330,
     flex: 1,
-    minHeight: 42,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
+    overflow: "hidden",
   },
-  secondaryText: { color: colors.text, fontWeight: "700" },
-  deleteText: { color: colors.danger, fontWeight: "700" },
-  kakaoButton: {
-    minHeight: 46,
+  orbitLarge: {
+    position: "absolute",
+    top: -100,
+    left: -130,
+    width: 330,
+    height: 330,
+    borderWidth: 1,
+    borderColor: "rgba(8,45,55,0.18)",
+    borderRadius: 165,
+  },
+  orbitSmall: {
+    position: "absolute",
+    right: -90,
+    bottom: -80,
+    width: 240,
+    height: 240,
+    borderWidth: 1,
+    borderColor: "rgba(8,45,55,0.18)",
+    borderRadius: 120,
+  },
+  loginBrandMark: {
+    width: 62,
+    height: 62,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radii.sm,
+    marginBottom: 17,
+    borderWidth: 1,
+    borderColor: "rgba(8,45,55,0.28)",
+    borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  loginBrandArrow: { color: chimapTheme.navyStrong, fontSize: 34, fontWeight: "900" },
+  loginBrand: { color: chimapTheme.navyStrong, fontSize: 54, fontWeight: "900", letterSpacing: -2 },
+  loginTagline: { marginTop: 8, color: chimapTheme.navyStrong, fontSize: 14, fontWeight: "800" },
+  loginSheet: {
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingTop: 27,
+    paddingBottom: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: chimapTheme.paper,
+  },
+  loginEyebrow: { color: chimapTheme.teal, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  loginTitle: { color: chimapTheme.ink, fontSize: 27, fontWeight: "900" },
+  loginDescription: { color: chimapTheme.muted, fontSize: 14, lineHeight: 21 },
+  loginError: { color: chimapTheme.danger, fontSize: 12, lineHeight: 18 },
+  kakaoButton: {
+    minHeight: 54,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 3,
+    borderRadius: 14,
     backgroundColor: "#FEE500",
   },
-  kakaoText: { color: "#191919", fontWeight: "800" },
-  error: { color: colors.danger, fontSize: 13, lineHeight: 19 },
+  kakaoText: { color: "#191919", fontSize: 16, fontWeight: "900" },
+  disabled: { opacity: 0.5 },
+  loginFootnote: { color: chimapTheme.muted, fontSize: 11, textAlign: "center" },
 });

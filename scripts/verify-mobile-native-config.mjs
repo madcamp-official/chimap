@@ -22,16 +22,119 @@ const expectedIdentifier = identifiers[appEnvironment];
 const iosClientId = process.env.NAVER_MAP_CLIENT_ID_IOS;
 const androidClientId = process.env.NAVER_MAP_CLIENT_ID_ANDROID;
 const kakaoNativeAppKey = process.env.KAKAO_NATIVE_APP_KEY;
+const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+const appleSignInCapabilityValue =
+  process.env.IOS_APPLE_SIGN_IN_CAPABILITY_ENABLED ?? "true";
+if (
+  appleSignInCapabilityValue !== "true" &&
+  appleSignInCapabilityValue !== "false"
+) {
+  throw new Error(
+    "IOS_APPLE_SIGN_IN_CAPABILITY_ENABLED must be true or false.",
+  );
+}
+const appleSignInCapabilityEnabled = appleSignInCapabilityValue === "true";
+const serverSecretVariableNames = [
+  "DATABASE_URL",
+  "POSTGRES_PASSWORD",
+  "AUTH_SESSION_SECRET",
+  "AUTH_REFRESH_RETRY_ENCRYPTION_KEY",
+  "NAVER_MAP_NCP_KEY",
+  "KAKAO_REST_API_KEY",
+  "KAKAO_OAUTH_CLIENT_SECRET",
+  "APPLE_PRIVATE_KEY_BASE64",
+];
 if (
   expectedIdentifier === undefined ||
   iosClientId === undefined ||
   androidClientId === undefined ||
-  kakaoNativeAppKey === undefined
+  kakaoNativeAppKey === undefined ||
+  apiBaseUrl === undefined
 ) {
   throw new Error("Native config verification environment is incomplete.");
 }
+if (
+  appEnvironment === "staging" &&
+  apiBaseUrl !== "https://staging.chimap.madcamp-kaist.org"
+) {
+  throw new Error("Staging native verification requires the staging API URL.");
+}
 
 const checks = new Map();
+
+function escapeRegularExpression(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function plistHasKey(plist, key) {
+  return new RegExp(`<key>\\s*${escapeRegularExpression(key)}\\s*</key>`, "u").test(
+    plist,
+  );
+}
+
+function plistStringValue(plist, key) {
+  const match = new RegExp(
+    `<key>\\s*${escapeRegularExpression(key)}\\s*</key>\\s*<string>([^<]*)</string>`,
+    "u",
+  ).exec(plist);
+  return match?.[1]?.trim() ?? null;
+}
+
+function plistBooleanValue(plist, key) {
+  const match = new RegExp(
+    `<key>\\s*${escapeRegularExpression(key)}\\s*</key>\\s*<(true|false)\\s*/>`,
+    "u",
+  ).exec(plist);
+  return match?.[1] === undefined ? null : match[1] === "true";
+}
+
+function plistArrayValues(plist, key) {
+  const pattern = new RegExp(
+    `<key>\\s*${escapeRegularExpression(key)}\\s*</key>\\s*<array>([\\s\\S]*?)</array>`,
+    "gu",
+  );
+  const values = [];
+  for (const match of plist.matchAll(pattern)) {
+    if (match[1] === undefined) {
+      continue;
+    }
+    values.push(
+      ...[...match[1].matchAll(/<string>([^<]*)<\/string>/gu)].map((entry) =>
+        entry[1].trim(),
+      ),
+    );
+  }
+  return values;
+}
+
+function xcodeApplicationTargetBuildSettings(project) {
+  const configurationPattern =
+    /isa = XCBuildConfiguration;\s*(?:baseConfigurationReference = [^;]+;\s*)?buildSettings = \{([\s\S]*?)\n\s*\};\s*name = [^;]+;/gu;
+  return [...project.matchAll(configurationPattern)]
+    .map((entry) => entry[1])
+    .filter(
+      (settings) =>
+        settings.includes("PRODUCT_BUNDLE_IDENTIFIER") &&
+        settings.includes("INFOPLIST_FILE"),
+    );
+}
+
+function xcodeBuildSettingValue(settings, setting) {
+  const match = new RegExp(
+    `\\b${escapeRegularExpression(setting)}\\s*=\\s*([^;]+);`,
+    "u",
+  ).exec(settings);
+  return match?.[1]?.trim().replace(/^"|"$/gu, "") ?? null;
+}
+
+function allXcodeBuildSettingsEqual(settingsList, setting, expected) {
+  return (
+    settingsList.length > 0 &&
+    settingsList.every(
+      (settings) => xcodeBuildSettingValue(settings, setting) === expected,
+    )
+  );
+}
 
 async function findMainActivity(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -193,62 +296,141 @@ if (verifyIos) {
   const podfileProperties = JSON.parse(
     await readFile(join(iosRoot, "Podfile.properties.json"), "utf8"),
   );
+  const podfilePropertiesText = JSON.stringify(podfileProperties);
+  const expoPlist = await readFile(
+    join(iosRoot, iosProjectDirectory.name, "Supporting", "Expo.plist"),
+    "utf8",
+  );
+  const podfile = await readFile(join(iosRoot, "Podfile"), "utf8");
   const xcodeProject = await readFile(
     join(iosRoot, xcodeProjectDirectory.name, "project.pbxproj"),
     "utf8",
   );
 
-  checks.set("iOS NAVER metadata", iosInfo.includes("NMFNcpKeyId"));
-  checks.set("iOS NAVER client ID", iosInfo.includes(iosClientId));
+  const supportedOrientations = plistArrayValues(
+    iosInfo,
+    "UISupportedInterfaceOrientations",
+  );
+  const backgroundModes = plistArrayValues(iosInfo, "UIBackgroundModes");
+  const kakaoQuerySchemes = plistArrayValues(
+    iosInfo,
+    "LSApplicationQueriesSchemes",
+  );
+  const urlSchemes = plistArrayValues(iosInfo, "CFBundleURLSchemes");
+  const applicationTargetBuildSettings = xcodeApplicationTargetBuildSettings(
+    xcodeProject,
+  );
+  const bundleIdentifiers = applicationTargetBuildSettings.map((settings) =>
+    xcodeBuildSettingValue(settings, "PRODUCT_BUNDLE_IDENTIFIER"),
+  );
+  const generatedIosConfiguration = [
+    iosInfo,
+    iosEntitlements,
+    expoPlist,
+    podfile,
+    podfilePropertiesText,
+    xcodeProject,
+  ].join("\n");
+  const serverSecretValues = serverSecretVariableNames
+    .map((name) => process.env[name])
+    .filter((value) => value !== undefined && value.length > 0);
+  const forbiddenServerMarkers = [
+    ...serverSecretVariableNames,
+    ...serverSecretValues,
+    "postgresql://",
+  ];
+
+  checks.set(
+    "iOS deployment target",
+    allXcodeBuildSettingsEqual(
+      applicationTargetBuildSettings,
+      "IPHONEOS_DEPLOYMENT_TARGET",
+      "17.0",
+    ),
+  );
+  checks.set(
+    "iOS iPhone-only target family",
+    allXcodeBuildSettingsEqual(
+      applicationTargetBuildSettings,
+      "TARGETED_DEVICE_FAMILY",
+      "1",
+    ),
+  );
+  checks.set(
+    "iOS portrait orientation",
+    supportedOrientations.includes("UIInterfaceOrientationPortrait") &&
+      supportedOrientations.every(
+        (orientation) => !orientation.startsWith("UIInterfaceOrientationLandscape"),
+      ),
+  );
+  checks.set(
+    "iOS Light appearance",
+    plistStringValue(iosInfo, "UIUserInterfaceStyle") === "Light",
+  );
+  checks.set("iOS NAVER metadata", plistHasKey(iosInfo, "NMFNcpKeyId"));
+  checks.set(
+    "iOS NAVER client ID",
+    plistStringValue(iosInfo, "NMFNcpKeyId") === iosClientId,
+  );
   checks.set(
     "iOS excludes Android NAVER ID",
-    !iosInfo.includes(androidClientId),
+    plistStringValue(iosInfo, "NMFNcpKeyId") !== androidClientId,
   );
-  checks.set("iOS Kakao scheme", iosInfo.includes(`kakao${kakaoNativeAppKey}`));
-  checks.set("iOS Kakao query scheme", iosInfo.includes("kakaokompassauth"));
+  checks.set("iOS Kakao scheme", urlSchemes.includes(`kakao${kakaoNativeAppKey}`));
+  checks.set(
+    "iOS Kakao query scheme",
+    kakaoQuerySchemes.includes("kakaokompassauth"),
+  );
   checks.set(
     "iOS foreground location purpose",
-    iosInfo.includes("NSLocationWhenInUseUsageDescription"),
+    (plistStringValue(iosInfo, "NSLocationWhenInUseUsageDescription")?.length ?? 0) >
+      0,
   );
   checks.set(
     "iOS HealthKit read purpose",
-    iosInfo.includes("NSHealthShareUsageDescription"),
+    (plistStringValue(iosInfo, "NSHealthShareUsageDescription")?.length ?? 0) > 0,
   );
   checks.set(
     "iOS excludes HealthKit write purpose",
-    !iosInfo.includes("NSHealthUpdateUsageDescription"),
+    !plistHasKey(iosInfo, "NSHealthUpdateUsageDescription"),
   );
   checks.set(
     "iOS excludes always location",
-    !iosInfo.includes("NSLocationAlwaysUsageDescription"),
+    !plistHasKey(iosInfo, "NSLocationAlwaysUsageDescription"),
   );
   checks.set(
     "iOS excludes combined always location",
-    !iosInfo.includes("NSLocationAlwaysAndWhenInUseUsageDescription"),
+    !plistHasKey(iosInfo, "NSLocationAlwaysAndWhenInUseUsageDescription"),
   );
   checks.set(
     "iOS excludes motion permission",
-    !iosInfo.includes("NSMotionUsageDescription"),
+    !plistHasKey(iosInfo, "NSMotionUsageDescription"),
   );
   checks.set(
     "iOS excludes background location mode",
-    !iosInfo.includes("<string>location</string>"),
+    !backgroundModes.includes("location"),
   );
   checks.set(
     "iOS non-exempt encryption declaration",
-    /<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/u.test(iosInfo),
+    plistBooleanValue(iosInfo, "ITSAppUsesNonExemptEncryption") === false,
   );
   checks.set(
     "iOS HealthKit entitlement",
-    iosEntitlements.includes("com.apple.developer.healthkit"),
+    plistHasKey(iosEntitlements, "com.apple.developer.healthkit"),
   );
   checks.set(
     "iOS excludes HealthKit background delivery",
-    !iosEntitlements.includes("com.apple.developer.healthkit.background-delivery"),
+    !plistHasKey(
+      iosEntitlements,
+      "com.apple.developer.healthkit.background-delivery",
+    ),
   );
   checks.set(
-    "iOS Apple Sign In entitlement",
-    iosEntitlements.includes("com.apple.developer.applesignin"),
+    appleSignInCapabilityEnabled
+      ? "iOS Apple Sign In entitlement"
+      : "iOS excludes Apple Sign In entitlement for Personal Team",
+    plistHasKey(iosEntitlements, "com.apple.developer.applesignin") ===
+      appleSignInCapabilityEnabled,
   );
   checks.set(
     "iOS privacy manifest aggregation",
@@ -256,7 +438,22 @@ if (verifyIos) {
   );
   checks.set(
     "iOS bundle ID",
-    xcodeProject.includes(`PRODUCT_BUNDLE_IDENTIFIER = "${expectedIdentifier}"`),
+    bundleIdentifiers.includes(expectedIdentifier) &&
+      !Object.values(identifiers).some(
+        (identifier) =>
+          identifier !== expectedIdentifier && bundleIdentifiers.includes(identifier),
+      ),
+  );
+  checks.set(
+    "iOS excludes server secrets",
+    forbiddenServerMarkers.every(
+      (marker) => !generatedIosConfiguration.includes(marker),
+    ),
+  );
+  checks.set(
+    "iOS staging excludes production API",
+    appEnvironment !== "staging" ||
+      !generatedIosConfiguration.includes("https://chimap.madcamp-kaist.org"),
   );
 }
 

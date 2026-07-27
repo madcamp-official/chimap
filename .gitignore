@@ -23,6 +23,7 @@ apps/mobile/.metro-health-check*
 .env
 .env.*
 !/.env.example
+!/apps/mobile/.env.example
 
 .DS_Store
 *.log

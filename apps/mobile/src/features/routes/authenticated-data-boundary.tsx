@@ -6,6 +6,7 @@ import {
   type MobileStorageKeys,
 } from "../../platform/storage/namespace";
 import { useMobileSession } from "../auth/mobile-session";
+import { WalkingProfileProvider } from "../profile/walking-profile";
 import {
   RecommendationQueryProvider,
   useClearPersistedRecommendationQueries,
@@ -57,11 +58,13 @@ export function AuthenticatedDataBoundary({
   }
   const { keys } = resolvedStorage;
   return (
-    <RecommendationQueryProvider key={keys.query} queryStorageKey={keys.query}>
-      <RouteStoreProvider storageKey={keys.route}>
-        <LocalCleanupRegistration userId={ownerId} />
-        {children}
-      </RouteStoreProvider>
-    </RecommendationQueryProvider>
+    <WalkingProfileProvider storageKey={keys.profile}>
+      <RecommendationQueryProvider key={keys.query} queryStorageKey={keys.query}>
+        <RouteStoreProvider storageKey={keys.route}>
+          <LocalCleanupRegistration userId={ownerId} />
+          {children}
+        </RouteStoreProvider>
+      </RecommendationQueryProvider>
+    </WalkingProfileProvider>
   );
 }

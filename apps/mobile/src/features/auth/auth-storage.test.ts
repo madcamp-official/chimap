@@ -53,10 +53,12 @@ describe("mobile SecureStore session", () => {
     await writeStoredSession(pair);
 
     expect(secureStore.setItemAsync).toHaveBeenCalledWith(
-      "chimap:staging:ios:auth:session:v1",
+      "chimap.staging.ios.auth.session.v1",
       JSON.stringify(pair),
       { keychainAccessible: "after-first-unlock-this-device-only" },
     );
+    const storageKey = secureStore.setItemAsync.mock.calls[0]?.[0];
+    expect(storageKey).toMatch(/^[A-Za-z0-9._-]+$/);
     await expect(readStoredSession()).resolves.toEqual(pair);
 
     await clearStoredSession();
@@ -65,13 +67,13 @@ describe("mobile SecureStore session", () => {
 
   it("손상되거나 계약과 다른 session은 제거하고 사용하지 않는다", async () => {
     secureStore.values.set(
-      "chimap:staging:ios:auth:session:v1",
+      "chimap.staging.ios.auth.session.v1",
       JSON.stringify({ ...pair, refreshToken: "short" }),
     );
 
     await expect(readStoredSession()).resolves.toBeNull();
     expect(secureStore.deleteItemAsync).toHaveBeenCalledWith(
-      "chimap:staging:ios:auth:session:v1",
+      "chimap.staging.ios.auth.session.v1",
     );
   });
 });

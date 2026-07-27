@@ -8,13 +8,9 @@ import {
 
 import { mobileClientHeaders } from "../api/client-metadata";
 import { fetchWithTimeout } from "../api/fetch-with-timeout";
+import { MobileApiError } from "./mobile-api-error";
 
-export class MobileApiError extends Error {
-  public constructor(public readonly code: string, message: string) {
-    super(message);
-    this.name = "MobileApiError";
-  }
-}
+export { MobileApiError } from "./mobile-api-error";
 
 async function responseBody(response: Response): Promise<unknown> {
   const value = await response.text();
@@ -28,6 +24,8 @@ async function expectTokenPair(response: Response): Promise<MobileTokenPair> {
     throw new MobileApiError(
       error.success ? error.data.error.code : "INTERNAL_ERROR",
       error.success ? error.data.error.message : "로그인을 완료하지 못했습니다.",
+      error.success ? error.data.error.requestId : null,
+      response.status,
     );
   }
   return mobileTokenPairSchema.parse(body);

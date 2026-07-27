@@ -3,6 +3,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 type AppEnvironment = "development" | "staging" | "production";
 
 const androidKotlinVersion = "2.1.20";
+const stagingApiBaseUrl = "https://staging.chimap.madcamp-kaist.org";
 
 const identifiers: Record<
   AppEnvironment,
@@ -44,12 +45,27 @@ function requiredClientId(
   return normalized;
 }
 
+function appleSignInCapabilityEnabled(value: string | undefined): boolean {
+  if (value === undefined || value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(
+    "IOS_APPLE_SIGN_IN_CAPABILITY_ENABLED는 true 또는 false여야 합니다.",
+  );
+}
+
 export function createExpoConfig(
   _context: ConfigContext,
   environment: NodeJS.ProcessEnv = process.env,
 ): ExpoConfig {
   const appEnv = appEnvironment(environment.APP_ENV ?? "development");
   const identity = identifiers[appEnv];
+  const usesAppleSignIn = appleSignInCapabilityEnabled(
+    environment.IOS_APPLE_SIGN_IN_CAPABILITY_ENABLED,
+  );
   const iosClientId = requiredClientId(
     environment.NAVER_MAP_CLIENT_ID_IOS,
     "NAVER_MAP_CLIENT_ID_IOS",
@@ -65,12 +81,22 @@ export function createExpoConfig(
   if (iosClientId === androidClientId) {
     throw new Error("iOS와 Android NAVER Map Client ID는 분리해야 합니다.");
   }
+  const webClientId = environment.VITE_NAVER_MAP_NCP_KEY_ID?.trim();
   if (
-    appEnv === "production" &&
-    (iosClientId === environment.VITE_NAVER_MAP_NCP_KEY_ID ||
-      androidClientId === environment.VITE_NAVER_MAP_NCP_KEY_ID)
+    webClientId !== undefined &&
+    webClientId.length > 0 &&
+    (iosClientId === webClientId || androidClientId === webClientId)
   ) {
-    throw new Error("운영 모바일 NAVER Map Client ID는 Web Client ID와 분리해야 합니다.");
+    throw new Error("모바일 NAVER Map Client ID는 Web Client ID와 분리해야 합니다.");
+  }
+  const apiBaseUrl = (
+    environment.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8080"
+  ).trim();
+  if (apiBaseUrl.endsWith("/")) {
+    throw new Error("EXPO_PUBLIC_API_BASE_URL에는 trailing slash를 넣지 않습니다.");
+  }
+  if (appEnv === "staging" && apiBaseUrl !== stagingApiBaseUrl) {
+    throw new Error(`staging API URL은 ${stagingApiBaseUrl}이어야 합니다.`);
   }
 
   return {
@@ -79,11 +105,12 @@ export function createExpoConfig(
     version: "0.1.0",
     orientation: "portrait",
     scheme: `chimap-${appEnv}`,
-    userInterfaceStyle: "automatic",
+    userInterfaceStyle: "light",
     ios: {
+      deploymentTarget: "17.0",
       bundleIdentifier: identity.bundleIdentifier,
       supportsTablet: false,
-      usesAppleSignIn: true,
+      usesAppleSignIn,
       config: {
         usesNonExemptEncryption: false,
       },
@@ -100,7 +127,7 @@ export function createExpoConfig(
     plugins: [
       "expo-router",
       "expo-secure-store",
-      "expo-apple-authentication",
+      ...(usesAppleSignIn ? (["expo-apple-authentication"] as const) : []),
       [
         "@kingstinct/react-native-healthkit",
         {
@@ -147,13 +174,16 @@ export function createExpoConfig(
         "@react-native-seoul/kakao-login",
         { kakaoAppKey: kakaoNativeAppKey, kotlinVersion: androidKotlinVersion },
       ],
+      ...(!usesAppleSignIn
+        ? (["./plugins/with-personal-team-apple-sign-in.cjs"] as const)
+        : []),
     ],
     experiments: {
       typedRoutes: true,
     },
     extra: {
       appEnvironment: appEnv,
-      apiBaseUrl: environment.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8080",
+      apiBaseUrl,
     },
   };
 }

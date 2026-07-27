@@ -9,7 +9,9 @@ import { Platform } from "react-native";
 function sessionStorageKey(): string {
   const configured = Constants.expoConfig?.extra?.appEnvironment;
   const environment = typeof configured === "string" ? configured : "development";
-  return `chimap:${environment}:${Platform.OS}:auth:session:v1`;
+  // expo-secure-store accepts only alphanumeric characters, `.`, `-`, and `_`
+  // for keys. Keep the environment/platform namespace without `:` separators.
+  return `chimap.${environment}.${Platform.OS}.auth.session.v1`;
 }
 
 export async function readStoredSession(): Promise<MobileTokenPair | null> {

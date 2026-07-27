@@ -6,6 +6,7 @@ import { Platform } from "react-native";
 export type MobileStorageKeys = {
   route: string;
   query: string;
+  profile: string;
 };
 
 function appEnvironment(): string {
@@ -24,9 +25,16 @@ export async function storageKeysForUser(userId: string): Promise<MobileStorageK
   return {
     route: `${prefix}:route:v1`,
     query: `${prefix}:query:v1`,
+    profile: `${prefix}:walking-profile:v1`,
   };
 }
 
-export async function clearUserLocalState(keys: MobileStorageKeys): Promise<void> {
+export async function clearUserSessionState(
+  keys: MobileStorageKeys,
+): Promise<void> {
   await AsyncStorage.multiRemove([keys.route, keys.query]);
+}
+
+export async function clearUserLocalState(keys: MobileStorageKeys): Promise<void> {
+  await AsyncStorage.multiRemove([keys.route, keys.query, keys.profile]);
 }

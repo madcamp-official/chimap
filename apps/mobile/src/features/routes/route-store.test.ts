@@ -23,7 +23,7 @@ beforeEach(() => {
 describe("RouteStore persistence", () => {
   it("eviction 뒤 선택 route와 열린 상세 sheet를 같은 사용자 key에서 복원한다", async () => {
     const first = createRouteStore("chimap:development:ios:user-a:route:v1");
-    first.getState().selectRoute("goal-route", "GOAL");
+    first.getState().openDetail("goal-route", "GOAL");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const restored = createRouteStore("chimap:development:ios:user-a:route:v1");
@@ -34,6 +34,22 @@ describe("RouteStore persistence", () => {
       selectedRouteId: "goal-route",
       selectedRouteType: "GOAL",
       detailSheet: { open: true, routeId: "goal-route" },
+    });
+  });
+
+  it("경로 카드 선택은 지도만 바꾸고 상세 sheet는 자세히 동작에서만 연다", () => {
+    const store = createRouteStore("chimap:development:ios:user-a:route:v1");
+
+    store.getState().selectRoute("fast-route", "FAST");
+    expect(store.getState()).toMatchObject({
+      selectedRouteId: "fast-route",
+      detailSheet: { open: false, routeId: null },
+    });
+
+    store.getState().openDetail("fast-route", "FAST");
+    expect(store.getState()).toMatchObject({
+      selectedRouteId: "fast-route",
+      detailSheet: { open: true, routeId: "fast-route" },
     });
   });
 

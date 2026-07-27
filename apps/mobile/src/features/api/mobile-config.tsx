@@ -10,7 +10,8 @@ import {
   useEffect,
   useState,
 } from "react";
-import { ActivityIndicator, Platform, SafeAreaView, StyleSheet, Text } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, Text } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { fetchMobileConfig } from "./client-metadata";
 import { apiBaseUrl } from "./runtime-config";
@@ -91,7 +92,7 @@ export function MobileConfigProvider({ children }: PropsWithChildren) {
           setConfig(value);
         }
       } catch {
-        // 저장된 추천과 guest 핵심 흐름은 운영 설정 네트워크 장애와 분리한다.
+        // 캐시가 있으면 로그인·추천 흐름은 일시적인 설정 조회 장애와 분리한다.
       }
     })();
     return () => {

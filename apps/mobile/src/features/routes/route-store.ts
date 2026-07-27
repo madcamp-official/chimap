@@ -31,6 +31,7 @@ export type RouteStoreState = PersistedRouteStateV1 & {
   setHydrated(hydrated: boolean): void;
   rememberRequest(request: RecommendationRequest, requestHash: string): void;
   selectRoute(routeId: string, routeType: RecommendationType): void;
+  openDetail(routeId: string, routeType: RecommendationType): void;
   reconcileRecommendations(response: RecommendationResponse): void;
   closeDetailSheet(): void;
   reset(): void;
@@ -129,6 +130,13 @@ export function createRouteStore(storageKey: string) {
           set({ lastRequest, requestHash, savedAt: now, requestSavedAt: now });
         },
         selectRoute: (selectedRouteId, selectedRouteType) =>
+          set({
+            selectedRouteId,
+            selectedRouteType,
+            detailSheet: { open: false, routeId: null },
+            savedAt: new Date().toISOString(),
+          }),
+        openDetail: (selectedRouteId, selectedRouteType) =>
           set({
             selectedRouteId,
             selectedRouteType,

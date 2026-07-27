@@ -12,6 +12,7 @@ export async function searchPlaces(input: {
   apiBaseUrl: string;
   query: string;
   center?: Coordinate;
+  signal?: AbortSignal;
 }): Promise<Place[]> {
   const url = new URL("/api/v1/places", input.apiBaseUrl);
   url.searchParams.set("query", input.query);
@@ -23,7 +24,10 @@ export async function searchPlaces(input: {
   }
   const response = await fetchWithTimeout(
     url,
-    { headers: mobileClientHeaders() },
+    {
+      headers: mobileClientHeaders(),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    },
     8_000,
   );
   if (!response.ok) {

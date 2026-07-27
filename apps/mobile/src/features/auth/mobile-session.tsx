@@ -16,6 +16,7 @@ import { Platform } from "react-native";
 
 import {
   clearUserLocalState,
+  clearUserSessionState,
   storageKeysForUser,
 } from "../../platform/storage/namespace";
 import {
@@ -40,6 +41,7 @@ type SessionState =
 
 type MobileSessionContextValue = {
   state: SessionState;
+  prepareKakaoLogin(): void;
   completeKakaoLogin(kakaoAccessToken: string): Promise<void>;
   completeAppleLogin(
     input: Omit<MobileAppleLoginRequest, "platform">,
@@ -73,11 +75,17 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     },
     [],
   );
-  const clearLocalUserState = useCallback(async (userId: string) => {
+  const clearLocalUserState = useCallback(async (
+    userId: string,
+    includeProfile = false,
+  ) => {
     if (localCleanup.current?.userId === userId) {
       await localCleanup.current.run();
     }
-    await clearUserLocalState(await storageKeysForUser(userId));
+    const keys = await storageKeysForUser(userId);
+    await (includeProfile
+      ? clearUserLocalState(keys)
+      : clearUserSessionState(keys));
   }, []);
 
   useEffect(() => {
@@ -121,7 +129,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
           if (mounted) {
             setState({
               status: "guest",
-              message: "세션이 만료되었습니다. 게스트로 계속 이용할 수 있습니다.",
+              message: "세션이 만료되었습니다. 카카오로 다시 로그인해 주세요.",
             });
           }
         }
@@ -131,7 +139,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
       if (mounted && sessionEpoch.current === bootstrapEpoch) {
         setState({
           status: "guest",
-          message: "세션을 복원하지 못했지만 게스트로 계속 이용할 수 있습니다.",
+          message: "세션을 복원하지 못했습니다. 카카오로 다시 로그인해 주세요.",
         });
       }
     });
@@ -171,7 +179,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
           ]);
           setState({
             status: "guest",
-            message: "세션이 만료되었습니다. 게스트로 계속 이용할 수 있습니다.",
+            message: "세션이 만료되었습니다. 카카오로 다시 로그인해 주세요.",
           });
           return;
         }
@@ -203,6 +211,13 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     sessionEpoch.current += 1;
     await writeStoredSession(pair);
     setState({ status: "authenticated", pair });
+  }, []);
+
+  const prepareKakaoLogin = useCallback(() => {
+    // KakaoTalk으로 전환된 동안 진행 중이던 bootstrap이 돌아와 로그인 화면을
+    // 이전 세션 오류로 덮지 못하게 하고, 재시도 시 오래된 안내를 즉시 지운다.
+    sessionEpoch.current += 1;
+    setState({ status: "guest", message: null });
   }, []);
 
   const completeAppleLogin = useCallback(
@@ -256,7 +271,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     });
     await Promise.allSettled([
       clearStoredSession(),
-      clearLocalUserState(pair.user.id),
+      clearLocalUserState(pair.user.id, true),
     ]);
     setState({ status: "guest", message: "계정과 기기 저장 데이터를 삭제했습니다." });
   }, [clearLocalUserState, state]);
@@ -264,6 +279,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
   const value = useMemo(
     () => ({
       state,
+      prepareKakaoLogin,
       completeKakaoLogin,
       completeAppleLogin,
       logout,
@@ -275,6 +291,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
       completeKakaoLogin,
       deleteAccount,
       logout,
+      prepareKakaoLogin,
       registerLocalCleanup,
       state,
     ],
