@@ -22,11 +22,22 @@ const route = {
 } as Recommendation;
 
 describe("recommendation presentation", () => {
-  it("시간과 거리를 모바일 카드 형식으로 표시한다", () => {
-    expect(formatMinutes(1_560)).toBe("26분");
-    expect(formatMeters(850)).toBe("850m");
-    expect(formatMeters(1_250)).toBe("1.3km");
-    expect(formatClockTime("2026-07-28T10:25:00+09:00")).toMatch(/10:25/u);
+  it("UTC host에서도 한국 시간과 거리를 모바일 카드 형식으로 표시한다", () => {
+    const originalTimeZone = process.env.TZ;
+    process.env.TZ = "UTC";
+
+    try {
+      expect(formatMinutes(1_560)).toBe("26분");
+      expect(formatMeters(850)).toBe("850m");
+      expect(formatMeters(1_250)).toBe("1.3km");
+      expect(formatClockTime("2026-07-28T10:25:00+09:00")).toMatch(/10:25/u);
+    } finally {
+      if (originalTimeZone === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTimeZone;
+      }
+    }
   });
 
   it("이동 순서와 목표 걸음 차이를 표시한다", () => {

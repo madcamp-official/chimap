@@ -12,6 +12,7 @@ export function formatClockTime(value: string): string {
   return new Date(value).toLocaleTimeString("ko-KR", {
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "Asia/Seoul",
   });
 }
 
