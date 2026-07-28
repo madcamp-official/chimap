@@ -5,6 +5,9 @@
   },
   "build": {
     "development": {
+      "node": "24.18.0",
+      "pnpm": "10.15.1",
+      "corepack": true,
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development",
@@ -16,6 +19,9 @@
       }
     },
     "staging-device": {
+      "node": "24.18.0",
+      "pnpm": "10.15.1",
+      "corepack": true,
       "distribution": "internal",
       "environment": "preview",
       "env": {
@@ -26,6 +32,9 @@
       }
     },
     "play-internal": {
+      "node": "24.18.0",
+      "pnpm": "10.15.1",
+      "corepack": true,
       "distribution": "store",
       "autoIncrement": true,
       "environment": "production",

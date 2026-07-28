@@ -23,6 +23,9 @@ describe("EAS Android release interface", () => {
     ]);
     expect(eas.build).toMatchObject({
       development: {
+        node: "24.18.0",
+        pnpm: "10.15.1",
+        corepack: true,
         developmentClient: true,
         distribution: "internal",
         environment: "development",
@@ -30,12 +33,18 @@ describe("EAS Android release interface", () => {
         android: { buildType: "apk" },
       },
       "staging-device": {
+        node: "24.18.0",
+        pnpm: "10.15.1",
+        corepack: true,
         distribution: "internal",
         environment: "preview",
         env: { APP_ENV: "staging" },
         android: { buildType: "apk" },
       },
       "play-internal": {
+        node: "24.18.0",
+        pnpm: "10.15.1",
+        corepack: true,
         distribution: "store",
         autoIncrement: true,
         environment: "production",
