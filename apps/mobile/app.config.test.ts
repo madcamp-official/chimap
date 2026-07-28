@@ -97,6 +97,7 @@ describe("Expo platform identity", () => {
     expect(config.ios?.infoPlist?.NSHealthShareUsageDescription).toEqual(
       expect.any(String),
     );
+    expect(config.plugins).toContain("expo-font");
     expect(config.plugins).toContain("expo-apple-authentication");
     expect(config.plugins).toContainEqual([
       "@kingstinct/react-native-healthkit",

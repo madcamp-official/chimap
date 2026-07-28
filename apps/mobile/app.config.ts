@@ -160,6 +160,7 @@ export function createExpoConfig(
     plugins: [
       "expo-router",
       "expo-secure-store",
+      "expo-font",
       [
         "expo-splash-screen",
         {

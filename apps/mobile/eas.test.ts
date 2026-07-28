@@ -12,6 +12,12 @@ type EasConfig = {
 const eas = JSON.parse(
   readFileSync(fileURLToPath(new URL("./eas.json", import.meta.url)), "utf8"),
 ) as EasConfig;
+const mobilePackage = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("./package.json", import.meta.url)),
+    "utf8",
+  ),
+) as { scripts?: Record<string, string> };
 
 describe("EAS Android release interface", () => {
   it("remote version source와 세 build profile만 노출한다", () => {
@@ -60,5 +66,11 @@ describe("EAS Android release interface", () => {
       android: { track: "internal", releaseStatus: "draft" },
     });
     expect(JSON.stringify(eas)).not.toContain('"track":"production"');
+  });
+
+  it("clean EAS archive에서 공용 mobile dependency를 먼저 build한다", () => {
+    expect(mobilePackage.scripts?.["eas-build-post-install"]).toBe(
+      "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build",
+    );
   });
 });
