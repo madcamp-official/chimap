@@ -390,10 +390,10 @@ const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.55 },
   primaryButtonText: { color: chimapTheme.white, fontSize: 16, fontWeight: "900" },
-  cancelButton: { minHeight: 44, alignItems: "center", justifyContent: "center" },
+  cancelButton: { minHeight: 48, alignItems: "center", justifyContent: "center" },
   cancelText: { color: chimapTheme.muted, fontWeight: "800" },
   inputAccessory: {
-    minHeight: 44,
+    minHeight: 48,
     alignItems: "flex-end",
     justifyContent: "center",
     paddingHorizontal: 18,

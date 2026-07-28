@@ -12,6 +12,7 @@ import {
 } from "@chimap/contracts";
 import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
+import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,6 +20,7 @@ import {
   Animated,
   Alert,
   AppState,
+  BackHandler,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -267,7 +269,7 @@ function RouteCard({
             />
           ))}
         </View>
-        <Text numberOfLines={2} style={styles.routeSequence}>
+        <Text style={styles.routeSequence}>
           {routeSequence(route)}
         </Text>
         <View style={styles.modeDistanceLegend}>
@@ -299,7 +301,7 @@ function RouteCard({
         </View>
       </Pressable>
       <View style={styles.routeActions}>
-        <Text numberOfLines={1} style={styles.routeReason}>
+        <Text style={styles.routeReason}>
           {route.reason}
         </Text>
         <Pressable
@@ -350,6 +352,7 @@ function AccountSheet({
       presentationStyle="pageSheet"
       visible={open}
     >
+      <StatusBar style="dark" />
       <SafeAreaView edges={["top", "bottom"]} style={styles.detailSafeArea}>
         <ScrollView contentContainerStyle={styles.accountContent}>
           <View style={styles.detailHeading}>
@@ -371,7 +374,11 @@ function AccountSheet({
               <Text style={styles.accountFactLabel}>하루 목표</Text>
               <Text style={styles.accountFactValue}>{profile.dailyGoalSteps.toLocaleString()}걸음</Text>
             </View>
-            <View style={styles.accountFactRow}>
+            <View
+              accessibilityLabel={`${healthServiceName()} 상태 ${healthStatusLabel(healthStatus)}`}
+              accessible
+              style={styles.accountFactRow}
+            >
               <Text style={styles.accountFactLabel}>{healthServiceName()}</Text>
               <Text style={styles.accountFactValue}>
                 {healthStatusLabel(healthStatus)}
@@ -379,7 +386,9 @@ function AccountSheet({
             </View>
           </View>
           <Pressable
+            accessibilityLabel={`${healthServiceName()}에서 현재 걸음 새로고침`}
             accessibilityRole="button"
+            accessibilityState={{ disabled: refreshingSteps }}
             disabled={refreshingSteps}
             onPress={() => void onRefreshSteps()}
             style={styles.accountRefreshAction}
@@ -583,6 +592,7 @@ function RouteDetailSheet({
       presentationStyle="pageSheet"
       visible={open && route !== null}
     >
+      <StatusBar style="dark" />
       {route === null ? null : (
         <SafeAreaView edges={["top", "bottom"]} style={styles.detailSafeArea}>
           <ScrollView contentContainerStyle={styles.detailContent}>
@@ -964,6 +974,35 @@ export function PlannerScreen({
     void readSteps(false);
   }, [hydrated, readSteps]);
 
+  useEffect(() => {
+    if (Platform.OS !== "android") {
+      return;
+    }
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (accountOpen) {
+          setAccountOpen(false);
+          return true;
+        }
+        if (detailSheet.open) {
+          closeDetailSheet();
+          return true;
+        }
+        if (warningsOpen) {
+          setWarningsOpen(false);
+          return true;
+        }
+        if (sheetSnapRef.current !== "collapsed") {
+          snapSheet("collapsed");
+          return true;
+        }
+        return false;
+      },
+    );
+    return () => subscription.remove();
+  }, [accountOpen, closeDetailSheet, detailSheet.open, snapSheet, warningsOpen]);
+
   const selectedRoute = useMemo(() => {
     const recommendations = query.data?.recommendations;
     if (recommendations === undefined) {
@@ -1107,17 +1146,17 @@ export function PlannerScreen({
             <View style={styles.brandMark}>
               <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={18} />
             </View>
-            <Text adjustsFontSizeToFit numberOfLines={1} style={styles.brand}>CHIMap</Text>
+            <Text style={styles.brand}>CHIMap</Text>
           </View>
           <View accessibilityLabel={`현재 걸음 ${currentStepsLabel}걸음`} style={styles.compactMetric}>
-            <Text numberOfLines={1} style={styles.compactMetricLabel}>현재걸음</Text>
-            <Text adjustsFontSizeToFit numberOfLines={1} style={styles.compactMetricValue}>
+            <Text style={styles.compactMetricLabel}>현재걸음</Text>
+            <Text style={styles.compactMetricValue}>
               {readingSteps ? "확인 중" : currentStepsLabel}
             </Text>
           </View>
           <View accessibilityLabel={`목표 걸음 ${profile.dailyGoalSteps.toLocaleString()}걸음`} style={styles.compactMetric}>
-            <Text numberOfLines={1} style={styles.compactMetricLabel}>목표걸음</Text>
-            <Text adjustsFontSizeToFit numberOfLines={1} style={styles.compactMetricValue}>
+            <Text style={styles.compactMetricLabel}>목표걸음</Text>
+            <Text style={styles.compactMetricValue}>
               {profile.dailyGoalSteps.toLocaleString()}
             </Text>
           </View>
@@ -1128,7 +1167,7 @@ export function PlannerScreen({
             style={styles.accountButton}
           >
             <AppIcon color={chimapTheme.white} name="person" size={17} />
-            <Text numberOfLines={1} style={styles.accountButtonText}>내 정보</Text>
+            <Text style={styles.accountButtonText}>내 정보</Text>
           </Pressable>
         </View>
       </View>
@@ -1169,10 +1208,11 @@ export function PlannerScreen({
                 <Text style={styles.mapHintBody}>출발지·도착지 검색</Text>
               </View>
             ) : null}
-            <Pressable
-              accessibilityLabel="지도에서 내 위치 보기"
-              accessibilityRole="button"
-              disabled={locating}
+          <Pressable
+            accessibilityLabel="지도에서 내 위치 보기"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: locating }}
+            disabled={locating}
               onPress={() => void focusCurrentLocation()}
               style={[
                 styles.mapLocationButton,
@@ -1454,21 +1494,21 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: chimapTheme.navy },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: chimapTheme.canvas },
   appHeader: { paddingHorizontal: 7, paddingVertical: 4, backgroundColor: chimapTheme.navy },
-  headerCompactRow: { minHeight: 46, flexDirection: "row", alignItems: "center", gap: 5 },
+  headerCompactRow: { minHeight: 48, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 },
   brandLockup: { minWidth: 104, flexDirection: "row", alignItems: "center", gap: 5 },
   brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: chimapTheme.orange },
   brand: { minWidth: 0, flexShrink: 1, color: chimapTheme.white, fontSize: 18, fontWeight: "900" },
-  compactMetric: { minWidth: 0, minHeight: 40, flex: 1, justifyContent: "center", paddingLeft: 7, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: chimapTheme.dividerOnNavy },
+  compactMetric: { minWidth: 64, minHeight: 48, flex: 1, justifyContent: "center", paddingLeft: 7, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: chimapTheme.dividerOnNavy },
   compactMetricLabel: { color: chimapTheme.textOnNavyMuted, fontSize: 8, fontWeight: "800" },
   compactMetricValue: { color: chimapTheme.white, fontSize: 13, fontWeight: "900" },
-  accountButton: { width: 56, minHeight: 44, alignItems: "center", justifyContent: "center", gap: 1, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.1)" },
+  accountButton: { width: 64, minHeight: 48, alignItems: "center", justifyContent: "center", gap: 1, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.1)" },
   accountButtonText: { color: chimapTheme.white, fontSize: 8, fontWeight: "800" },
   mapStage: { flex: 1, overflow: "hidden", backgroundColor: chimapTheme.mapCanvas },
   mapShell: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, overflow: "hidden", backgroundColor: chimapTheme.mapCanvas },
   mapHint: { position: "absolute", top: 8, left: 8, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 999, backgroundColor: chimapTheme.mapOverlay },
   mapHintTitle: { color: chimapTheme.navyStrong, fontSize: 11, fontWeight: "900" },
   mapHintBody: { color: chimapTheme.muted, fontSize: 8, fontWeight: "700" },
-  mapLocationButton: { position: "absolute", right: 12, width: 46, height: 46, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: chimapTheme.line, borderRadius: 23, backgroundColor: chimapTheme.mapOverlay, shadowColor: chimapTheme.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 5, elevation: 4 },
+  mapLocationButton: { position: "absolute", right: 12, width: 48, height: 48, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: chimapTheme.line, borderRadius: 24, backgroundColor: chimapTheme.mapOverlay, shadowColor: chimapTheme.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 5, elevation: 4 },
   mapLegend: { position: "absolute", right: 12, flexDirection: "row", gap: 9, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 11, backgroundColor: chimapTheme.mapOverlay },
   legendWalk: { color: chimapTheme.orange, fontSize: 9, fontWeight: "900" },
   legendBus: { color: chimapTheme.busBlue, fontSize: 9, fontWeight: "900" },
@@ -1479,12 +1519,12 @@ const styles = StyleSheet.create({
   sheetTab: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10 },
   sheetTabCopy: { minWidth: 0, flex: 1, gap: 3 },
   sheetSummary: { color: chimapTheme.muted, fontSize: 11, fontWeight: "700" },
-  sheetChevron: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
+  sheetChevron: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
   sheetContent: { gap: 14, paddingHorizontal: 16, paddingTop: 8 },
   eyebrow: { color: chimapTheme.teal, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   searchFields: { gap: 10 },
   placeActions: { flexDirection: "row", gap: 8 },
-  placeAction: { minHeight: 44, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 8, borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 11, backgroundColor: chimapTheme.white },
+  placeAction: { minHeight: 48, flex: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 8, borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 11, backgroundColor: chimapTheme.white },
   placeActionText: { color: chimapTheme.muted, fontSize: 11, fontWeight: "800" },
   message: { padding: 11, borderRadius: 10, color: chimapTheme.danger, backgroundColor: chimapTheme.dangerSurface, fontSize: 12, lineHeight: 18 },
   primaryButton: { minHeight: 54, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: chimapTheme.navy },
@@ -1501,7 +1541,7 @@ const styles = StyleSheet.create({
   sectionTitle: { color: chimapTheme.ink, fontSize: 18, fontWeight: "900" },
   muted: { color: chimapTheme.muted, fontSize: 12, lineHeight: 18 },
   noticeBox: { gap: 5, padding: 11, borderRadius: 12, backgroundColor: chimapTheme.warningSurface },
-  noticeHeader: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  noticeHeader: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   noticeTitle: { color: chimapTheme.warningText, fontSize: 12, fontWeight: "900" },
   noticeText: { color: chimapTheme.warningText, fontSize: 11, lineHeight: 16 },
   supportingNotice: { padding: 10, borderRadius: 10, color: chimapTheme.muted, backgroundColor: chimapTheme.surfaceSubtle, fontSize: 11, lineHeight: 17 },
@@ -1515,7 +1555,7 @@ const styles = StyleSheet.create({
   routeTypeText: { color: chimapTheme.white, fontSize: 10, fontWeight: "900" },
   realtimeBadge: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.realtimeText, backgroundColor: chimapTheme.realtimeSurface, fontSize: 10, fontWeight: "900" },
   estimateBadge: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 10, fontWeight: "900" },
-  routeTimeRow: { flexDirection: "row", alignItems: "baseline", gap: 8 },
+  routeTimeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", gap: 8 },
   routeTime: { color: chimapTheme.navyStrong, fontSize: 25, fontWeight: "900", letterSpacing: -1 },
   routeArrival: { color: chimapTheme.teal, fontSize: 12, fontWeight: "900" },
   routeExtra: { color: chimapTheme.muted, fontSize: 10, fontWeight: "700" },
@@ -1529,9 +1569,9 @@ const styles = StyleSheet.create({
   routeMetrics: { flexDirection: "row", flexWrap: "wrap", gap: 11 },
   routeMetric: { color: chimapTheme.muted, fontSize: 10, fontWeight: "700" },
   routeMetricStrong: { color: chimapTheme.teal, fontSize: 10, fontWeight: "900" },
-  routeActions: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingLeft: 13, paddingRight: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chimapTheme.track, backgroundColor: chimapTheme.surface },
+  routeActions: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingLeft: 13, paddingRight: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chimapTheme.track, backgroundColor: chimapTheme.surface },
   routeReason: { minWidth: 0, flex: 1, color: chimapTheme.muted, fontSize: 10 },
-  detailButton: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8 },
+  detailButton: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8 },
   detailButtonText: { color: chimapTheme.teal, fontSize: 11, fontWeight: "900" },
   dataSources: { marginTop: 4, color: chimapTheme.placeholder, fontSize: 9, lineHeight: 14, textAlign: "center" },
   detailSafeArea: { flex: 1, backgroundColor: chimapTheme.canvas },
@@ -1552,7 +1592,7 @@ const styles = StyleSheet.create({
   detailHeading: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   detailHeadingCopy: { minWidth: 0, flex: 1, gap: 5 },
   detailTitle: { color: chimapTheme.ink, fontSize: 25, fontWeight: "900" },
-  closeButton: { minWidth: 54, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chimapTheme.white },
+  closeButton: { minWidth: 54, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chimapTheme.white },
   closeButtonText: { color: chimapTheme.teal, fontWeight: "900" },
   detailMap: { width: "100%", height: 300, overflow: "hidden", borderRadius: 20 },
   detailFacts: { flexDirection: "row", paddingVertical: 13, borderTopWidth: 1, borderBottomWidth: 1, borderColor: chimapTheme.line },

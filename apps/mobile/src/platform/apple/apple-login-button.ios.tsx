@@ -22,7 +22,7 @@ export function AppleLoginButton({
       buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
       buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
       cornerRadius={8}
-      style={{ height: 46, width: "100%", opacity: disabled ? 0.5 : 1 }}
+      style={{ height: 48, width: "100%", opacity: disabled ? 0.5 : 1 }}
       onPress={() => {
         if (disabled) {
           return;

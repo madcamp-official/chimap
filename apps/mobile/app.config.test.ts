@@ -33,6 +33,10 @@ describe("Expo platform identity", () => {
       supportsTablet: false,
     });
     expect(config.android?.package).toBe("org.madcamp.chimap.dev");
+    expect(config.android).toMatchObject({
+      predictiveBackGestureEnabled: true,
+      softwareKeyboardLayoutMode: "resize",
+    });
     expect(config.ios?.infoPlist?.NMFNcpKeyId).toBe("ci-naver-ios-id");
   });
 

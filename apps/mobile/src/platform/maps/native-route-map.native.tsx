@@ -6,12 +6,24 @@ import {
   type NaverMapViewRef,
 } from "@mj-studio/react-native-naver-map";
 import Constants from "expo-constants";
-import { Fragment, useEffect, useMemo, useRef } from "react";
+import {
+  Component,
+  Fragment,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { chimapTheme } from "../../theme/chimap-theme";
 import { dashedPolylineSegments } from "./dashed-polyline";
 import type { NativeRouteMapProps } from "./map-contract";
+import {
+  deriveRouteMarkers,
+  type RouteMarkerRole,
+} from "./route-markers";
 
 const defaultRegion = {
   latitude: 36.31,
@@ -28,6 +40,43 @@ const endpointMarker = {
 
 const originMarkerImage = require("./assets/route-marker-origin.png");
 const destinationMarkerImage = require("./assets/route-marker-destination.png");
+const mapInitializationTimeoutMs = 10_000;
+
+function MapFallback({ style }: Pick<NativeRouteMapProps, "style">) {
+  return (
+    <View style={[style, styles.mapFallback]}>
+      <Text accessibilityRole="alert" style={styles.mapFallbackTitle}>
+        지도를 불러오지 못했습니다
+      </Text>
+      <Text style={styles.mapFallbackBody}>
+        추천 카드와 상세 이동 단계는 계속 확인할 수 있습니다.
+      </Text>
+    </View>
+  );
+}
+
+class MapErrorBoundary extends Component<
+  { children: ReactNode; style: NativeRouteMapProps["style"] },
+  { failed: boolean }
+> {
+  public override state = { failed: false };
+
+  public static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  public override componentDidCatch(): void {
+    console.error("[CHIMap map] code=MAP_RENDER_FAILED");
+  }
+
+  public override render(): ReactNode {
+    return this.state.failed ? (
+      <MapFallback style={this.props.style} />
+    ) : (
+      this.props.children
+    );
+  }
+}
 
 function trackGeometrySourcesUrl(): string {
   const baseUrl = Constants.expoConfig?.extra?.apiBaseUrl;
@@ -74,7 +123,7 @@ function routeRegion(coordinates: Coordinate[]) {
   };
 }
 
-export function NativeRouteMap({
+function NativeRouteMapContent({
   origin,
   destination,
   route,
@@ -86,6 +135,8 @@ export function NativeRouteMap({
   style,
 }: NativeRouteMapProps) {
   const mapRef = useRef<NaverMapViewRef>(null);
+  const [mapInitialized, setMapInitialized] = useState(false);
+  const [mapInitializationFailed, setMapInitializationFailed] = useState(false);
   const coordinates = useMemo(
     () => [
       ...(origin === null ? [] : [origin]),
@@ -95,7 +146,22 @@ export function NativeRouteMap({
     [destination, origin, route],
   );
   const region = useMemo(() => routeRegion(coordinates), [coordinates]);
+  const routeMarkers = useMemo(
+    () => deriveRouteMarkers(route?.legs ?? []),
+    [route],
+  );
   const hasSubway = route?.legs.some((leg) => leg.mode === "SUBWAY") === true;
+
+  useEffect(() => {
+    if (mapInitialized) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setMapInitializationFailed(true);
+      console.error("[CHIMap map] code=MAP_INITIALIZATION_TIMEOUT");
+    }, mapInitializationTimeoutMs);
+    return () => clearTimeout(timeout);
+  }, [mapInitialized]);
 
   useEffect(() => {
     if (focusCoordinate === null || focusRequestId === 0) {
@@ -108,6 +174,10 @@ export function NativeRouteMap({
       zoom: 16,
     });
   }, [focusCoordinate, focusRequestId]);
+
+  if (mapInitializationFailed) {
+    return <MapFallback style={style} />;
+  }
 
   return (
     <View style={style}>
@@ -137,6 +207,7 @@ export function NativeRouteMap({
         logoAlign="BottomLeft"
         logoMargin={{ bottom: 0, left: 4 }}
         mapPadding={viewportInsets}
+        onInitialized={() => setMapInitialized(true)}
         ref={mapRef}
         region={region}
         style={StyleSheet.absoluteFill}
@@ -178,6 +249,34 @@ export function NativeRouteMap({
             </Fragment>
           );
         })}
+        {routeMarkers.map((marker) => (
+          <NaverMapMarkerOverlay
+            anchor={{ x: 0.5, y: 0.5 }}
+            height={36}
+            key={marker.id}
+            latitude={marker.coordinate.lat}
+            longitude={marker.coordinate.lng}
+            width={36}
+            zIndex={transitMarkerZIndex(marker.role)}
+          >
+            <View
+              collapsable={false}
+              style={[
+                styles.transitMarker,
+                marker.role === "TRANSFER" && styles.transferMarker,
+                marker.role === "ALIGHT" && styles.alightMarker,
+              ]}
+            >
+              <Text style={styles.transitMarkerText}>
+                {marker.role === "BOARD"
+                  ? "승"
+                  : marker.role === "TRANSFER"
+                    ? "환"
+                    : "하"}
+              </Text>
+            </View>
+          </NaverMapMarkerOverlay>
+        ))}
         {vehiclePositions.map((vehicle) => (
           <NaverMapMarkerOverlay
             anchor={{ x: 0.5, y: 0.5 }}
@@ -234,6 +333,7 @@ export function NativeRouteMap({
         <Pressable
           accessibilityHint="OpenStreetMap 선로 데이터 라이선스를 엽니다"
           accessibilityRole="link"
+          hitSlop={18}
           onPress={() => void Linking.openURL(trackGeometrySourcesUrl())}
           style={[
             styles.attribution,
@@ -249,7 +349,57 @@ export function NativeRouteMap({
   );
 }
 
+function transitMarkerZIndex(role: RouteMarkerRole): number {
+  if (role === "BOARD") return 14;
+  if (role === "TRANSFER") return 15;
+  return 16;
+}
+
+export function NativeRouteMap(props: NativeRouteMapProps) {
+  return (
+    <MapErrorBoundary style={props.style}>
+      <NativeRouteMapContent {...props} />
+    </MapErrorBoundary>
+  );
+}
+
 const styles = StyleSheet.create({
+  mapFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    padding: 20,
+    backgroundColor: chimapTheme.mapCanvas,
+  },
+  mapFallbackTitle: {
+    color: chimapTheme.navy,
+    fontSize: 15,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  mapFallbackBody: {
+    color: chimapTheme.muted,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  transitMarker: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 18,
+    borderWidth: 3,
+    borderColor: chimapTheme.white,
+    backgroundColor: chimapTheme.busBlue,
+  },
+  transferMarker: { backgroundColor: chimapTheme.purple },
+  alightMarker: { backgroundColor: chimapTheme.orange },
+  transitMarkerText: {
+    color: chimapTheme.white,
+    fontSize: 13,
+    fontWeight: "900",
+  },
   vehicleMarker: {
     width: 38,
     height: 38,

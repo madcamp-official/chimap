@@ -169,7 +169,7 @@ export function PlaceSearchField({
             >
               <View style={styles.resultCopy}>
                 <Text style={styles.resultTitle}>{place.name}</Text>
-                <Text style={styles.resultAddress} numberOfLines={1}>
+                <Text style={styles.resultAddress}>
                   {place.roadAddress || place.address}
                 </Text>
                 <View style={styles.resultTags}>
@@ -206,7 +206,7 @@ const styles = StyleSheet.create({
   },
   inputWrapFocused: { borderWidth: 2, borderColor: chimapTheme.teal },
   input: { minWidth: 0, flex: 1, color: chimapTheme.ink, fontSize: 15, fontWeight: "700" },
-  clearButton: { width: 32, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  clearButton: { width: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
   message: { marginHorizontal: 3, color: chimapTheme.danger, fontSize: 12, lineHeight: 17 },
   results: {
     overflow: "hidden",

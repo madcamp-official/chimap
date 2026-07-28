@@ -123,6 +123,8 @@ export function createExpoConfig(
     android: {
       package: identity.bundleIdentifier,
       permissions: ["android.permission.health.READ_STEPS"],
+      predictiveBackGestureEnabled: true,
+      softwareKeyboardLayoutMode: "resize",
     },
     plugins: [
       "expo-router",
