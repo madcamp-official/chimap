@@ -30,6 +30,7 @@ import {
   subwayStationsResponseSchema,
   uiEventPayloadSchema,
   type ErrorResponse,
+  type MobileClientHeaders,
 } from "@chimap/contracts";
 import compression from "compression";
 import cors from "cors";
@@ -393,6 +394,9 @@ export function createApp(options: CreateAppOptions): Express {
     const startedAt = performance.now();
     response.on("finish", () => {
       const durationMilliseconds = performance.now() - startedAt;
+      const mobileClient = response.locals.mobileClient as
+        | MobileClientHeaders
+        | undefined;
       logger.info({
         event: "request.completed",
         requestId: id,
@@ -400,6 +404,13 @@ export function createApp(options: CreateAppOptions): Express {
         path: request.path,
         httpStatus: response.statusCode,
         durationMs: Math.round(durationMilliseconds),
+        ...(mobileClient === undefined
+          ? {}
+          : {
+              clientPlatform: mobileClient.platform,
+              appVersion: mobileClient.appVersion,
+              contractVersion: mobileClient.contractVersion,
+            }),
       });
       metrics.observeHttp({
         method: request.method,
@@ -456,6 +467,7 @@ export function createApp(options: CreateAppOptions): Express {
       return;
     }
     const client = mobileClientHeadersSchema.parse(raw);
+    _response.locals.mobileClient = client;
     if (request.path !== "/mobile-config") {
       if (options.config.mobileClient.maintenance.enabled) {
         throw new AppError({
