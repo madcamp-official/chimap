@@ -60,6 +60,7 @@ export class CachedMobilityProvider implements MobilityProvider {
       coordinateCacheKey(request.origin.location),
       coordinateCacheKey(request.destination.location),
       fiveMinuteBucket(),
+      request.geometryProfile ?? "legacy-geometry",
     ].join(":");
 
     return this.#cache.getOrLoad(key, TRANSIT_TTL_MS, () =>

@@ -149,6 +149,14 @@ export function RouteDetails({
         ))}
       </ol>
 
+      {recommendation.legs.some(
+        (leg) => leg.geometryQuality === "APPROXIMATE",
+      ) ? (
+        <p className="route-geometry-notice" role="status">
+          일부 구간은 상세 도로·도보 형상을 확인하지 못해 근사 경로로 표시합니다.
+        </p>
+      ) : null}
+
       <details className="calculation-note">
         <summary>예상값은 어떻게 계산했나요?</summary>
         <p>

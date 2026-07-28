@@ -4,20 +4,21 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production health/readiness 재확인: 2026-07-27 21:45 KST
-- 전체 운영 검증 스냅샷: 2026-07-27 21:40 KST
+- production health/readiness 재확인: 2026-07-28 14:39 KST
+- 전체 운영 검증 스냅샷: 2026-07-28 14:40 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
 - 저장소 기준선: `main` (Web/API cross-platform foundation과 iOS staging 통합)
 - 통합한 upstream 기준: `feat/mobile/cross-platform-foundation` (`1df41a5`)
-- 멀티모달 그래프·서울 실시간 지하철·migration 9 운영 배포: 2026-07-27 21:39 KST
+- 실제 지하철 선로와 버스·도보 `transit-v2`·migration 11 운영 배포:
+  2026-07-28 14:39 KST
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
   health/readiness 200·guest/Kakao 활성·Apple 비활성, 실제 추천 3건 확인
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
-현재 공개 readiness는 정류장 227,308개, TAGO 연결 정류장 3,271개,
-노선 156개, 노선-정류장 관계 6,398개, 활성 지하철역 1,097개, TAGO 매핑
+현재 공개 readiness는 정류장 227,310개, TAGO 연결 정류장 3,325개,
+노선 156개, 노선-정류장 관계 6,907개, 활성 지하철역 1,097개, TAGO 매핑
 706개와 버스↔지하철 보행 연결 182개입니다. 추천 요청과 정기 동기화가 새
 지역의 실제 노선을 저장하면 버스 관련 수치는 증가할 수 있습니다.
 
@@ -274,9 +275,10 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-현재 일반 결정적 테스트는 contracts 12개, app-core 3개, alert-relay 4개,
-API 114개, web 56개, mobile 46개로 총 235개입니다. 별도 PostGIS DB에서
-실행하는 교통·인증 통합 테스트 8개까지 포함하면 총 243개입니다.
+현재 일반 결정적 테스트는 contracts 12개, app-core 4개, alert-relay 4개,
+API 141개, web 57개, mobile 48개로 총 266개입니다. 별도 PostGIS DB가 필요한
+교통·인증 통합 테스트 10개는 일반 실행에서 제외하고 release gate에서 따로
+실행합니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
@@ -295,7 +297,7 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 복구 검증: systemd timer가 월 1회 별도 PostGIS 18에 restore
 - 교통 갱신: systemd timer가 매일 KAIST 1.2km·대전역 500m 노선 동기화
 - 관측: Prometheus 15초 수집, 15일·2GiB 보존, loopback UI `:9090`
-- 경보: API·검색·DB·TAGO·백업·동기화·알림 전달 20개
+- 경보: API·검색·DB·TAGO·경로 형상·백업·동기화·알림 전달 22개
 - 전달: 필요할 때만 `EXTERNAL_ALERTS_ENABLED=1`로 Alertmanager→alert-relay→Slack/Discord/일반 webhook
 - 로그 제외: 검색어, 좌표, 키, 외부 원문
 

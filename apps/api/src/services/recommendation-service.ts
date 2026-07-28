@@ -15,6 +15,11 @@ import {
 } from "./calculations.js";
 import { CandidateGenerator } from "./candidate-generator.js";
 import { selectRecommendations } from "./recommendation-engine.js";
+import type {
+  RouteGeometryProfile,
+  SubwayGeometryObservation,
+} from "../providers/subway-track-geometry.js";
+import type { RouteGeometryObservation } from "../providers/route-geometry.js";
 
 export type Clock = () => Date;
 
@@ -37,6 +42,9 @@ export class RecommendationService {
     request: RecommendationRequest;
     requestId: string;
     signal?: AbortSignal;
+    geometryProfile?: RouteGeometryProfile;
+    observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void;
+    observeRouteGeometry?: (observation: RouteGeometryObservation) => void;
   }): Promise<RecommendationResponse> {
     const departureAt = this.#clock();
     this.#validateRequest(input.request, departureAt, input.requestId);
@@ -45,11 +53,26 @@ export class RecommendationService {
       input.signal === undefined
         ? timeoutSignal
         : AbortSignal.any([input.signal, timeoutSignal]);
+    let geometryDegradedLegCount = 0;
 
     try {
       const generated = await this.#candidateGenerator.generate(
         input.request,
         signal,
+        {
+          ...(input.geometryProfile === undefined
+            ? {}
+            : { geometryProfile: input.geometryProfile }),
+          ...(input.observeSubwayGeometry === undefined
+            ? {}
+            : { observeSubwayGeometry: input.observeSubwayGeometry }),
+          observeRouteGeometry: (observation) => {
+            if (observation.outcome === "APPROXIMATE") {
+              geometryDegradedLegCount += 1;
+            }
+            input.observeRouteGeometry?.(observation);
+          },
+        },
       );
       if (generated.routeApiCallCount > 9) {
         throw new AppError({
@@ -188,6 +211,7 @@ export class RecommendationService {
         candidateCount: generated.candidates.length,
         successfulCandidateCount: generated.candidates.length,
         candidateFailureCount: generated.candidateFailureCount,
+        geometryDegradedLegCount,
         recommendationCount: response.recommendations.length,
         routeApiCallCount: generated.routeApiCallCount,
         recommendationMode: policy.mode,

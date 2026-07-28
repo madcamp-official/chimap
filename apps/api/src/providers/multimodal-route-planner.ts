@@ -10,6 +10,7 @@ import {
   type TransitBusLeg,
   type TransitTiming,
   type TransitTransferType,
+  type WalkingRole,
 } from "@chimap/contracts";
 import { createHash } from "node:crypto";
 
@@ -26,6 +27,18 @@ import type {
   RoadGeometryProvider,
   TransitRouteRequest,
 } from "./types.js";
+import {
+  assembleSubwayRideGeometry,
+  usesTrackGeometry,
+  type RouteGeometryProfile,
+  type SubwayGeometryObservation,
+} from "./subway-track-geometry.js";
+import {
+  classifyGeometryError,
+  RouteGeometryService,
+  withRouteGeometryLimit,
+} from "./route-geometry.js";
+import type { RouteGeometryObservation } from "./route-geometry.js";
 
 const SUBWAY_ACCESS_RADIUS_METERS = 2_500;
 const SUBWAY_ACCESS_LIMIT = 6;
@@ -64,12 +77,18 @@ export type GraphEdge = {
   transferType?: TransitTransferType;
   walkingKind?: "ACCESS" | "EGRESS" | "TRANSFER";
   precomputedWalking?: boolean;
+  subwayTrackCoordinates?: Coordinate[] | null;
+  subwayTrackDistanceMeters?: number | null;
+  subwayGeometrySource?: string | null;
 };
 
 export type RequestGraph = {
   nodes: Map<string, GraphNode>;
   adjacency: Map<string, GraphEdge[]>;
   topologyPartial: boolean;
+  geometryProfile?: RouteGeometryProfile;
+  observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void;
+  observeRouteGeometry?: (observation: RouteGeometryObservation) => void;
 };
 
 type TraversedEdge = {
@@ -377,16 +396,21 @@ export class MultimodalRoutePlanner {
   readonly #config: AppConfig;
   readonly #subwayGraphCache = new MemoryCache(48 * 1024 * 1024);
   readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
-  readonly #roadCache = new MemoryCache(64 * 1024 * 1024);
+  readonly #routeGeometryService: RouteGeometryService;
 
   public constructor(options: {
     baseProvider: MobilityProvider & RoadGeometryProvider;
     transitService: TransitService;
     config: AppConfig;
+    routeGeometryService?: RouteGeometryService;
   }) {
     this.#baseProvider = options.baseProvider;
     this.#transitService = options.transitService;
     this.#config = options.config;
+    this.#routeGeometryService = options.routeGeometryService ?? new RouteGeometryService({
+      provider: options.baseProvider,
+      repository: options.transitService.repository,
+    });
   }
 
   async #subwayGraph(): Promise<SubwayRoutingGraph> {
@@ -506,6 +530,15 @@ export class MultimodalRoutePlanner {
       nodes: new Map(),
       adjacency: new Map(),
       topologyPartial: originStops.partial || destinationStops.partial,
+      ...(request.geometryProfile === undefined
+        ? {}
+        : { geometryProfile: request.geometryProfile }),
+      ...(request.observeSubwayGeometry === undefined
+        ? {}
+        : { observeSubwayGeometry: request.observeSubwayGeometry }),
+      ...(request.observeRouteGeometry === undefined
+        ? {}
+        : { observeRouteGeometry: request.observeRouteGeometry }),
     };
     graph.nodes.set("ORIGIN", {
       id: "ORIGIN",
@@ -554,6 +587,9 @@ export class MultimodalRoutePlanner {
               serviceKey: subwayServiceKey(edge.serviceLineId),
               expectedWaitSeconds: edge.expectedWaitSeconds,
               serviceLineId: edge.serviceLineId,
+              subwayTrackCoordinates: edge.trackCoordinates,
+              subwayTrackDistanceMeters: edge.trackDistanceMeters,
+              subwayGeometrySource: edge.geometrySource,
             }),
       });
     }
@@ -809,12 +845,28 @@ export class MultimodalRoutePlanner {
   }
 
   async #walkingLegs(
+    graph: RequestGraph,
     edge: GraphEdge,
     index: number,
     signal?: AbortSignal,
   ): Promise<RouteLeg[]> {
-    const role = edge.walkingKind === "TRANSFER" ? "TRANSFER" : "ACCESS";
+    const role: WalkingRole = edge.walkingKind === "TRANSFER" ? "TRANSFER" : "ACCESS";
     if (edge.precomputedWalking === true || edge.distanceMeters <= 20) {
+      const detailed = edge.precomputedWalking === true && edge.coordinates.length > 2;
+      const quality = detailed ? "DETAILED" as const : "APPROXIMATE" as const;
+      graph.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: quality,
+        reason: detailed ? "NONE" : "SHORT_DISTANCE",
+        source: detailed ? "PRECOMPUTED" : "FALLBACK",
+        cacheState: "NONE",
+        durationMilliseconds: 0,
+        inputVertexCount: 2,
+        outputVertexCount: edge.coordinates.length,
+        successfulSectionCount: detailed ? 1 : 0,
+        failedSectionCount: detailed ? 0 : 1,
+        walkingRole: role,
+      });
       return [{
         id: `multimodal-walk-${index}`,
         mode: "WALK",
@@ -827,6 +879,9 @@ export class MultimodalRoutePlanner {
         distanceMeters: edge.distanceMeters,
         durationSeconds: edge.durationSeconds,
         coordinates: edge.coordinates,
+        ...(graph.geometryProfile === "TRANSIT_V2"
+          ? { geometryQuality: quality }
+          : {}),
         isExerciseSegment: false,
         walkingRole: role,
         ...(edge.transferType === undefined
@@ -843,23 +898,32 @@ export class MultimodalRoutePlanner {
     const from = edge.coordinates[0]!;
     const to = edge.coordinates.at(-1)!;
     const cacheKey = `multimodal:walk:${from.lng.toFixed(5)},${from.lat.toFixed(5)}:${to.lng.toFixed(5)},${to.lat.toFixed(5)}`;
+    const walkingCacheHit = this.#walkingCache.get<NormalizedRoute>(cacheKey) !== undefined;
+    const startedAt = performance.now();
+    const budgetSignal = AbortSignal.timeout(8_000);
+    const walkingSignal = signal === undefined
+      ? budgetSignal
+      : AbortSignal.any([signal, budgetSignal]);
     try {
       const route = await this.#walkingCache.getOrLoad(
         cacheKey,
         30 * 60 * 1_000,
         () =>
-          this.#baseProvider.getWalkingRoute({
+          withRouteGeometryLimit(() => this.#baseProvider.getWalkingRoute({
             origin: from,
             destination: to,
             routeMode: "BROAD_FIRST",
-            ...(signal === undefined ? {} : { signal }),
-          }),
+            signal: walkingSignal,
+          })),
       );
-      return route.legs.map((leg, legIndex) => ({
+      const legs = route.legs.map((leg, legIndex) => ({
         ...leg,
         id: `multimodal-walk-${index}-${legIndex}`,
         isExerciseSegment: false,
         walkingRole: role,
+        ...(graph.geometryProfile === "TRANSIT_V2"
+          ? { geometryQuality: "DETAILED" as const }
+          : {}),
         ...(edge.transferType === undefined || legIndex > 0
           ? {}
           : {
@@ -870,7 +934,34 @@ export class MultimodalRoutePlanner {
               },
             }),
       }));
-    } catch {
+      graph.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: "DETAILED",
+        reason: "NONE",
+        source: "KAKAO_WALK",
+        cacheState: walkingCacheHit ? "FRESH" : "MISS",
+        durationMilliseconds: performance.now() - startedAt,
+        inputVertexCount: 2,
+        outputVertexCount: legs.reduce((total, leg) => total + leg.coordinates.length, 0),
+        successfulSectionCount: 1,
+        failedSectionCount: 0,
+        walkingRole: role,
+      });
+      return legs;
+    } catch (error) {
+      graph.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: "APPROXIMATE",
+        reason: classifyGeometryError(error),
+        source: "FALLBACK",
+        cacheState: "MISS",
+        durationMilliseconds: performance.now() - startedAt,
+        inputVertexCount: 2,
+        outputVertexCount: edge.coordinates.length,
+        successfulSectionCount: 0,
+        failedSectionCount: 1,
+        walkingRole: role,
+      });
       return [{
         id: `multimodal-walk-${index}`,
         mode: "WALK",
@@ -878,6 +969,9 @@ export class MultimodalRoutePlanner {
         distanceMeters: edge.distanceMeters,
         durationSeconds: edge.durationSeconds,
         coordinates: edge.coordinates,
+        ...(graph.geometryProfile === "TRANSIT_V2"
+          ? { geometryQuality: "APPROXIMATE" as const }
+          : {}),
         isExerciseSegment: false,
         walkingRole: role,
         ...(edge.transferType === undefined
@@ -894,6 +988,7 @@ export class MultimodalRoutePlanner {
   }
 
   async #busLeg(
+    graph: RequestGraph,
     steps: TraversedEdge[],
     index: number,
     signal?: AbortSignal,
@@ -913,26 +1008,17 @@ export class MultimodalRoutePlanner {
       0,
     );
     const fallbackWaitSeconds = first.boardingWaitSeconds;
-    const geometryKey = `multimodal:road:${route.cityCode}:${route.routeId}:${stops[0]!.nodeId}:${stops.at(-1)!.nodeId}`;
-    let coordinates = stops.map(stopCoordinate);
-    let roadMatched = false;
-    try {
-      const road = await this.#roadCache.getOrLoad(
-        geometryKey,
-        24 * 60 * 60 * 1_000,
-        () =>
-          this.#baseProvider.getRoadRouteGeometry({
-            points: stops.map(stopCoordinate),
-            ...(signal === undefined ? {} : { signal }),
-          }),
-      );
-      if (road.length >= 2) {
-        coordinates = road;
-        roadMatched = true;
-      }
-    } catch {
-      roadMatched = false;
-    }
+    const road = await this.#routeGeometryService.resolveBusGeometry({
+      stops,
+      ...(signal === undefined ? {} : { signal }),
+      ...(graph.observeRouteGeometry === undefined
+        ? {}
+        : { observe: graph.observeRouteGeometry }),
+    });
+    const coordinates = road.coordinates.length >= 2
+      ? road.coordinates
+      : stops.map(stopCoordinate);
+    const roadMatched = road.quality === "DETAILED";
     const boarding = stops[0]!;
     const alighting = stops.at(-1)!;
     const timing = await this.#transitService.resolveBusTiming({
@@ -970,6 +1056,9 @@ export class MultimodalRoutePlanner {
       durationSeconds: waitSeconds + rideSeconds,
       stops: stops.map((stop) => stop.stopName),
       coordinates,
+      ...(graph.geometryProfile === "TRANSIT_V2"
+        ? { geometryQuality: road.quality }
+        : {}),
       isExerciseSegment: false,
       bus,
       timing,
@@ -1018,18 +1107,39 @@ export class MultimodalRoutePlanner {
       name: station.stationName,
       location: subwayCoordinate(station),
     });
+    const rideGeometry = assembleSubwayRideGeometry({
+      ...(graph.geometryProfile === undefined
+        ? {}
+        : { profile: graph.geometryProfile }),
+      stationCoordinates: stations.map(subwayCoordinate),
+      edges: steps.map((step) => ({
+        from: graph.nodes.get(step.edge.fromNodeId)!.coordinate,
+        to: graph.nodes.get(step.edge.toNodeId)!.coordinate,
+        straightDistanceMeters: step.edge.distanceMeters,
+        trackCoordinates: step.edge.subwayTrackCoordinates ?? null,
+        trackDistanceMeters: step.edge.subwayTrackDistanceMeters ?? null,
+        geometrySource: step.edge.subwayGeometrySource ?? null,
+      })),
+    });
+    if (usesTrackGeometry(graph.geometryProfile)) {
+      graph.observeSubwayGeometry?.(rideGeometry.observation);
+    }
     return {
       id: `multimodal-subway-${index}-${boarding.serviceLineId}`,
       mode: "SUBWAY",
       name: boarding.lineName,
       guidance: `${boarding.stationName}역에서 ${boarding.lineName} 탑승 · ${alighting.stationName}역 하차 (${timingLabel})`,
-      distanceMeters: steps.reduce(
-        (total, step) => total + step.edge.distanceMeters,
-        0,
-      ),
+      distanceMeters: rideGeometry.distanceMeters,
       durationSeconds: waitSeconds + rideSeconds,
       stops: stations.map((station) => station.stationName),
-      coordinates: stations.map(subwayCoordinate),
+      coordinates: rideGeometry.coordinates,
+      ...(graph.geometryProfile === "TRANSIT_V2"
+        ? {
+            geometryQuality: rideGeometry.usedTrackGeometry
+              ? "DETAILED" as const
+              : "APPROXIMATE" as const,
+          }
+        : {}),
       isExerciseSegment: false,
       timing,
       subway: {
@@ -1062,7 +1172,7 @@ export class MultimodalRoutePlanner {
     while (cursor < path.steps.length) {
       const step = path.steps[cursor]!;
       if (step.edge.kind === "WALK") {
-        legs.push(...(await this.#walkingLegs(step.edge, cursor, signal)));
+        legs.push(...(await this.#walkingLegs(graph, step.edge, cursor, signal)));
         cursor += 1;
         continue;
       }
@@ -1078,7 +1188,7 @@ export class MultimodalRoutePlanner {
       }
       legs.push(
         group[0]!.edge.mode === "BUS"
-          ? await this.#busLeg(group, index * 100 + cursor, signal)
+          ? await this.#busLeg(graph, group, index * 100 + cursor, signal)
           : await this.#subwayLeg(
               graph,
               group,

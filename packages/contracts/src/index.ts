@@ -271,6 +271,14 @@ export type TransitTransfer = z.infer<typeof transitTransferSchema>;
 export const routeModeSchema = z.enum(["WALK", "BUS", "SUBWAY"]);
 export type RouteMode = z.infer<typeof routeModeSchema>;
 
+export const routeGeometryQualitySchema = z.enum([
+  "DETAILED",
+  "APPROXIMATE",
+]);
+export type RouteGeometryQuality = z.infer<
+  typeof routeGeometryQualitySchema
+>;
+
 export const walkingRoleSchema = z.enum([
   "ACCESS",
   "TRANSFER",
@@ -290,6 +298,7 @@ export const routeLegSchema = z
     durationSeconds: z.number().int().nonnegative(),
     stops: z.array(z.string().min(1).max(100)).max(200).optional(),
     coordinates: z.array(coordinateSchema),
+    geometryQuality: routeGeometryQualitySchema.optional(),
     isExerciseSegment: z.boolean(),
     walkingRole: walkingRoleSchema.optional(),
     bus: transitBusLegSchema.optional(),
@@ -934,6 +943,8 @@ export const readinessResponseSchema = z
         routeReadySubwayLines: z.number().int().nonnegative().optional(),
         providerMappedStations: z.number().int().nonnegative().optional(),
         busSubwayTransferEdges: z.number().int().nonnegative().optional(),
+        routeReadySubwaySegments: z.number().int().nonnegative().optional(),
+        subwayTrackGeometrySegments: z.number().int().nonnegative().optional(),
       })
       .strict(),
   })

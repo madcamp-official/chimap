@@ -4,6 +4,12 @@ import type {
   Place,
 } from "@chimap/contracts";
 
+import type {
+  RouteGeometryProfile,
+  SubwayGeometryObservation,
+} from "./subway-track-geometry.js";
+import type { RouteGeometryObservation } from "./route-geometry.js";
+
 export type WalkRouteMode = "BROAD_FIRST" | "SHORTEST" | "ACCESSIBLE";
 
 export type PlaceSearchOptions = {
@@ -17,6 +23,9 @@ export type TransitRouteRequest = {
   origin: Place;
   destination: Place;
   signal?: AbortSignal;
+  geometryProfile?: RouteGeometryProfile;
+  observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void;
+  observeRouteGeometry?: (observation: RouteGeometryObservation) => void;
 };
 
 export type WalkRouteRequest = {
@@ -32,8 +41,17 @@ export type RoadRouteRequest = {
   signal?: AbortSignal;
 };
 
+export type RoadRouteSectionsRequest = RoadRouteRequest;
+
+export type RoadRouteSectionsResult = {
+  sections: Coordinate[][];
+};
+
 export interface RoadGeometryProvider {
   getRoadRouteGeometry(request: RoadRouteRequest): Promise<Coordinate[]>;
+  getRoadRouteSections(
+    request: RoadRouteSectionsRequest,
+  ): Promise<RoadRouteSectionsResult>;
 }
 
 export interface MobilityProvider {

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 
+import type { Place } from "@chimap/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -45,6 +46,58 @@ describe("실제 장소 검색 조합", () => {
     expect(
       mergePlaces("카이스트", places, places, 8),
     ).toEqual(places);
+  });
+
+  it("현재 위치보다 검색어 정확 일치를 우선한다", async () => {
+    const exact: Place = {
+      id: "kakao:place:daejeon-station",
+      name: "대전역",
+      address: "대전 동구 정동 1-1",
+      roadAddress: "대전 동구 중앙로 215",
+      category: "기차역",
+      location: { lng: 127.434645, lat: 36.332294 },
+    };
+    const nearby: Place = {
+      id: "kakao:place:yuseong-station",
+      name: "유성온천역 대전1호선",
+      address: "대전 유성구 봉명동 553-2",
+      roadAddress: "대전 유성구 계룡로 지하 97",
+      category: "지하철역",
+      location: { lng: 127.341446, lat: 36.35372 },
+    };
+    const searchKeyword = vi
+      .fn()
+      .mockResolvedValueOnce([exact])
+      .mockResolvedValueOnce([nearby]);
+    const service = new PlaceLookupService({
+      kakao: {
+        searchKeyword,
+        searchAddress: vi.fn().mockResolvedValue([]),
+      } as unknown as KakaoLocalClient,
+    });
+    const center = { lng: 127.3415, lat: 36.3537 };
+
+    const result = await service.search({
+      query: "대전역",
+      scope: "suggest",
+      limit: 8,
+      center,
+    });
+
+    expect(result.items.map((place) => place.name)).toEqual([
+      "대전역",
+      "유성온천역 대전1호선",
+    ]);
+    expect(searchKeyword).toHaveBeenNthCalledWith(
+      1,
+      "대전역",
+      expect.not.objectContaining({ center: expect.anything() }),
+    );
+    expect(searchKeyword).toHaveBeenNthCalledWith(
+      2,
+      "대전역",
+      expect.objectContaining({ center }),
+    );
   });
 
   it("Kakao의 복구 가능한 HTTP 오류에서 실제 NAVER 주소로 보완한다", async () => {

@@ -2,9 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   isSameKoreanCalendarDay,
+  recommendationQueryKey,
+  RECOMMENDATION_CACHE_VERSION,
   reconcileRouteSelection,
   shouldRefreshRecommendation,
 } from "./index.js";
+
+describe("recommendation geometry cache namespace", () => {
+  it("transit-v2 이전 persisted 추천을 재사용하지 않는다", () => {
+    expect(RECOMMENDATION_CACHE_VERSION).toBe("v3-transit-v2");
+    expect(recommendationQueryKey("request-hash")).toContain("v3-transit-v2");
+  });
+});
 
 const response = {
   primaryRecommendationId: "new-fast",

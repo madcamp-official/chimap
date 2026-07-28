@@ -1,5 +1,6 @@
 import {
   coordinateSchema,
+  haversineDistanceMeters,
   type Coordinate,
   type NormalizedRoute,
   normalizedRouteSchema,
@@ -477,6 +478,7 @@ export function normalizeKakaoTransitResponse(
 
 export function normalizeKakaoWalkResponse(
   input: unknown,
+  endpoints?: { origin: Coordinate; destination: Coordinate },
 ): NormalizedRoute {
   const response = kakaoWalkResponseSchema.parse(input);
   if (response.status !== "OK") {
@@ -488,48 +490,94 @@ export function normalizeKakaoWalkResponse(
       message: "Kakao 도보 응답에 route가 없습니다.",
     });
   }
+  const walkRoute = response.route;
 
-  const legs = response.route.legs.flatMap((leg, legIndex) => {
+  const legs = walkRoute.legs.map((leg, legIndex) => {
     if (leg.steps.length === 0) {
-      return [
-        {
-          id: `kakao-walk-leg-${legIndex}`,
-          mode: "WALK" as const,
-          guidance: "도보로 이동",
-          distanceMeters: leg.properties.distance,
-          durationSeconds: leg.properties.time,
-          coordinates: [],
-          isExerciseSegment: false,
-        },
-      ];
-    }
-
-    return leg.steps.map((step, stepIndex) => {
-      const pathCoordinates = parseCoordinates(step.path?.points ?? []);
-      const fallbackCoordinate = coordinateSchema.safeParse({
-        lng: step.properties.x,
-        lat: step.properties.y,
+      throw new ProviderError({
+        kind: "NO_ROUTE",
+        message: "Kakao 도보 응답의 steps가 비어 있습니다.",
+        cause: { geometryReason: "EMPTY_PATH" },
       });
-      const coordinates =
-        pathCoordinates.length > 0
-          ? pathCoordinates
-          : fallbackCoordinate.success
-            ? [fallbackCoordinate.data]
-            : [];
-      const guidance = step.properties.guidance?.trim();
-
-      return {
-        id: `kakao-walk-${legIndex}-step-${stepIndex}`,
-        mode: "WALK" as const,
-        ...(guidance === undefined || guidance.length === 0
-          ? {}
-          : { guidance }),
-        distanceMeters: step.properties.distance,
-        durationSeconds: step.properties.time,
-        coordinates,
-        isExerciseSegment: false,
-      };
-    });
+    }
+    const coordinates: Coordinate[] = [];
+    const guidance: string[] = [];
+    for (const step of leg.steps) {
+      const pathCoordinates = parseCoordinates(step.path?.points ?? []);
+      if (pathCoordinates.length < 2) {
+        throw new ProviderError({
+          kind: "NO_ROUTE",
+          message: "Kakao 도보 step에 사용할 수 있는 path.points가 없습니다.",
+          cause: { geometryReason: "EMPTY_PATH" },
+        });
+      }
+      const previous = coordinates.at(-1);
+      const forwardGap = previous === undefined
+        ? 0
+        : haversineDistanceMeters(previous, pathCoordinates[0]!);
+      const reverseGap = previous === undefined
+        ? Infinity
+        : haversineDistanceMeters(previous, pathCoordinates.at(-1)!);
+      const oriented = reverseGap < forwardGap
+        ? [...pathCoordinates].reverse()
+        : pathCoordinates;
+      if (
+        previous !== undefined &&
+        haversineDistanceMeters(previous, oriented[0]!) > 50
+      ) {
+        throw new ProviderError({
+          kind: "NO_ROUTE",
+          message: "Kakao 도보 step 사이 형상이 50m 이상 단절되었습니다.",
+          cause: { geometryReason: "CONTINUITY_GAP" },
+        });
+      }
+      for (const point of oriented) {
+        const last = coordinates.at(-1);
+        if (last === undefined || last.lat !== point.lat || last.lng !== point.lng) {
+          coordinates.push(point);
+        }
+      }
+      const text = step.properties.guidance?.trim();
+      if (text !== undefined && text.length > 0) guidance.push(text);
+    }
+    if (coordinates.length < 2) {
+      throw new ProviderError({
+        kind: "NO_ROUTE",
+        message: "Kakao 도보 형상의 정점이 부족합니다.",
+        cause: { geometryReason: "EMPTY_PATH" },
+      });
+    }
+    if (legIndex === 0 && endpoints !== undefined) {
+      const gap = haversineDistanceMeters(endpoints.origin, coordinates[0]!);
+      if (gap > 30) {
+        throw new ProviderError({
+          kind: "NO_ROUTE",
+          message: "Kakao 도보 형상의 출발점이 요청 지점과 일치하지 않습니다.",
+          cause: { geometryReason: "ENDPOINT_MISMATCH" },
+        });
+      }
+      if (gap > 0.5) coordinates.unshift(endpoints.origin);
+    }
+    if (legIndex === walkRoute.legs.length - 1 && endpoints !== undefined) {
+      const gap = haversineDistanceMeters(endpoints.destination, coordinates.at(-1)!);
+      if (gap > 30) {
+        throw new ProviderError({
+          kind: "NO_ROUTE",
+          message: "Kakao 도보 형상의 도착점이 요청 지점과 일치하지 않습니다.",
+          cause: { geometryReason: "ENDPOINT_MISMATCH" },
+        });
+      }
+      if (gap > 0.5) coordinates.push(endpoints.destination);
+    }
+    return {
+      id: `kakao-walk-leg-${legIndex}`,
+      mode: "WALK" as const,
+      guidance: guidance[0] ?? "도보로 이동",
+      distanceMeters: leg.properties.distance,
+      durationSeconds: leg.properties.time,
+      coordinates,
+      isExerciseSegment: false,
+    };
   });
 
   if (legs.length === 0) {
@@ -542,9 +590,9 @@ export function normalizeKakaoWalkResponse(
   return normalizedRouteSchema.parse({
     id: "kakao-walk",
     source: "KAKAO",
-    durationSeconds: response.route.properties.totalTime,
-    distanceMeters: response.route.properties.totalDistance,
-    walkDistanceMeters: response.route.properties.totalDistance,
+    durationSeconds: walkRoute.properties.totalTime,
+    distanceMeters: walkRoute.properties.totalDistance,
+    walkDistanceMeters: walkRoute.properties.totalDistance,
     transitDistanceMeters: 0,
     transferCount: 0,
     legs,

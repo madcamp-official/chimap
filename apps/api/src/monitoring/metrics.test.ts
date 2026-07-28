@@ -39,6 +39,13 @@ function repositoryForMetrics(): TransitRepository {
       activeSubwayStations: 1_097,
       mappedSubwayStations: 22,
     }),
+    subwayTrackGeometryCoverage: async () => [
+      {
+        serviceLineId: "SL_TEST",
+        segmentCount: 42,
+        geometryCount: 42,
+      },
+    ],
   } as unknown as TransitRepository;
 }
 
@@ -88,6 +95,32 @@ describe("운영 metrics", () => {
       durationSeconds: 0.35,
     });
     metrics.observePlace("resolve", placeResult);
+    metrics.observeSubwayTrackGeometry({
+      outcome: "fallback",
+      reason: "CONTINUITY_GAP",
+      source: "UNKNOWN",
+      vertexCount: 3,
+    });
+    metrics.observeSubwayTrackGeometry({
+      outcome: "track",
+      reason: "NONE",
+      source: "OSM",
+      vertexCount: 37,
+    });
+    metrics.observeSubwayTrackResponseBytes(24_000);
+    metrics.observeRouteGeometry({
+      mode: "BUS",
+      outcome: "APPROXIMATE",
+      reason: "TIMEOUT",
+      source: "FALLBACK",
+      cacheState: "MISS",
+      durationMilliseconds: 3_500,
+      inputVertexCount: 5,
+      outputVertexCount: 5,
+      successfulSectionCount: 0,
+      failedSectionCount: 4,
+      routeId: "DJB30300067",
+    });
     metrics.observeUiEvent({
       version: "route-pulse-v1",
       event: "recommendation_succeeded",
@@ -123,6 +156,25 @@ describe("운영 metrics", () => {
     expect(output).toContain(
       'chimap_ui_events_total{event="recommendation_succeeded",ui_state="results",experience_mode="guided",outcome="success",duration_bucket="1to3s",service="chimap-api"} 1',
     );
+    expect(output).toContain(
+      'chimap_subway_track_geometry_coverage_ratio{service_line_id="SL_TEST",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_subway_track_geometry_fallback_total{reason="CONTINUITY_GAP",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_subway_track_geometry_vertices_sum{service="chimap-api",source="OSM"} 37',
+    );
+    expect(output).toContain(
+      'chimap_subway_track_geometry_response_bytes_sum{service="chimap-api"} 24000',
+    );
+    expect(output).toContain(
+      'chimap_route_geometry_requests_total{mode="BUS",outcome="APPROXIMATE",reason="TIMEOUT",source="FALLBACK",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_route_geometry_cache_total{mode="BUS",outcome="MISS",service="chimap-api"} 1',
+    );
+    expect(output).not.toContain("DJB30300067");
   });
 
   it("최근 교통 동기화 성공 시각과 실패 노선 수를 운영 지표로 노출한다", async () => {

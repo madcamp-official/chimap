@@ -27,6 +27,12 @@ import type {
   WalkRouteRequest,
 } from "./types.js";
 import { MultimodalRoutePlanner } from "./multimodal-route-planner.js";
+import {
+  classifyGeometryError,
+  RouteGeometryService,
+  withRouteGeometryLimit,
+  type ResolvedBusGeometry,
+} from "./route-geometry.js";
 import { SubwayRoutePlanner } from "./subway-route-planner.js";
 
 type StopRoutes = {
@@ -238,7 +244,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
   readonly #transitService: TransitService;
   readonly #config: AppConfig;
   readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
-  readonly #roadGeometryCache = new MemoryCache(64 * 1024 * 1024);
+  readonly #routeGeometryService: RouteGeometryService;
   readonly #subwayRoutePlanner: SubwayRoutePlanner;
   readonly #multimodalRoutePlanner: MultimodalRoutePlanner;
 
@@ -250,8 +256,15 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     this.#baseProvider = options.baseProvider;
     this.#transitService = options.transitService;
     this.#config = options.config;
+    this.#routeGeometryService = new RouteGeometryService({
+      provider: options.baseProvider,
+      repository: options.transitService.repository,
+    });
     this.#subwayRoutePlanner = new SubwayRoutePlanner(options);
-    this.#multimodalRoutePlanner = new MultimodalRoutePlanner(options);
+    this.#multimodalRoutePlanner = new MultimodalRoutePlanner({
+      ...options,
+      routeGeometryService: this.#routeGeometryService,
+    });
   }
 
   public searchPlaces(
@@ -281,7 +294,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       if (routes.length > 0) {
         return routes;
       }
-    } catch {
+    } catch (error) {
       // Migration/seed rollout 중에는 기존 탐색기로 안전하게 복귀한다.
     }
     return this.#getLegacyTransitRoutes(request);
@@ -872,59 +885,115 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
   async #walkingRoute(
     from: Coordinate,
     to: Coordinate,
-    signal?: AbortSignal,
+    request: TransitRouteRequest,
   ): Promise<NormalizedRoute | undefined> {
-    if (haversineDistanceMeters(from, to) <= 3) {
+    const distanceMeters = Math.round(haversineDistanceMeters(from, to));
+    if (distanceMeters <= 3) {
       return undefined;
     }
-    const key = `tago:walk:${coordinateCacheKey(from)}:${coordinateCacheKey(to)}`;
-    return this.#walkingCache.getOrLoad(
-      key,
-      30 * 60 * 1000,
-      () =>
-        this.#baseProvider.getWalkingRoute({
+    const key = `tago:walk:${coordinateCacheKey(from)}:${coordinateCacheKey(to)}:${request.geometryProfile ?? "legacy"}`;
+    const walkingCacheHit = this.#walkingCache.get<NormalizedRoute>(key) !== undefined;
+    const startedAt = performance.now();
+    const budgetSignal = AbortSignal.timeout(8_000);
+    const walkingSignal = request.signal === undefined
+      ? budgetSignal
+      : AbortSignal.any([request.signal, budgetSignal]);
+    try {
+      const route = await this.#walkingCache.getOrLoad(
+        key,
+        30 * 60 * 1000,
+        () => withRouteGeometryLimit(() => this.#baseProvider.getWalkingRoute({
           origin: from,
           destination: to,
           routeMode: "BROAD_FIRST",
-          ...(signal === undefined ? {} : { signal }),
-        }),
-    );
+          signal: walkingSignal,
+        })),
+      );
+      request.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: "DETAILED",
+        reason: "NONE",
+        source: "KAKAO_WALK",
+        cacheState: walkingCacheHit ? "FRESH" : "MISS",
+        durationMilliseconds: performance.now() - startedAt,
+        inputVertexCount: 2,
+        outputVertexCount: route.legs.reduce((total, leg) => total + leg.coordinates.length, 0),
+        successfulSectionCount: 1,
+        failedSectionCount: 0,
+      });
+      return request.geometryProfile === "TRANSIT_V2"
+        ? normalizedRouteSchema.parse({
+            ...route,
+            legs: route.legs.map((leg) => ({
+              ...leg,
+              geometryQuality: "DETAILED" as const,
+            })),
+          })
+        : route;
+    } catch (error) {
+      request.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: "APPROXIMATE",
+        reason: classifyGeometryError(error),
+        source: "FALLBACK",
+        cacheState: "MISS",
+        durationMilliseconds: performance.now() - startedAt,
+        inputVertexCount: 2,
+        outputVertexCount: 2,
+        successfulSectionCount: 0,
+        failedSectionCount: 1,
+      });
+      const durationSeconds = Math.max(
+        1,
+        Math.round(distanceMeters / ((this.#config.transit.walkSpeedKmh * 1000) / 3600)),
+      );
+      return normalizedRouteSchema.parse({
+        id: `tago-walk-fallback-${coordinateCacheKey(from)}-${coordinateCacheKey(to)}`,
+        source: "TAGO",
+        durationSeconds,
+        distanceMeters,
+        walkDistanceMeters: distanceMeters,
+        transitDistanceMeters: 0,
+        transferCount: 0,
+        legs: [{
+          id: "tago-walk-fallback",
+          mode: "WALK",
+          guidance: "도보 이동 (근사 경로)",
+          distanceMeters,
+          durationSeconds,
+          coordinates: [from, to],
+          ...(request.geometryProfile === "TRANSIT_V2"
+            ? { geometryQuality: "APPROXIMATE" as const }
+            : {}),
+          isExerciseSegment: false,
+        }],
+      });
+    }
   }
 
   async #roadRoute(
     segment: BusRouteStop[],
-    signal?: AbortSignal,
-  ): Promise<Coordinate[] | undefined> {
+    request: TransitRouteRequest,
+  ): Promise<ResolvedBusGeometry> {
     const first = segment[0];
     const last = segment.at(-1);
     if (first === undefined || last === undefined || segment.length < 2) {
-      return undefined;
+      return { coordinates: [], quality: "APPROXIMATE", reason: "EMPTY_PATH" };
     }
-    const key = [
-      "tago:road",
-      first.cityCode,
-      first.routeId,
-      first.nodeId,
-      last.nodeId,
-    ].join(":");
     try {
-      return await this.#roadGeometryCache.getOrLoad(
-        key,
-        24 * 60 * 60 * 1000,
-        () =>
-          this.#baseProvider.getRoadRouteGeometry({
-            points: segment.map(stopCoordinate),
-            ...(signal === undefined ? {} : { signal }),
-          }),
-      );
-    } catch (error) {
-      if (
-        signal?.aborted === true ||
-        (error instanceof ProviderError && error.kind === "ABORTED")
-      ) {
-        throw error;
-      }
-      return undefined;
+      return await this.#routeGeometryService.resolveBusGeometry({
+        stops: segment,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+        ...(request.observeRouteGeometry === undefined
+          ? {}
+          : { observe: request.observeRouteGeometry }),
+      });
+    } catch {
+      return {
+        coordinates: segment.map(stopCoordinate),
+        quality: "APPROXIMATE",
+        reason: "UPSTREAM",
+      };
     }
   }
 
@@ -933,7 +1002,8 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     route: BusRoute;
     segment: BusRouteStop[];
     arrival?: BusArrival;
-    roadCoordinates?: Coordinate[];
+    roadGeometry: ResolvedBusGeometry;
+    geometryProfile?: TransitRouteRequest["geometryProfile"];
   }): {
     routeLeg: RouteLeg;
     busLeg: TransitBusLeg;
@@ -955,9 +1025,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     const waitSeconds =
       input.arrival?.arrivalSeconds ??
       estimatedWaitSeconds(input.route);
-    const roadMatched = (input.roadCoordinates?.length ?? 0) >= 2;
-    const polyline = roadMatched
-      ? input.roadCoordinates!
+    const roadMatched = input.roadGeometry.quality === "DETAILED";
+    const polyline = input.roadGeometry.coordinates.length >= 2
+      ? input.roadGeometry.coordinates
       : input.segment.map(stopCoordinate);
     const busLeg: TransitBusLeg = {
       routeId: input.route.routeId,
@@ -990,6 +1060,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         durationSeconds: waitSeconds + rideSeconds,
         stops: input.segment.map((stop) => stop.stopName),
         coordinates: polyline,
+        ...(input.geometryProfile === "TRANSIT_V2"
+          ? { geometryQuality: input.roadGeometry.quality }
+          : {}),
         isExerciseSegment: false,
         bus: busLeg,
       },
@@ -1005,7 +1078,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       arrival,
       startWalkingRoute,
       endWalkingRoute,
-      roadCoordinates,
+      roadGeometry,
     ] = await Promise.all([
       this.#arrivalForLeg(
         candidate.route,
@@ -1015,14 +1088,14 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       this.#walkingRoute(
         request.origin.location,
         stopCoordinate(candidate.boardingStop),
-        request.signal,
+        request,
       ),
       this.#walkingRoute(
         stopCoordinate(candidate.alightingStop),
         request.destination.location,
-        request.signal,
+        request,
       ),
-      this.#roadRoute(candidate.segment, request.signal),
+      this.#roadRoute(candidate.segment, request),
     ]);
     const startWalk = walkingLegs(
       startWalkingRoute,
@@ -1033,8 +1106,11 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       id: `tago-direct-${index}-bus`,
       route: candidate.route,
       segment: candidate.segment,
+      roadGeometry,
+      ...(request.geometryProfile === undefined
+        ? {}
+        : { geometryProfile: request.geometryProfile }),
       ...(arrival === undefined ? {} : { arrival }),
-      ...(roadCoordinates === undefined ? {} : { roadCoordinates }),
     });
     const endWalk = walkingLegs(
       endWalkingRoute,
@@ -1270,8 +1346,8 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       startWalkingRoute,
       transferWalkingRoute,
       endWalkingRoute,
-      firstRoadCoordinates,
-      secondRoadCoordinates,
+      firstRoadGeometry,
+      secondRoadGeometry,
     ] = await Promise.all([
       this.#arrivalForLeg(
         candidate.firstRoute,
@@ -1286,20 +1362,20 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       this.#walkingRoute(
         request.origin.location,
         stopCoordinate(candidate.boardingStop),
-        request.signal,
+        request,
       ),
       this.#walkingRoute(
         stopCoordinate(candidate.transferOutStop),
         stopCoordinate(candidate.transferInStop),
-        request.signal,
+        request,
       ),
       this.#walkingRoute(
         stopCoordinate(candidate.alightingStop),
         request.destination.location,
-        request.signal,
+        request,
       ),
-      this.#roadRoute(candidate.firstSegment, request.signal),
-      this.#roadRoute(candidate.secondSegment, request.signal),
+      this.#roadRoute(candidate.firstSegment, request),
+      this.#roadRoute(candidate.secondSegment, request),
     ]);
     const startWalk = walkingLegs(
       startWalkingRoute,
@@ -1310,10 +1386,11 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       id: `tago-transfer-${index}-bus-1`,
       route: candidate.firstRoute,
       segment: candidate.firstSegment,
-      ...(firstArrival === undefined ? {} : { arrival: firstArrival }),
-      ...(firstRoadCoordinates === undefined
+      roadGeometry: firstRoadGeometry,
+      ...(request.geometryProfile === undefined
         ? {}
-        : { roadCoordinates: firstRoadCoordinates }),
+        : { geometryProfile: request.geometryProfile }),
+      ...(firstArrival === undefined ? {} : { arrival: firstArrival }),
     });
     const transferWalk = walkingLegs(
       transferWalkingRoute,
@@ -1324,10 +1401,11 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       id: `tago-transfer-${index}-bus-2`,
       route: candidate.secondRoute,
       segment: candidate.secondSegment,
-      ...(secondArrival === undefined ? {} : { arrival: secondArrival }),
-      ...(secondRoadCoordinates === undefined
+      roadGeometry: secondRoadGeometry,
+      ...(request.geometryProfile === undefined
         ? {}
-        : { roadCoordinates: secondRoadCoordinates }),
+        : { geometryProfile: request.geometryProfile }),
+      ...(secondArrival === undefined ? {} : { arrival: secondArrival }),
     });
     const endWalk = walkingLegs(
       endWalkingRoute,

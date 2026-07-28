@@ -38,6 +38,32 @@ function normalizedAddress(place: Place): string {
   return normalizeSearchTerm(place.roadAddress || place.address || place.name);
 }
 
+function searchRelevance(query: string, place: Place): number {
+  const normalizedQuery = normalizeSearchTerm(query);
+  const name = normalizeSearchTerm(place.name);
+  const address = normalizeSearchTerm(place.address);
+  const roadAddress = normalizeSearchTerm(place.roadAddress);
+  if (name === normalizedQuery) {
+    return 0;
+  }
+  if (address === normalizedQuery || roadAddress === normalizedQuery) {
+    return 1;
+  }
+  if (name.startsWith(normalizedQuery)) {
+    return 2;
+  }
+  if (name.includes(normalizedQuery)) {
+    return 3;
+  }
+  if (
+    address.includes(normalizedQuery) ||
+    roadAddress.includes(normalizedQuery)
+  ) {
+    return 4;
+  }
+  return 5;
+}
+
 export function mergePlaces(
   query: string,
   primary: Place[],
@@ -57,15 +83,11 @@ export function mergePlaces(
       merged.push(place);
     }
   }
-  const normalizedQuery = normalizeSearchTerm(query);
   return merged
     .map((place, index) => ({
       place,
       index,
-      exact:
-        normalizeSearchTerm(place.name) === normalizedQuery ||
-        normalizeSearchTerm(place.address) === normalizedQuery ||
-        normalizeSearchTerm(place.roadAddress) === normalizedQuery,
+      relevance: searchRelevance(query, place),
       distance:
         center === undefined
           ? undefined
@@ -73,7 +95,7 @@ export function mergePlaces(
     }))
     .sort(
       (first, second) =>
-        Number(second.exact) - Number(first.exact) ||
+        first.relevance - second.relevance ||
         (first.distance ?? 0) - (second.distance ?? 0) ||
         first.index - second.index,
     )
@@ -120,31 +142,57 @@ export class PlaceLookupService {
   }
 
   async #suggest(input: SearchInput): Promise<PlaceSearchResponse> {
-    let degraded = false;
-    let kakaoFailure: unknown;
-    try {
-      const keyword = await this.#kakao.searchKeyword(input.query, {
+    const keywordResults = await Promise.allSettled([
+      this.#kakao.searchKeyword(input.query, {
         limit: input.limit,
-        ...(input.center === undefined ? {} : { center: input.center }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      if (keyword.length > 0) {
-        return {
-          items: keyword.slice(0, input.limit),
-          meta: {
-            provider: "KAKAO",
-            strategy: "KAKAO_KEYWORD",
-            fallbackUsed: false,
-            degraded: false,
-          },
-        };
+      }),
+      ...(input.center === undefined
+        ? []
+        : [
+            this.#kakao.searchKeyword(input.query, {
+              limit: input.limit,
+              center: input.center,
+              ...(input.signal === undefined
+                ? {}
+                : { signal: input.signal }),
+            }),
+          ]),
+    ]);
+    for (const result of keywordResults) {
+      if (result.status === "rejected" && isImmediateFailure(result.reason)) {
+        throw result.reason;
       }
-    } catch (error) {
-      if (isImmediateFailure(error)) {
-        throw error;
-      }
-      degraded = true;
-      kakaoFailure = error;
+    }
+    const relevanceKeyword =
+      keywordResults[0]?.status === "fulfilled"
+        ? keywordResults[0].value
+        : [];
+    const nearbyKeyword =
+      keywordResults[1]?.status === "fulfilled"
+        ? keywordResults[1].value
+        : [];
+    const keyword = mergePlaces(
+      input.query,
+      relevanceKeyword,
+      nearbyKeyword,
+      input.limit,
+      input.center,
+    );
+    let degraded = keywordResults.some((result) => result.status === "rejected");
+    let kakaoFailure = keywordResults.find(
+      (result) => result.status === "rejected",
+    )?.reason;
+    if (keyword.length > 0) {
+      return {
+        items: keyword,
+        meta: {
+          provider: "KAKAO",
+          strategy: "KAKAO_KEYWORD",
+          fallbackUsed: false,
+          degraded,
+        },
+      };
     }
 
     try {

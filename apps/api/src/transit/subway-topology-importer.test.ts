@@ -16,8 +16,8 @@ describe("지하철 경로 토폴로지 CSV", () => {
       30,
     );
     expect(result.lineStations).toHaveLength(1_056);
-    expect(result.segments).toHaveLength(2_318);
-    expect(result.headways).toHaveLength(17_654);
+    expect(result.segments).toHaveLength(2_314);
+    expect(result.headways).toHaveLength(17_614);
     expect(result.transfers).toHaveLength(341);
     expect(
       result.lineStations.find(

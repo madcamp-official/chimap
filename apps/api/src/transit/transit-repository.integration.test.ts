@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import type { BusRoute, BusRouteStop } from "@chimap/contracts";
 import { describe, expect, it } from "vitest";
 
 import { parseBusStopsCsvBuffer } from "./csv-importer.js";
 import { parseSubwayStationsCsvBuffer } from "./subway-csv-importer.js";
+import { parseSubwaySegmentShapesDirectory } from "./subway-segment-shape-importer.js";
+import { parseSubwayTopologyDirectory } from "./subway-topology-importer.js";
 import { TransitRepository } from "./transit-repository.js";
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
@@ -16,6 +19,9 @@ const source = readFileSync(
 );
 const subwaySource = readFileSync(
   new URL("../../../../data/subway_data.csv", import.meta.url),
+);
+const subwayDataDirectory = fileURLToPath(
+  new URL("../../../../data/", import.meta.url),
 );
 const actualRoute: BusRoute = {
   id: "25:DJB30300043",
@@ -93,6 +99,65 @@ describe.skipIf(databaseUrl === undefined)(
                 (item.distanceMeters ?? 0),
           ),
         ).toBe(true);
+      } finally {
+        await repository.close();
+      }
+    });
+
+    it("migration 11 버스 구간 형상을 저장·단순화 조회하고 해시로 무효화한다", async () => {
+      const repository = new TransitRepository({
+        url: databaseUrl!,
+        poolMax: 2,
+        connectTimeoutMs: 3000,
+        statementTimeoutMs: 5000,
+        sslMode: "disable",
+      });
+      try {
+        await repository.migrate();
+        await repository.replaceRouteStops(actualRoute, actualRouteStops);
+        const sourceHash = "a".repeat(64);
+        await repository.upsertBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+          [{
+            fromNodeOrder: 1,
+            toNodeOrder: 2,
+            coordinates: [
+              { lat: 36.26705, lng: 127.47933 },
+              { lat: 36.2679, lng: 127.4785 },
+              { lat: 36.268803, lng: 127.47771 },
+            ],
+            distanceMeters: 240,
+            geometrySource: "KAKAO_ROAD",
+            geometryVersion: "transit-v2",
+            sourceHash,
+            freshUntil: new Date(Date.now() + 60_000),
+            expiresAt: new Date(Date.now() + 120_000),
+          }],
+        );
+
+        const stored = await repository.getBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+        );
+        expect(stored[0]).toMatchObject({
+          fromNodeOrder: 1,
+          toNodeOrder: 2,
+          geometrySource: "KAKAO_ROAD",
+          sourceHash,
+          cacheState: "FRESH",
+        });
+        expect(stored[0]?.coordinates.length).toBeGreaterThanOrEqual(2);
+
+        await repository.removeMismatchedBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+          ["b".repeat(64)],
+        );
+        await expect(repository.getBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+        )).resolves.toEqual([]);
       } finally {
         await repository.close();
       }
@@ -366,5 +431,78 @@ describe.skipIf(databaseUrl === undefined)(
         await repository.close();
       }
     });
+
+    it("전국 2,314개 선로를 PostGIS에 적재하고 routing graph로 반환한다", async () => {
+      const repository = new TransitRepository({
+        url: databaseUrl!,
+        poolMax: 2,
+        connectTimeoutMs: 3000,
+        statementTimeoutMs: 5000,
+        sslMode: "disable",
+      });
+      try {
+        await repository.migrate();
+        const [topology, shapes] = await Promise.all([
+          parseSubwayTopologyDirectory(subwayDataDirectory),
+          parseSubwaySegmentShapesDirectory(subwayDataDirectory),
+        ]);
+        await repository.importSubwayStations(
+          parseSubwayStationsCsvBuffer(subwaySource).rows,
+        );
+        await repository.importSubwayTopology(topology);
+        await repository.importSubwaySegmentShapes(shapes);
+        await repository.importSubwaySegmentShapes(shapes);
+
+        expect(await repository.stats()).toMatchObject({
+          routeReadySubwaySegments: 2314,
+          subwayTrackGeometrySegments: 2314,
+        });
+        const coverage = await repository.subwayTrackGeometryCoverage();
+        expect(coverage).toHaveLength(30);
+        expect(
+          coverage.every(
+            ({ segmentCount, geometryCount }) =>
+              segmentCount === geometryCount,
+          ),
+        ).toBe(true);
+
+        const graph = await repository.getSubwayRoutingGraph(
+          "WEEKDAY",
+          "DAYTIME",
+        );
+        const reference = graph.edges.find(
+          (edge) =>
+            edge.fromNodeId === "SL_035A73FB3875:S3001|112" &&
+            edge.toNodeId === "SL_035A73FB3875:S3001|111",
+        );
+        expect(reference).toMatchObject({
+          kind: "RIDE",
+          distanceMeters: 839,
+          geometrySource: "OpenStreetMap relation 7792527",
+        });
+        expect(reference?.trackCoordinates?.length).toBeGreaterThan(2);
+        expect(reference?.trackDistanceMeters).toBeGreaterThan(839);
+
+        const stored = await repository.pool.query<{
+          srid: number;
+          points: number;
+          distance: number;
+        }>(
+          `SELECT
+             ST_SRID(track_geometry) AS srid,
+             ST_NPoints(track_geometry) AS points,
+             track_distance_meters AS distance
+           FROM subway_segments
+           WHERE service_line_id = 'SL_035A73FB3875'
+             AND from_source_station_key = 'S3001|112'
+             AND to_source_station_key = 'S3001|111'`,
+        );
+        expect(stored.rows[0]).toMatchObject({ srid: 4326 });
+        expect(stored.rows[0]?.points).toBeGreaterThan(2);
+        expect(stored.rows[0]?.distance).toBe(reference?.trackDistanceMeters);
+      } finally {
+        await repository.close();
+      }
+    }, 120_000);
   },
 );

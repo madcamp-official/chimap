@@ -1,0 +1,266 @@
+{
+  "generatedAt": "2026-07-28T03:24:11.720Z",
+  "routeReadyLines": 30,
+  "routeReadyStations": 925,
+  "matchedRouteReadyStations": 891,
+  "features": 2314,
+  "coverage": [
+    {
+      "serviceLineId": "SL_035A73FB3875",
+      "segmentCount": 42,
+      "geometryCount": 42,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_1500AD3823C1",
+      "segmentCount": 68,
+      "geometryCount": 68,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_161E0D8970EF",
+      "segmentCount": 22,
+      "geometryCount": 22,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_310F3C654984",
+      "segmentCount": 56,
+      "geometryCount": 56,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_37E47229122C",
+      "segmentCount": 44,
+      "geometryCount": 44,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_3C3070C16347",
+      "segmentCount": 104,
+      "geometryCount": 104,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_480F0999C961",
+      "segmentCount": 24,
+      "geometryCount": 24,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_4AEDCA688792",
+      "segmentCount": 4,
+      "geometryCount": 4,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_50341A3A9F81",
+      "segmentCount": 20,
+      "geometryCount": 20,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_5287D3BFAFEF",
+      "segmentCount": 88,
+      "geometryCount": 88,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_564F0B5AFE1B",
+      "segmentCount": 102,
+      "geometryCount": 102,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_58702E398A41",
+      "segmentCount": 10,
+      "geometryCount": 10,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_669DDAD57BBE",
+      "segmentCount": 78,
+      "geometryCount": 78,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_69DD658ED6A6",
+      "segmentCount": 92,
+      "geometryCount": 92,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_6EEBE5963ED8",
+      "segmentCount": 73,
+      "geometryCount": 73,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_7E1B1F7898EE",
+      "segmentCount": 72,
+      "geometryCount": 72,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_8A8C2141F5AC",
+      "segmentCount": 39,
+      "geometryCount": 39,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_8CFC987D09A5",
+      "segmentCount": 24,
+      "geometryCount": 24,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_8F5057CD282A",
+      "segmentCount": 37,
+      "geometryCount": 37,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_93451329FB01",
+      "segmentCount": 18,
+      "geometryCount": 18,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_9466C01B2356",
+      "segmentCount": 817,
+      "geometryCount": 817,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_AA31BBF870D0",
+      "segmentCount": 42,
+      "geometryCount": 42,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_AAA8222A8ABE",
+      "segmentCount": 112,
+      "geometryCount": 112,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_B1F662AB4558",
+      "segmentCount": 24,
+      "geometryCount": 24,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_BFAC24E0343C",
+      "segmentCount": 76,
+      "geometryCount": 76,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_C328BFA28000",
+      "segmentCount": 48,
+      "geometryCount": 48,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_D0E7788D279F",
+      "segmentCount": 98,
+      "geometryCount": 98,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_D2AA9565CC28",
+      "segmentCount": 30,
+      "geometryCount": 30,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_DAB0E2B86442",
+      "segmentCount": 4,
+      "geometryCount": 4,
+      "coverage": 1
+    },
+    {
+      "serviceLineId": "SL_F342822E3817",
+      "segmentCount": 46,
+      "geometryCount": 46,
+      "coverage": 1
+    }
+  ],
+  "relations": {
+    "443803": 43,
+    "2194999": 78,
+    "2195014": 26,
+    "2201600": 31,
+    "2204611": 30,
+    "2205952": 20,
+    "2404374": 48,
+    "2718884": 22,
+    "2718888": 26,
+    "2718901": 26,
+    "4729405": 4,
+    "4729406": 4,
+    "4729407": 4,
+    "4729408": 4,
+    "4729409": 38,
+    "4729445": 49,
+    "4744311": 39,
+    "4744338": 12,
+    "4744339": 32,
+    "4744340": 54,
+    "5993211": 40,
+    "5993212": 46,
+    "6094786": 135,
+    "6462562": 2,
+    "6462563": 2,
+    "6708903": 14,
+    "7237829": 18,
+    "7533582": 4,
+    "7533583": 20,
+    "7685464": 14,
+    "7685727": 48,
+    "7685783": 56,
+    "7705729": 9,
+    "7792527": 24,
+    "7845970": 54,
+    "7883314": 11,
+    "7919018": 20,
+    "8247016": 4,
+    "8255697": 45,
+    "8258701": 4,
+    "8266158": 132,
+    "8272971": 10,
+    "8656357": 30,
+    "8656358": 12,
+    "8656359": 2,
+    "8667955": 4,
+    "8667956": 4,
+    "8692707": 70,
+    "8692830": 54,
+    "8692928": 2,
+    "10092719": 18,
+    "10881612": 2,
+    "10922025": 2,
+    "10922027": 2,
+    "11509732": 28,
+    "11625555": 30,
+    "11634611": 56,
+    "12080315": 44,
+    "12497485": 8,
+    "12497486": 3,
+    "12623856": 2,
+    "12746493": 44,
+    "12746498": 60,
+    "13463724": 2,
+    "13463725": 20,
+    "13675921": 26,
+    "13938877": 28,
+    "14191876": 14,
+    "14191877": 6,
+    "16244687": 10,
+    "16244688": 4,
+    "16850861": 180,
+    "16851104": 242,
+    "19427675": 3
+  },
+  "sha256": "3cf4e1c8396f8d9ac4246a55fa3178871a4f56f8245b72bb8b2db0dc0bdcd988"
+}

@@ -158,6 +158,20 @@ describe("MapView", () => {
         title: "대전 · 대전 2호선 하차",
       }),
     ]);
+
+    render(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[subwayRoute]}
+        selectedRouteId={subwayRoute.id}
+      />,
+    );
+    expect(
+      screen.getByRole("link", {
+        name: "선로 데이터: © OpenStreetMap contributors 외",
+      }),
+    ).toHaveAttribute("href", "/subway-track-sources.html");
   });
   it("지도 키가 없어도 경로 카드 기능과 대체 경로선을 유지한다", () => {
     render(
@@ -228,6 +242,28 @@ describe("MapView", () => {
     expect(screen.getByLabelText("지도 경로 범례")).not.toHaveTextContent(
       "추가 운동",
     );
+  });
+
+  it("근사 경로는 노선 색상을 유지한 흐린 점선으로 표시한다", () => {
+    const approximateRoute: Recommendation = {
+      ...route,
+      legs: route.legs.map((leg) => ({
+        ...leg,
+        geometryQuality: "APPROXIMATE" as const,
+      })),
+    };
+    const { container } = render(
+      <MapView
+        origin={origin}
+        destination={destination}
+        recommendations={[approximateRoute]}
+        selectedRouteId={approximateRoute.id}
+      />,
+    );
+
+    const line = container.querySelector(".route-preview-svg polyline");
+    expect(line).toHaveAttribute("stroke-dasharray", "5 7");
+    expect(line).toHaveAttribute("stroke-opacity", "0.45");
   });
 
   it("SVG fallback도 WebP 버스 이미지와 흰 전광판·검은 노선번호를 표시한다", () => {

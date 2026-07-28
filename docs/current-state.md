@@ -2,23 +2,23 @@
 
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
-- **현재 구현**: `main`의 Web/API/Mobile 공통 계약과 Expo 앱에 더해 migration 9,
-  요청 범위 버스·지하철 멀티모달 그래프,
-  최대 2회 환승, TAGO 시간표 timing과 사전 계산 버스↔지하철 보행 연결을
-  포함합니다. 현재 API 결정적 테스트 114개와 mobile 46개, relay 4개, 전체 production
-  build를 통과했고 DB 통합 테스트 8개는 별도 PostGIS 환경에서 실행합니다.
-- **현재 공개 배포**: 2026-07-27 21:39 KST에 commit `e16684b`의 이미지
-  `sha256:77f4de84…`로 API/웹을 교체했습니다. `TRANSIT_ROUTER_MODE=multimodal`이며
-  서울역→강남역 추천에서 첫 4호선 leg가 `SEOUL_REALTIME_ARRIVAL`, 이후 환승
-  leg가 TAGO 시간표 fallback으로 반환됩니다.
-- **마지막 전체 운영 점검**: 2026-07-27 21:45 KST에 컨테이너, PostgreSQL,
-  migration 9, 멀티모달 seed, 공개 health/readiness와 실제 추천, 모니터링,
-  공개 bundle·로그 비밀값과 배포 후 백업을 대조했습니다.
+- **현재 구현**: Web/API/Mobile 공통 계약과 Expo 앱, migration 11, 요청 범위
+  버스·지하철 멀티모달 그래프, 실제 지하철 선로, 버스 도로 형상 영속 캐시,
+  연속 도보 형상과 `DETAILED/APPROXIMATE` 표시를 포함합니다. 결정적 테스트는
+  API 141개, mobile 48개, web 57개, contracts 12개, app-core/relay 각 4개이며
+  PostGIS 의존 통합 테스트 10개는 별도 환경에서 실행합니다.
+- **현재 공개 배포**: 2026-07-28 14:39 KST에 이미지
+  `sha256:d6348b3d…`로 API/웹/alert relay를 교체했습니다.
+  `TRANSIT_ROUTER_MODE=multimodal`, `TRANSIT_GEOMETRY_V2_ENABLED=1`이며
+  `transit-v2`는 실제 지하철 선로와 검증된 버스·도보 형상을 반환합니다.
+- **마지막 전체 운영 점검**: 2026-07-28 14:40 KST에 컨테이너, PostgreSQL,
+  migration 11, 공개 health/readiness, 514번 실제 추천, Prometheus 22개 규칙,
+  정적 출처 페이지와 배포 전후 백업을 대조했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
-  commit `55fec7c`의 timeout 격리 이미지를 배포하고 버스·지하철 seed를 완료해
-  readiness HTTP 200과 KAIST 본원→대전역 추천 3건을 확인했습니다.
+  migration 11과 `transit-v2` 격리 이미지를 배포하고 버스·지하철 seed를 완료해
+  readiness HTTP 200과 514번 필수 구간 25개 상세 좌표를 확인했습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -114,14 +114,15 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:77f4de84…`, commit `e16684b`), 단일 Node.js 프로세스, healthy |
-| DB | PostgreSQL 18 + PostGIS 3.6, migration 9, healthy |
-| 모니터링 | Prometheus 3.13.1, 3개 target `up`, 20개 경보 규칙 정상 |
+| API | `chimap:actual-data` (`sha256:d6348b3d…`), 단일 Node.js 프로세스, healthy |
+| DB | PostgreSQL 18 + PostGIS 3.6, migration 11, healthy |
+| 모니터링 | Prometheus 3.13.1, 3개 target `up`, 22개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
 | 장소·주소 | Kakao 우선, NAVER 주소 보완 |
-| 도보 | Kakao Routing |
-| 버스 표시선 | Kakao Mobility Directions 도로 geometry |
+| 도보 | Kakao step 좌표 연속 조립, 장애 시 흐린 점선 근사 경로 |
+| 버스 표시선 | 인접 정류장별 검증·캐시한 Kakao 도로 geometry, 실패 구간 점선 fallback |
+| 지하철 표시선 | migration 10 선로 LineString, `track-v1`·`transit-v2`에서 실제 선형 |
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
@@ -314,8 +315,9 @@ CHIMap session 저장과 NAVER 지도 진입을 확인했습니다. 현재 Nativ
 Kakao Developers의 동일 key에 `org.madcamp.chimap.staging` 등록 후 새 바이너리
 실기기 E2E가 남았습니다. 첫 내부 TestFlight는 Kakao 필수 로그인·HealthKit과
 refresh/logout/account deletion을 검증하고 Apple 코드는 server flag로 숨깁니다.
-Light 고정과 built-in deployment target 17.0은 완료됐고, EAS store/preview와 App
-Store Connect ID는 후속 작업입니다.
+Light 고정과 built-in deployment target 17.0은 완료됐고, Google Play용
+`play-staging` AAB/internal draft profile도 추가했습니다. Expo project/token,
+Play service account와 App Store Connect ID 연결은 후속 작업입니다.
 
 ### 운영
 
@@ -326,7 +328,7 @@ Store Connect ID는 후속 작업입니다.
 - 15초 간격 수집, 15일·2GiB 보존
 - HTTP 상태·p95, 검색 0건·NAVER 보완, 추천, DB pool, TAGO timeout,
   공급자 설정, 교통 통계, 백업·동기화·알림 전달 상태 지표
-- availability·품질·백업·동기화·알림 전달에 대한 20개 경보 규칙
+- availability·품질·경로 형상·백업·동기화·알림 전달에 대한 22개 경보 규칙
 - Alertmanager가 critical/warning을 묶어 relay로 전달하고 복구 알림도 전송
 - 일일 백업, 월간 restore 검증과 일일 01:30 KST TAGO 동기화 timer
 - 이전 실행 컨테이너와 이전 CHIMap 태그 정리
@@ -345,7 +347,7 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| 최신 현재 코드 검사 | API 114개·relay 4개, TypeScript/API/Web production build 통과. 서울 도착·위치 upstream과 서울역→강남역 실제 추천 검증 통과 |
+| 최신 현재 코드 검사 | 전체 결정적 테스트 266개, TypeScript/API/Web/Mobile production build와 migration 11 PostGIS 검증 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile, iOS signed device build 통과. 이전 iPhone 설치·NAVER smoke는 확인했으나 현재 Kakao key E2E와 Android Development Build는 대기 |
@@ -451,11 +453,12 @@ SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치�
   확인했습니다. 현재 Native App Key의 KakaoTalk→session E2E, HealthKit matrix,
   staging App Store Connect app, EAS store/preview profile과 TestFlight 제출이
   남았습니다. [iOS 개발 운영서](./ios-development.md)를 release gate로 사용합니다.
-- legacy와 multimodal 지하철 planner는 아직 실제 선로 geometry가 아니라 역사
-  좌표를 직선으로 잇습니다. DB migration 10과 합법적 track shape importer,
-  두 planner의 ordered geometry 조립은
-  [지하철 선형 구현 프롬프트](./subway-track-geometry-backend-prompt.md)의 후속
-  `feat/api/*` 작업입니다.
+- 버스 도로 형상은 실제 운행 중심선이 아니라 Kakao 자동차 도로 형상입니다.
+  endpoint·연속성·우회거리 검증에 실패한 구간은 정상 도로처럼 표시하지 않고
+  흐린 점선 근사 경로로 유지합니다.
+- Google Play 제출용 `play-staging` AAB/internal draft profile은 준비됐지만 Expo
+  project/token, Play Console 앱과 service account 연결 전이라 실제 스토어 제출은
+  아직 수행하지 않았습니다.
 - 전국 정류장은 적재했지만 노선과 노선-정류장 관계는 사용 지역을 중심으로
   점진적으로 동기화합니다.
 - API는 프로세스 로컬 캐시와 rate limit을 사용하므로 단일 인스턴스로

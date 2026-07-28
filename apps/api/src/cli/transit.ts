@@ -1,16 +1,20 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
 import { KakaoMobilityProvider } from "../providers/kakao-provider.js";
+import { RouteGeometryService } from "../providers/route-geometry.js";
 import { buildBusSubwayTransferEdges } from "../transit/bus-subway-transfer-builder.js";
 import { importBusStopsFile } from "../transit/csv-importer.js";
 import { importSubwayStationsFile } from "../transit/subway-csv-importer.js";
 import { importSubwayProviderMapFile } from "../transit/subway-provider-map-importer.js";
+import {
+  importSubwaySegmentShapesDirectory,
+  parseSubwaySegmentShapesDirectory,
+} from "../transit/subway-segment-shape-importer.js";
 import { importSubwayTopologyDirectory } from "../transit/subway-topology-importer.js";
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
@@ -52,6 +56,12 @@ function coordinateArgument(name: "lat" | "lng"): number {
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function inputPath(value: string): string {
+  return isAbsolute(value)
+    ? value
+    : resolve(process.env.INIT_CWD ?? process.cwd(), value);
 }
 
 const syncAreaSchema = z
@@ -248,6 +258,20 @@ async function writeSyncStatus(
 }
 
 async function run(): Promise<void> {
+  if (command === "validate-subway-segment-shapes") {
+    const directoryValue =
+      argument("directory") ?? config.subwayTopologyDataDir;
+    const directory =
+      directoryValue === undefined ? undefined : inputPath(directoryValue);
+    if (directory === undefined) {
+      throw new Error(
+        "SUBWAY_TOPOLOGY_DATA_DIR 또는 --directory를 설정해 주세요.",
+      );
+    }
+    const result = await parseSubwaySegmentShapesDirectory(directory);
+    printJson({ directory, ...result.report });
+    return;
+  }
   await transit.initialize();
   switch (command) {
     case "health":
@@ -294,6 +318,41 @@ async function run(): Promise<void> {
         route: result.route,
         stopCount: result.stops.length,
       });
+      break;
+    }
+    case "warm-bus-geometry": {
+      if (config.kakaoRestApiKey === undefined) {
+        throw new Error("KAKAO_REST_API_KEY를 설정해 주세요.");
+      }
+      const cityCode = argument("cityCode") ?? config.tagoDefaultCityCode;
+      const routeId = requiredArgument("routeId");
+      const stops = await transit.getRouteStops(cityCode, routeId);
+      const estimatedApiCalls = Math.ceil(Math.max(0, stops.length - 1) / 31);
+      const maxApiCalls = Math.max(1, Number(argument("maxApiCalls") ?? 5));
+      if (estimatedApiCalls > maxApiCalls) {
+        throw new Error(`예상 API 호출 ${estimatedApiCalls}건이 --maxApiCalls ${maxApiCalls}건을 초과합니다.`);
+      }
+      if (process.argv.includes("--dryRun")) {
+        printJson({ cityCode, routeId, stopCount: stops.length, estimatedApiCalls, dryRun: true });
+        break;
+      }
+      const service = new RouteGeometryService({
+        provider: new KakaoMobilityProvider(config.kakaoRestApiKey),
+        repository: transit.repository,
+      });
+      const result = await service.resolveBusGeometry({ stops });
+      printJson({
+        cityCode,
+        routeId,
+        stopCount: stops.length,
+        estimatedApiCalls,
+        quality: result.quality,
+        reason: result.reason,
+        vertexCount: result.coordinates.length,
+      });
+      if (result.quality !== "DETAILED") {
+        throw new Error("버스 형상 warm-up이 일부 구간에서 실패했습니다.");
+      }
       break;
     }
     case "sync-area": {
@@ -471,6 +530,23 @@ async function run(): Promise<void> {
       });
       break;
     }
+    case "import-subway-segment-shapes": {
+      const directoryValue =
+        argument("directory") ?? config.subwayTopologyDataDir;
+      const directory =
+        directoryValue === undefined ? undefined : inputPath(directoryValue);
+      if (directory === undefined) {
+        throw new Error(
+          "SUBWAY_TOPOLOGY_DATA_DIR 또는 --directory를 설정해 주세요.",
+        );
+      }
+      const report = await importSubwaySegmentShapesDirectory(
+        directory,
+        transit.repository,
+      );
+      printJson({ directory, ...report });
+      break;
+    }
     case "import-subway-provider-map": {
       const path =
         argument("path") ??
@@ -544,7 +620,7 @@ async function run(): Promise<void> {
       break;
     default:
       throw new Error(
-        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, sync-area, sync-areas, import-stops, import-subway-stations, import-subway-topology, sync-subway-stations, subway-departures, stats 중 하나여야 합니다.",
+        "명령은 health, nearby, arrivals, route-stops, vehicles, sync-route, warm-bus-geometry, sync-area, sync-areas, import-stops, import-subway-stations, import-subway-topology, validate-subway-segment-shapes, import-subway-segment-shapes, sync-subway-stations, subway-departures, stats 중 하나여야 합니다.",
       );
   }
 }

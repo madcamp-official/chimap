@@ -1298,6 +1298,30 @@ summary:focus-visible,
   border-color: var(--orange);
 }
 
+.map-track-attribution {
+  position: absolute;
+  z-index: 6;
+  right: 12px;
+  bottom: calc(55vh + 29px);
+  max-width: calc(100% - 24px);
+  padding: 5px 8px;
+  border: 1px solid rgb(255 255 255 / 80%);
+  border-radius: 8px;
+  color: #445b60;
+  background: rgb(255 254 249 / 90%);
+  box-shadow: 0 4px 12px rgb(23 49 55 / 8%);
+  font-size: 8px;
+  line-height: 1.4;
+  text-decoration: none;
+  backdrop-filter: blur(8px);
+}
+
+.map-track-attribution:hover,
+.map-track-attribution:focus-visible {
+  color: var(--navy-strong);
+  text-decoration: underline;
+}
+
 .map-marker {
   min-width: 39px;
   padding: 5px 8px;
@@ -2911,6 +2935,16 @@ summary:focus-visible,
   line-height: 1.5;
 }
 
+.route-geometry-notice {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(111, 119, 117, 0.1);
+  color: #4f5856;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
 .calculation-note {
   padding: 10px 12px;
   border-radius: 11px;
@@ -3514,6 +3548,12 @@ summary:focus-visible,
     right: 18px;
     bottom: 48px;
     font-size: 10px;
+  }
+
+  .map-track-attribution {
+    right: 18px;
+    bottom: 18px;
+    font-size: 9px;
   }
 
   .route-summary-button {

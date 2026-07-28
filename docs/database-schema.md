@@ -1,8 +1,8 @@
 # 데이터베이스 스키마와 저장 계약
 
-기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-27 운영 DB에서
-migration 1~9, 정류장 227,308개, TAGO 연결 정류장 3,271개, 노선 156개,
-노선-정류장 관계 6,398개, 활성 지하철역 1,097개, TAGO 매핑 706개와
+기준 구현은 PostgreSQL 18 + PostGIS 3.6이며, 2026-07-28 운영 DB에서
+migration 1~11, 정류장 227,310개, TAGO 연결 정류장 3,325개, 노선 156개,
+노선-정류장 관계 6,907개, 활성 지하철역 1,097개, TAGO 매핑 706개와
 버스↔지하철 보행 연결 182개를 확인했습니다. 운영 수치는
 [구현·운영 현황](./current-state.md)에서 갱신합니다.
 
@@ -101,8 +101,8 @@ AES-256-GCM ciphertext/IV/tag와 마지막 Apple 검증 시각을 보관할 colu
 migration 7은 CSV의 역·노선 row와 TAGO 매핑 상태를 보존하는
 `subway_station_lines`를 추가합니다. 기존 버스·인증 row는 변경하지 않습니다.
 
-전역 실행 registry는 `apps/api/src/migrations.ts`입니다. 교통 migration 1~3은
-`apps/api/src/transit/migrations.ts`, 인증 migration 4는
+전역 실행 registry는 `apps/api/src/migrations.ts`입니다. 교통 migration
+1~3·7~11은 `apps/api/src/transit/migrations.ts`, 인증 migration 4~6은
 `apps/api/src/auth/migrations.ts`가 소유하며 전역 registry가 순서대로 합칩니다.
 API와 CLI가 checksum을 계산합니다.
 `apps/api/migrations/001_transit.sql`은 version 1 DDL을 사람이 확인하거나
@@ -624,6 +624,9 @@ generation과 row count를 갱신합니다.
   PostGIS LineString, 입력 좌표 hash와 활성 상태
 - `bus_subway_transfer_build_runs`: 배치 후보·처리·저장·제외·실패 수
 - `transit_dataset_versions`: topology/provider mapping import 세대와 row count
+- `bus_segment_geometries`: 노선·인접 정류장 순서별 검증된 Kakao 도로
+  LineString 운영 캐시. migration 11에서 추가하며 30일 fresh, 180일 expiry와
+  정류장 좌표·순서 SHA-256을 보관합니다.
 
 환승 간선 기본키는 `(bus_stop_id, station_line_id)`이며 재실행 시 upsert합니다.
 지하철 경로는 `station_order`로 임의 연결하지 않고
@@ -662,5 +665,7 @@ systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합
 - 실시간 도착·차량 cache: 초 단위 TTL 후 제거
 - 애플리케이션 로그: provider, strategy, count, duration, HTTP status만 기록
 - 검색어·좌표·키·원문 응답은 로그와 DB에 기록하지 않음
+- 사용자 도보 출발·도착 좌표는 영속 캐시에 저장하지 않으며 메모리에서만
+  30분 유지
 - 동의 기반 UI 이벤트: 허용 enum별 Prometheus counter만 기록하고 요청
   본문·IP·개별 사용자 이력은 저장하지 않음

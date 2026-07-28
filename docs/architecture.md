@@ -100,6 +100,10 @@ Express API
   ├─ RecommendationService
   │    ├─ CandidateGenerator
   │    ├─ RecommendationEngine
+  │    ├─ RouteGeometryService
+  │    │    ├─ 지하철 segment LineString 조립
+  │    │    ├─ 버스 인접 정류장 도로 형상 검증·영속 캐시
+  │    │    └─ 도보 step 연속 조립·근사 fallback
   │    └─ CachedMobilityProvider
   │         └─ TagoTransitMobilityProvider
   │              ├─ Kakao walking
@@ -125,6 +129,11 @@ Express API
 만듭니다. 추천 성공 뒤 Web의 주변 역·TAGO U/D 시간표 조회도 별도로 유지합니다.
 지하철 소요시간은 TAGO 시간표 기반 예상이며 실제 열차 위치나 지연은 반영하지
 않습니다.
+
+`transit-v2` 형상 처리는 추천 시간·순위 계산과 분리합니다. 검증된 지하철·버스·
+도보 좌표만 `DETAILED`로 표시하고, 형상 timeout·빈 응답·endpoint/연속성 실패는
+추천을 제거하지 않은 채 `APPROXIMATE` 두 점 또는 부분 경로로 반환합니다. 서버
+캐시 키와 Web·Mobile persisted cache namespace에 geometry profile을 포함합니다.
 
 ### Mobile application 경계
 
@@ -359,7 +368,9 @@ segment와 사전 계산한 버스↔지하철 보행 간선을 결합합니다.
 환승과 제한된 Pareto label로 요청 비용을 제한합니다.
 
 결과 materializer가 도보는 Kakao 보행 geometry, 버스는 검증된 도로 geometry,
-지하철은 실제 방향성 역열로 변환합니다. 실시간 공급자 장애는 각 leg의 정적
+지하철은 실제 방향성 역열로 변환합니다. `X-Route-Geometry: track-v1` 요청이면
+방향별 `subway_segments.track_geometry`를 공통 결합기로 이어 실제 선로 좌표를
+반환하고, 구버전 요청은 역사 좌표 직선을 유지합니다. 실시간 공급자 장애는 각 leg의 정적
 대기시간으로 격리되며 그래프 자체를 실패시키지 않습니다. 배포 중 새 데이터가
 없거나 새 탐색 결과가 비면 기존 추천기로 자동 fallback합니다.
 

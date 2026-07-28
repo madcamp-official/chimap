@@ -19,6 +19,7 @@ apps/mobile/.metro-health-check*
 *.p12
 *.jks
 *.keystore
+apps/mobile/google-play-service-account.json
 
 .env
 .env.*
@@ -45,3 +46,7 @@ data/*
 !data/subway_segments.csv
 !data/subway_headways_fallback.csv
 !data/subway_transfer_edges.csv
+!data/subway_geometry_sources.json
+!data/subway_segment_shapes.geojson
+!data/subway_segment_shapes.report.json
+!data/subway_segment_shapes.LICENSE.md

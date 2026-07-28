@@ -18,9 +18,10 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-현재 production 기준선은 21:39 KST의 commit `e16684b`, 이미지
-`sha256:77f4de84...`이며 서울 실시간 지하철과 멀티모달 추천이 활성화되어
-있습니다. 최신 검증은 아래 서울 지하철 실시간 활성화 기록을 기준으로 합니다.
+현재 production 기준선은 2026-07-28 14:39 KST의 이미지
+`sha256:d6348b3d...`이며 migration 11, 실제 지하철 선로와 버스·도보
+`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 운영
+`transit-v2` 승격 기록을 기준으로 합니다.
 
 ## 1. 사전 조건
 
@@ -64,6 +65,25 @@ EXPO_PUBLIC_API_BASE_URL=https://<해당 환경의 API host>
 server `.env`의 Apple private key, NAVER Client Secret, refresh retry 암호화 key는
 mobile binary에 넣지 않습니다. Web/API Compose 승격은 App Store·Play 배포를
 자동으로 의미하지 않으며 각 mobile store artifact를 독립적으로 rollback합니다.
+
+버스·도보 형상 v2는 서버 migration 11 배포 후 다음 flag로 환경별 활성화합니다.
+
+```dotenv
+TRANSIT_GEOMETRY_V2_ENABLED=0
+```
+
+staging 검증 시 `1`로 바꾸고 514번은 아래처럼 quota 상한과 dry-run을 먼저
+확인한 뒤 warm-up합니다. 전국 일괄 warm-up은 수행하지 않습니다.
+
+```bash
+docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
+  --cityCode 25 --routeId DJB30300067 --maxApiCalls 5 --dryRun
+docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
+  --cityCode 25 --routeId DJB30300067 --maxApiCalls 5
+```
+
+rollback은 flag를 `0`으로 되돌린 뒤 API를 재기동합니다. migration 11 테이블은
+기존 `track-v1` 및 헤더 없는 요청에서 참조되지 않으므로 삭제하지 않습니다.
 `APP_ENV=staging`에는 staging 전용 API/DB만 연결하고 production host를 대입하지
 않습니다. production 주소는 production profile과 승인된 guest smoke에만 씁니다.
 
@@ -479,8 +499,8 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
     미검출인지 확인
 30. `/api/v1/mobile-config`의 contract/minimum version/maintenance/region과
     guest·Kakao·Apple provider flag가 runtime credential 상태와 일치하는지 확인
-31. `schema_migrations`가 1~9 current이고 candidate와 운영 readiness가 모두
-    HTTP 200이며 지하철 전체·활성·매핑 통계가 기대값인지 확인
+31. `schema_migrations`가 1~11 current이고 candidate와 운영 readiness가 모두
+    HTTP 200이며 지하철 선로·버스 형상 캐시의 SRID와 정점 제약이 정상인지 확인
 
 자동 E2E:
 
@@ -790,3 +810,93 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
 - [PostgreSQL 18](https://www.postgresql.org/about/news/postgresql-18-released-3142/)
 - [PostGIS ST_DWithin](https://postgis.net/documentation/tips/st-dwithin/)
 - [Prometheus Alertmanager 구성](https://prometheus.io/docs/alerting/latest/configuration/)
+
+## 18. 2026-07-28 staging 선로 형상 배포 기록
+
+- 대상: `chimap-staging`만 갱신, production 미변경
+- image (웹 `track-v1` 재배포 이후):
+  `sha256:3b0ef1280db212331464f5a20791129c0e09e3637a390bf64a3e3104c77d3586`
+- migration: 10 적용
+- topology: route-ready 30개 노선, 2,314개 유효 방향 구간
+- track geometry: 2,314/2,314, SRID 4326, checksum
+  `3cf4e1c8396f8d9ac4246a55fa3178871a4f56f8245b72bb8b2db0dc0bdcd988`
+- 배포 전 backup: `chimap-staging-pre-track-20260728T034801Z.dump`,
+  17,594,824 bytes, SHA-256
+  `c444d735401b599ee948635d2a68c08bb9107d06bae377a7781f07d826f95267`
+- 배포 후 backup: `chimap-staging-post-track-20260728T035553Z.dump`,
+  18,067,374 bytes, SHA-256
+  `ec2d9755a22240a79c0b6704e344a508cc422e4fb2b16bb595df20aedb48241e`
+- local/external health·readiness와 출처 페이지 HTTP 200
+- 외부 `track-v1` 정부청사→시청→탄방 요청 HTTP 200, 동일 역 순서,
+  지하철 leg 16개 좌표·표시 거리 1,779m 반환
+- staging 웹 추천 요청에 `X-Route-Geometry: track-v1`을 적용하고, 선택 경로에
+  지하철이 포함되면 `/subway-track-sources.html` 출처·라이선스 링크를 표시
+- 웹 typecheck·production build와 전체 웹 테스트 56개 통과, 공개 JS/CSS
+  번들에서 geometry profile·출처 링크·표기 스타일 확인
+- 장소 자동완성은 검색어 관련도를 현재 위치보다 우선하도록 수정했습니다.
+  유성온천역 좌표를 중심으로 `대전역`을 검색해도 정확한 `대전역`이 첫 번째이며,
+  일반 `카페` 검색은 가까운 결과를 유지하는 것을 외부 staging API로 확인했습니다.
+- 첫 legacy 비교 요청에서 외부 공급자 timeout 1회가 있었고 즉시 재요청은 HTTP
+  200이었습니다. 이후 API error log에는 이 격리된 timeout 외 내부 오류가
+  없었습니다.
+
+## 19. 2026-07-28 운영 선로·검색 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org`
+- image: `sha256:3b0ef1280db212331464f5a20791129c0e09e3637a390bf64a3e3104c77d3586`
+- rollback image: `chimap:rollback-pre-track-v1-20260728`
+  (`sha256:77f4de84c4baaa11d0c865d6b95bde3ae928b8bc8404dcfeb24d09ff94040887`)
+- migration: 10 적용, 활성 선로 2,314/2,314 geometry 존재, SRID 오류 0건
+- 배포 전 backup: `chimap-daily-20260728T041656Z.dump`, 17,736,411 bytes,
+  SHA-256 `42f0c39d8c8b37bc3343584b8a88cdd9d057b7dbfd8f229fd7f2f411ced1743e`
+- 배포 후 backup: `chimap-daily-20260728T041915Z.dump`, 18,135,276 bytes,
+  SHA-256 `83dca05e39c76b2b23b183e6ea7f9f35a33c9ab280550894f3ad36c66b6614d7`
+- 후보 포트 3002와 공개 도메인에서 health·readiness·검색·정적 asset·출처
+  페이지 확인
+- 유성온천역 좌표 중심 `대전역` 자동완성에서 정확한 기차역이 첫 결과이며,
+  일반 `카페` 검색은 주변 결과 우선을 유지
+- 운영 `track-v1` 정부청사→시청→탄방 요청에서 지하철 leg 16개 좌표와 표시
+  거리 1,779m 확인
+- 실제 추천 첫 요청에서 외부 공급자 timeout 1회 후 즉시 재요청 HTTP 200
+
+## 20. 2026-07-28 staging 버스·도보 `transit-v2` 배포 기록
+
+- 대상: `chimap-staging` API/DB만 갱신, production 미변경
+- image: `sha256:bcbe0cba339fa6b45e9ebb50a22806e64eb90ccf09387eac4bfd8fe42e60eca3`
+- rollback image: `chimap:rollback-pre-transit-v2-20260728`
+- migration: 11 적용, `TRANSIT_GEOMETRY_V2_ENABLED=1`
+- 배포 전 backup: `chimap-staging-pre-transit-v2-20260728T051854Z.dump`,
+  18,068,864 bytes, SHA-256
+  `0c816e8fafc6bd9d96cee99e7f08d67646066fb695f41b9ce41f4d42aee8de14`
+- external health/readiness/mobile-config HTTP 200, PostGIS와 migration current 확인
+- 514번 전체 99개 인접 구간 중 검증된 91개를 캐시했습니다. 나머지 8개는
+  고정 우회거리 상한을 넘은 `EXCESS_DETOUR`라 상세 형상으로 가장하지 않고
+  fallback을 유지합니다.
+- 필수 514번 43→47번 정류장 구간은 `DETAILED`, 25개 좌표로 반환하며 외부
+  `transit-v2` 추천도 HTTP 200과 동일 결과를 확인했습니다.
+- 후보 도보 형상 취소를 그래프 예상 거리의 근사 경로로 격리한 뒤 재기동 직후
+  cold `transit-v2`도 HTTP 200(21.3초), 이어진 warm 요청 5건은 모두 HTTP 200,
+  1.05~1.93초였습니다.
+- 외부 순차 반복에서는 rate limit 전에 성공한 요청의 서버 p95가 542ms였고
+  geometry 원인 504는 없었습니다. 단일 IP 100회 호출은 40건 성공 후 60건이
+  의도한 429 제한에 걸렸으므로 전체 100회 gate는 rate-limit을 우회하는 내부
+  부하 시험으로 수행해야 합니다.
+
+## 21. 2026-07-28 운영 `transit-v2` 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay와 production DB
+- image: `sha256:d6348b3d0b12cb8f447d4329487b34bebae60e1da2dc342891c8ac1927001a6a`
+- rollback image: `chimap:rollback-pre-transit-v2-20260728`
+- migration: 11 적용, `TRANSIT_GEOMETRY_V2_ENABLED=1`, 잘못된 SRID·정점 구간 0건
+- 배포 전 backup: `chimap-production-pre-transit-v2-20260728T053752Z.dump`,
+  18,135,276 bytes, SHA-256
+  `becbd888c046a5798cc2c204368595212f6d5f89743cf95996079ab9da1c9183`
+- 배포 후 backup: `chimap-production-post-transit-v2-20260728T054033Z.dump`,
+  18,141,027 bytes, SHA-256
+  `b184c1646d833301bbf8b7eb73454379a30b78c2bbfaad9ce2186a74474e7e55`
+- 후보 포트 3002와 local/public health·readiness·mobile-config, 정적 웹과 선로
+  출처 페이지를 확인한 뒤 API·alert relay·Prometheus를 승격했습니다.
+- 공개 514번 필수 구간은 `DETAILED`, 25개 좌표로 반환했습니다. 재기동 직후
+  cold 요청은 HTTP 200(15.1초), warm 5건은 모두 HTTP 200(0.84~2.13초)입니다.
+- Prometheus rule 22개 검증 성공, geometry 원인 504와 배포 후 API error는
+  확인되지 않았습니다.

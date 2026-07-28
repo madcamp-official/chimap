@@ -221,14 +221,15 @@ function legStyle(leg: RouteLeg): {
   width: number;
   dash: "solid" | "shortdash";
 } {
+  const dash = leg.geometryQuality === "APPROXIMATE" ? "shortdash" : "solid";
   if (leg.mode === "WALK") {
-    return { color: "#f47b35", width: 8, dash: "solid" };
+    return { color: "#f47b35", width: 8, dash };
   }
   if (leg.mode === "BUS") {
-    return { color: "#2e6dd8", width: 6, dash: "solid" };
+    return { color: "#2e6dd8", width: 6, dash };
   }
   if (leg.mode === "SUBWAY") {
-    return { color: "#7957b8", width: 6, dash: "solid" };
+    return { color: "#7957b8", width: 6, dash };
   }
   return { color: "#6f7775", width: 5, dash: "shortdash" };
 }
@@ -460,6 +461,7 @@ function RoutePreview({
               stroke={style.color}
               strokeWidth={selected ? style.width : Math.max(3, style.width - 2)}
               strokeDasharray={style.dash === "shortdash" ? "5 7" : undefined}
+              strokeOpacity={leg.geometryQuality === "APPROXIMATE" ? 0.45 : 1}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -580,6 +582,8 @@ export function MapView({
   const selectedRoute =
     recommendations.find((route) => route.id === selectedRouteId) ??
     recommendations[0];
+  const hasSubwayTrack =
+    selectedRoute?.legs.some((leg) => leg.mode === "SUBWAY") ?? false;
   const cameraSignature = useMemo(
     () =>
       JSON.stringify({
@@ -716,7 +720,10 @@ export function MapView({
                 ? style.width
                 : Math.max(3, style.width - 2),
               strokeColor: style.color,
-              strokeOpacity: selected ? 0.95 : highlighted ? 0.55 : 0.18,
+              strokeOpacity:
+                leg.geometryQuality === "APPROXIMATE"
+                  ? selected ? 0.45 : highlighted ? 0.3 : 0.12
+                  : selected ? 0.95 : highlighted ? 0.55 : 0.18,
               strokeStyle: style.dash,
               strokeLineCap: "round",
               strokeLineJoin: "round",
@@ -944,6 +951,17 @@ export function MapView({
             ) : null}
           </div>
         </div>
+      ) : null}
+
+      {hasSubwayTrack ? (
+        <a
+          className="map-track-attribution"
+          href="/subway-track-sources.html"
+          target="_blank"
+          rel="noreferrer"
+        >
+          선로 데이터: © OpenStreetMap contributors 외
+        </a>
       ) : null}
 
       <div className="map-legend" aria-label="지도 경로 범례">

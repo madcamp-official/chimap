@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "generated_from": {
+    "provider": "OpenStreetMap",
+    "api": "https://api.openstreetmap.org/api/0.6/relation/{relationId}/full.json",
+    "license": "ODbL-1.0",
+    "copyright_url": "https://www.openstreetmap.org/copyright",
+    "official_dataset_evaluated": "https://www.data.go.kr/data/15122916/fileData.do?recommendDataYn=Y",
+    "official_dataset_note": "The national public dataset provides station and line metadata but no track LineString geometry."
+  },
+  "source_data_corrections": {
+    "station_coordinates": [
+      {
+        "source_station_key": "S1105|0514",
+        "station_name": "마곡",
+        "previous": [126.837693, 37.55865],
+        "corrected": [126.8247446, 37.5602708],
+        "reference": "https://www.openstreetmap.org/node/355173390",
+        "relation_id": 4744339
+      },
+      {
+        "source_station_key": "S1108|806",
+        "station_name": "동구릉",
+        "previous": [127.135056, 37.610556],
+        "corrected": [127.1381349, 37.6101744],
+        "reference": "https://www.openstreetmap.org/node/12119884932",
+        "relation_id": 2718901
+      },
+      {
+        "source_station_key": "I26K6|8005",
+        "station_name": "동래역",
+        "previous": [129.0773502, 35.204714],
+        "corrected": [129.0922272, 35.1970196],
+        "reference": "https://www.openstreetmap.org/node/4095077969",
+        "relation_id": 6708903
+      }
+    ],
+    "removed_impossible_segments": {
+      "service_line_id": "SL_9466C01B2356",
+      "invalid_station_key": "S2802|3204",
+      "invalid_station_name": "마전",
+      "reason": "An Incheon Line 2 station was incorrectly inserted between Korail Line 1 Yangju and Deokgye, producing 38-42 km edges with 90-180 second travel times. The valid direct Yangju-Deokgye edges already exist.",
+      "segment_keys": [
+        ["I4102|1909", "S2802|3204"],
+        ["S2802|3204", "I4102|1910"],
+        ["I4102|1910", "S2802|3204"],
+        ["S2802|3204", "I4102|1909"]
+      ],
+      "removed_segment_rows": 4,
+      "removed_headway_rows": 40
+    }
+  },
+  "mappings": [
+    { "service_line_id": "SL_8A8C2141F5AC", "osm_relation_ids": [2204611, 7705729] },
+    { "service_line_id": "SL_BFAC24E0343C", "osm_relation_ids": [2201600, 8255697] },
+    { "service_line_id": "SL_669DDAD57BBE", "osm_relation_ids": [2194999, 8258657] },
+    { "service_line_id": "SL_D2AA9565CC28", "osm_relation_ids": [2195014, 8247016] },
+    { "service_line_id": "SL_B1F662AB4558", "osm_relation_ids": [2205952, 8258701] },
+    { "service_line_id": "SL_1500AD3823C1", "osm_relation_ids": [7685464, 7845970] },
+    { "service_line_id": "SL_310F3C654984", "osm_relation_ids": [7685783, 7845968] },
+    { "service_line_id": "SL_C328BFA28000", "osm_relation_ids": [7685727, 7845964] },
+    { "service_line_id": "SL_035A73FB3875", "osm_relation_ids": [7237829, 7792527] },
+    { "service_line_id": "SL_161E0D8970EF", "osm_relation_ids": [13463724, 13463725] },
+    { "service_line_id": "SL_93451329FB01", "osm_relation_ids": [10092719, 10092720] },
+    { "service_line_id": "SL_9466C01B2356", "osm_relation_ids": [16850861, 16851104, 8692707, 8692830, 8692927, 8692928, 4748705, 10881612, 6094786, 8266158] },
+    { "service_line_id": "SL_AA31BBF870D0", "osm_relation_ids": [2718884, 4744311, 10727606, 10947038, 13675921, 13938877] },
+    { "service_line_id": "SL_5287D3BFAFEF", "osm_relation_ids": [11625555, 11634611, 5993211, 5993212, 8656357, 8656358] },
+    { "service_line_id": "SL_37E47229122C", "osm_relation_ids": [8656357, 8656358, 8656359, 8656362, 8656363, 8656364] },
+    { "service_line_id": "SL_D0E7788D279F", "osm_relation_ids": [5993211, 5993212, 12623856, 12623857, 8667955, 8667956, 10922025, 10922027] },
+    { "service_line_id": "SL_4AEDCA688792", "osm_relation_ids": [6462562, 6462563] },
+    { "service_line_id": "SL_58702E398A41", "osm_relation_ids": [16244687, 16244688] },
+    { "service_line_id": "SL_480F0999C961", "osm_relation_ids": [6708903, 8272971] },
+    { "service_line_id": "SL_564F0B5AFE1B", "osm_relation_ids": [2404374, 4729409, 4729405, 4729406, 4729407, 4729408] },
+    { "service_line_id": "SL_69DD658ED6A6", "osm_relation_ids": [443803, 4729445] },
+    { "service_line_id": "SL_6EEBE5963ED8", "osm_relation_ids": [13675921, 13938877, 2718884, 4744311] },
+    { "service_line_id": "SL_AAA8222A8ABE", "osm_relation_ids": [4744337, 4744338, 4744339, 4744340, 19427674, 19427675, 12497485, 12497486] },
+    { "service_line_id": "SL_7E1B1F7898EE", "osm_relation_ids": [12080315, 11509732, 4727111, 7919153] },
+    { "service_line_id": "SL_3C3070C16347", "osm_relation_ids": [12746493, 12746498, 12746494, 12746499] },
+    { "service_line_id": "SL_F342822E3817", "osm_relation_ids": [2718901, 7919018, 17953733, 17953734, 17953804, 17953805] },
+    { "service_line_id": "SL_8F5057CD282A", "osm_relation_ids": [2718888, 7883314] },
+    { "service_line_id": "SL_50341A3A9F81", "osm_relation_ids": [14191876, 14191877] },
+    { "service_line_id": "SL_DAB0E2B86442", "osm_relation_ids": [16244687, 16244688, 8725314, 8725315] },
+    { "service_line_id": "SL_8CFC987D09A5", "osm_relation_ids": [7533582, 7533583] }
+  ]
+}

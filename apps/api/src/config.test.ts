@@ -100,6 +100,14 @@ describe("환경변수 보안 경계", () => {
     expect(config.transit.routeSearchMaxDistanceMeters).toBe(1200);
   });
 
+  it("transit-v2는 feature flag로만 활성화한다", () => {
+    expect(loadConfig({ NODE_ENV: "test" }).transit.geometryV2Enabled).toBe(false);
+    expect(loadConfig({
+      NODE_ENV: "test",
+      TRANSIT_GEOMETRY_V2_ENABLED: "1",
+    }).transit.geometryV2Enabled).toBe(true);
+  });
+
   it("추천 경로 탐색 상한이 기본 반경보다 작으면 거절한다", () => {
     expect(() =>
       loadConfig({

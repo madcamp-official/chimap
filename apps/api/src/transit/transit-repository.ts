@@ -1,4 +1,5 @@
 import {
+  type Coordinate,
   type BusRoute,
   type BusRouteStop,
   type BusStop,
@@ -46,6 +47,49 @@ export type TransitStats = {
   routeReadySubwayLines?: number;
   providerMappedStations?: number;
   busSubwayTransferEdges?: number;
+  routeReadySubwaySegments?: number;
+  subwayTrackGeometrySegments?: number;
+};
+
+export type SubwaySegmentShape = {
+  serviceLineId: string;
+  fromSourceStationKey: string;
+  toSourceStationKey: string;
+  coordinates: Coordinate[];
+  geometrySource: string;
+  geometryLicense: string;
+  geometryVersion: string;
+  geometryUpdatedAt: string;
+};
+
+export type SubwaySegmentShapeDataset = {
+  checksum: string;
+  rows: SubwaySegmentShape[];
+};
+
+export type SubwayTrackGeometryCoverage = {
+  serviceLineId: string;
+  segmentCount: number;
+  geometryCount: number;
+};
+
+export type BusSegmentGeometry = {
+  fromNodeOrder: number;
+  toNodeOrder: number;
+  coordinates: Coordinate[];
+  distanceMeters: number;
+  geometrySource: string;
+  geometryVersion: string;
+  sourceHash: string;
+  cacheState: "FRESH" | "STALE";
+};
+
+export type BusSegmentGeometryWrite = Omit<
+  BusSegmentGeometry,
+  "cacheState"
+> & {
+  freshUntil: Date;
+  expiresAt: Date;
 };
 
 export type CsvSubwayStation = {
@@ -155,6 +199,9 @@ export type SubwayRoutingEdge = {
   expectedWaitSeconds: number;
   serviceLineId: string | null;
   durationIsEstimated: boolean;
+  trackCoordinates: Coordinate[] | null;
+  trackDistanceMeters: number | null;
+  geometrySource: string | null;
 };
 
 export type SubwayRoutingGraph = {
@@ -250,6 +297,36 @@ function nameSimilarity(first: string, second: string): number {
 
 function nullableString(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value);
+}
+
+function lineStringCoordinates(
+  value: unknown,
+  context: string,
+): Coordinate[] | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const geometry = value as { type?: unknown; coordinates?: unknown };
+  if (geometry.type !== "LineString" || !Array.isArray(geometry.coordinates)) {
+    throw new TypeError(`${context}: LineString geometry가 아닙니다.`);
+  }
+  const coordinates = geometry.coordinates.map((point, index): Coordinate => {
+    if (
+      !Array.isArray(point) ||
+      point.length < 2 ||
+      typeof point[0] !== "number" ||
+      !Number.isFinite(point[0]) ||
+      typeof point[1] !== "number" ||
+      !Number.isFinite(point[1])
+    ) {
+      throw new TypeError(`${context}: ${index + 1}번째 좌표가 잘못됐습니다.`);
+    }
+    return { lng: point[0], lat: point[1] };
+  });
+  if (coordinates.length < 2) {
+    throw new TypeError(`${context}: 좌표가 두 개보다 적습니다.`);
+  }
+  return coordinates;
 }
 
 function rowToStop(row: SqlRow): BusStop {
@@ -976,6 +1053,150 @@ export class TransitRepository {
     }));
   }
 
+  public async getBusSegmentGeometries(
+    cityCode: string,
+    routeId: string,
+  ): Promise<BusSegmentGeometry[]> {
+    const result = await this.pool.query(
+      `SELECT
+         geometry.from_node_order,
+         geometry.to_node_order,
+         ST_AsGeoJSON(
+           ST_Transform(
+             ST_SimplifyPreserveTopology(
+               ST_Transform(geometry.road_geometry, 5179),
+               2
+             ),
+             4326
+           )
+         ) AS road_geojson,
+         geometry.distance_meters,
+         geometry.geometry_source,
+         geometry.geometry_version,
+         geometry.source_hash,
+         CASE WHEN geometry.fresh_until > now()
+           THEN 'FRESH' ELSE 'STALE' END AS cache_state
+       FROM bus_segment_geometries AS geometry
+       JOIN bus_routes AS route ON route.id = geometry.route_internal_id
+       WHERE route.city_code = $1 AND route.route_id = $2
+         AND geometry.expires_at > now()
+       ORDER BY geometry.from_node_order, geometry.to_node_order`,
+      [cityCode, routeId],
+    );
+    return result.rows.flatMap((row): BusSegmentGeometry[] => {
+      const parsed = JSON.parse(String(row.road_geojson)) as {
+        type?: unknown;
+        coordinates?: unknown;
+      };
+      if (parsed.type !== "LineString" || !Array.isArray(parsed.coordinates)) {
+        return [];
+      }
+      const coordinates = parsed.coordinates.flatMap((coordinate) =>
+        Array.isArray(coordinate) &&
+        typeof coordinate[0] === "number" &&
+        typeof coordinate[1] === "number"
+          ? [{ lng: coordinate[0], lat: coordinate[1] }]
+          : [],
+      );
+      if (coordinates.length < 2) {
+        return [];
+      }
+      return [{
+        fromNodeOrder: Number(row.from_node_order),
+        toNodeOrder: Number(row.to_node_order),
+        coordinates,
+        distanceMeters: Number(row.distance_meters),
+        geometrySource: String(row.geometry_source),
+        geometryVersion: String(row.geometry_version),
+        sourceHash: String(row.source_hash),
+        cacheState: row.cache_state === "FRESH" ? "FRESH" : "STALE",
+      }];
+    });
+  }
+
+  public async upsertBusSegmentGeometries(
+    cityCode: string,
+    routeId: string,
+    rows: readonly BusSegmentGeometryWrite[],
+  ): Promise<void> {
+    if (rows.length === 0) {
+      return;
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const routeResult = await client.query<{ id: string }>(
+        "SELECT id FROM bus_routes WHERE city_code = $1 AND route_id = $2",
+        [cityCode, routeId],
+      );
+      const routeInternalId = routeResult.rows[0]?.id;
+      if (routeInternalId === undefined) {
+        throw new Error("버스 형상을 저장할 노선을 찾지 못했습니다.");
+      }
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO bus_segment_geometries (
+             route_internal_id, from_node_order, to_node_order,
+             road_geometry, distance_meters, geometry_source,
+             geometry_version, source_hash, fresh_until, expires_at,
+             last_used_at, created_at, updated_at
+           ) VALUES (
+             $1,$2,$3,
+             ST_SetSRID(ST_GeomFromGeoJSON($4),4326),$5,$6,$7,$8,$9,$10,
+             now(),now(),now()
+           )
+           ON CONFLICT(route_internal_id, from_node_order, to_node_order)
+           DO UPDATE SET
+             road_geometry = EXCLUDED.road_geometry,
+             distance_meters = EXCLUDED.distance_meters,
+             geometry_source = EXCLUDED.geometry_source,
+             geometry_version = EXCLUDED.geometry_version,
+             source_hash = EXCLUDED.source_hash,
+             fresh_until = EXCLUDED.fresh_until,
+             expires_at = EXCLUDED.expires_at,
+             last_used_at = now(),
+             updated_at = now()`,
+          [
+            routeInternalId,
+            row.fromNodeOrder,
+            row.toNodeOrder,
+            JSON.stringify({
+              type: "LineString",
+              coordinates: row.coordinates.map((point) => [point.lng, point.lat]),
+            }),
+            row.distanceMeters,
+            row.geometrySource,
+            row.geometryVersion,
+            row.sourceHash,
+            row.freshUntil,
+            row.expiresAt,
+          ],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async removeMismatchedBusSegmentGeometries(
+    cityCode: string,
+    routeId: string,
+    sourceHashes: readonly string[],
+  ): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM bus_segment_geometries AS geometry
+       USING bus_routes AS route
+       WHERE geometry.route_internal_id = route.id
+         AND route.city_code = $1 AND route.route_id = $2
+         AND NOT (geometry.source_hash = ANY($3::text[]))`,
+      [cityCode, routeId, sourceHashes],
+    );
+  }
+
   public async importSubwayStations(rows: CsvSubwayStation[]): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -1422,6 +1643,182 @@ export class TransitRepository {
     }
   }
 
+  public async importSubwaySegmentShapes(
+    dataset: SubwaySegmentShapeDataset,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    const copy = async (statement: string, rows: string[]) => {
+      const stream = client.query(copyFrom(statement));
+      Readable.from(rows).pipe(stream);
+      await finished(stream);
+    };
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = '10min'");
+      await client.query(`
+        CREATE TEMP TABLE subway_segment_shapes_import (
+          service_line_id varchar(32) NOT NULL,
+          from_source_station_key varchar(120) NOT NULL,
+          to_source_station_key varchar(120) NOT NULL,
+          geometry_json jsonb NOT NULL,
+          geometry_source varchar(160) NOT NULL,
+          geometry_license varchar(240) NOT NULL,
+          geometry_version varchar(120) NOT NULL,
+          geometry_updated_at timestamptz NOT NULL,
+          PRIMARY KEY(
+            service_line_id,
+            from_source_station_key,
+            to_source_station_key
+          )
+        ) ON COMMIT DROP
+      `);
+      await copy(
+        `COPY subway_segment_shapes_import(
+           service_line_id, from_source_station_key,
+           to_source_station_key, geometry_json,
+           geometry_source, geometry_license, geometry_version,
+           geometry_updated_at
+         ) FROM STDIN WITH (FORMAT csv)`,
+        dataset.rows.map((row) =>
+          [
+            csvField(row.serviceLineId),
+            csvField(row.fromSourceStationKey),
+            csvField(row.toSourceStationKey),
+            csvField(JSON.stringify({
+              type: "LineString",
+              coordinates: row.coordinates.map(({ lat, lng }) => [lng, lat]),
+            })),
+            csvField(row.geometrySource),
+            csvField(row.geometryLicense),
+            csvField(row.geometryVersion),
+            csvField(row.geometryUpdatedAt),
+          ].join(",") + "\n",
+        ),
+      );
+      await client.query(`
+        DO $$
+        DECLARE
+          unknown_count integer;
+          missing_count integer;
+        BEGIN
+          SELECT COUNT(*) INTO unknown_count
+          FROM subway_segment_shapes_import AS imported
+          LEFT JOIN subway_segments AS segment
+            ON segment.service_line_id = imported.service_line_id
+           AND segment.from_source_station_key =
+               imported.from_source_station_key
+           AND segment.to_source_station_key = imported.to_source_station_key
+          WHERE segment.service_line_id IS NULL;
+          IF unknown_count > 0 THEN
+            RAISE EXCEPTION
+              'subway segment geometry contains unknown keys: %',
+              unknown_count;
+          END IF;
+
+          SELECT COUNT(*) INTO missing_count
+          FROM subway_segments AS segment
+          JOIN subway_service_lines AS service_line
+            ON service_line.service_line_id = segment.service_line_id
+           AND service_line.active = true
+           AND service_line.is_route_ready = true
+          LEFT JOIN subway_segment_shapes_import AS imported
+            ON imported.service_line_id = segment.service_line_id
+           AND imported.from_source_station_key =
+               segment.from_source_station_key
+           AND imported.to_source_station_key = segment.to_source_station_key
+          WHERE segment.active = true
+            AND imported.service_line_id IS NULL;
+          IF missing_count > 0 THEN
+            RAISE EXCEPTION
+              'route-ready subway segments missing geometry: %',
+              missing_count;
+          END IF;
+        END $$;
+
+        UPDATE subway_segments AS segment
+        SET track_geometry = NULL,
+            track_distance_meters = NULL,
+            geometry_source = NULL,
+            geometry_license = NULL,
+            geometry_version = NULL,
+            geometry_updated_at = NULL,
+            updated_at = now()
+        FROM subway_service_lines AS service_line
+        WHERE service_line.service_line_id = segment.service_line_id
+          AND service_line.active = true
+          AND service_line.is_route_ready = true
+          AND segment.active = true;
+
+        WITH parsed AS (
+          SELECT
+            imported.*,
+            ST_Force2D(
+              ST_SetSRID(
+                ST_GeomFromGeoJSON(imported.geometry_json::text),
+                4326
+              )
+            )::geometry(LineString, 4326) AS source_geometry
+          FROM subway_segment_shapes_import AS imported
+        ), prepared AS (
+          SELECT
+            parsed.*,
+            ST_Transform(
+              ST_SimplifyPreserveTopology(
+                ST_Transform(parsed.source_geometry, 5179),
+                3
+              ),
+              4326
+            )::geometry(LineString, 4326) AS display_geometry,
+            GREATEST(
+              1,
+              ROUND(ST_Length(parsed.source_geometry::geography))::integer
+            ) AS source_distance_meters
+          FROM parsed
+        )
+        UPDATE subway_segments AS segment
+        SET track_geometry = prepared.display_geometry,
+            track_distance_meters = prepared.source_distance_meters,
+            geometry_source = prepared.geometry_source,
+            geometry_license = prepared.geometry_license,
+            geometry_version = prepared.geometry_version,
+            geometry_updated_at = prepared.geometry_updated_at,
+            updated_at = now()
+        FROM prepared
+        WHERE segment.service_line_id = prepared.service_line_id
+          AND segment.from_source_station_key =
+              prepared.from_source_station_key
+          AND segment.to_source_station_key = prepared.to_source_station_key;
+      `);
+      await client.query(`
+        INSERT INTO transit_dataset_versions(
+          dataset, generation, checksum, row_counts, imported_at, updated_at
+        ) VALUES (
+          'subway_track_geometry', 1, $1,
+          jsonb_build_object(
+            'segments', (SELECT COUNT(*) FROM subway_segment_shapes_import),
+            'sources', (
+              SELECT COUNT(DISTINCT geometry_source)
+              FROM subway_segment_shapes_import
+            )
+          ),
+          now(), now()
+        )
+        ON CONFLICT(dataset) DO UPDATE SET
+          generation = transit_dataset_versions.generation + 1,
+          checksum = EXCLUDED.checksum,
+          row_counts = EXCLUDED.row_counts,
+          imported_at = now(),
+          updated_at = now()
+      `, [dataset.checksum]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async importSubwayProviderMappings(
     rows: readonly CsvSubwayProviderMapping[],
   ): Promise<void> {
@@ -1689,6 +2086,9 @@ export class TransitRepository {
            segment.to_source_station_key,
            segment.duration_seconds,
            segment.straight_distance_meters,
+           segment.track_distance_meters,
+           segment.geometry_source,
+           ST_AsGeoJSON(segment.track_geometry)::jsonb AS track_geometry,
            COALESCE(headway.expected_wait_seconds, 300) AS expected_wait_seconds
          FROM subway_segments AS segment
          JOIN subway_service_lines AS service_line
@@ -1755,6 +2155,16 @@ export class TransitRepository {
         expectedWaitSeconds: Number(row.expected_wait_seconds),
         serviceLineId,
         durationIsEstimated: false,
+        trackCoordinates: lineStringCoordinates(
+          row.track_geometry,
+          `지하철 구간 ${serviceLineId}:${String(row.from_source_station_key)}:${String(row.to_source_station_key)}`,
+        ),
+        trackDistanceMeters:
+          row.track_distance_meters === null ||
+          row.track_distance_meters === undefined
+            ? null
+            : Number(row.track_distance_meters),
+        geometrySource: nullableString(row.geometry_source),
       });
     }
     for (const row of transferResult.rows) {
@@ -1774,6 +2184,9 @@ export class TransitRepository {
             expectedWaitSeconds: 0,
             serviceLineId: null,
             durationIsEstimated: row.duration_is_estimated === true,
+            trackCoordinates: null,
+            trackDistanceMeters: null,
+            geometrySource: null,
           });
         }
       }
@@ -2206,6 +2619,8 @@ export class TransitRepository {
       route_ready_subway_lines: string;
       provider_mapped_stations: string;
       bus_subway_transfer_edges: string;
+      route_ready_subway_segments: string;
+      subway_track_geometry_segments: string;
     }>(`
       SELECT
         (SELECT COUNT(*) FROM bus_stops)::text AS stops,
@@ -2237,7 +2652,26 @@ export class TransitRepository {
         )::text AS provider_mapped_stations,
         (
           SELECT COUNT(*) FROM bus_subway_transfer_edges WHERE active = true
-        )::text AS bus_subway_transfer_edges
+        )::text AS bus_subway_transfer_edges,
+        (
+          SELECT COUNT(*)
+          FROM subway_segments AS segment
+          JOIN subway_service_lines AS service_line
+            ON service_line.service_line_id = segment.service_line_id
+           AND service_line.active = true
+           AND service_line.is_route_ready = true
+          WHERE segment.active = true
+        )::text AS route_ready_subway_segments,
+        (
+          SELECT COUNT(*)
+          FROM subway_segments AS segment
+          JOIN subway_service_lines AS service_line
+            ON service_line.service_line_id = segment.service_line_id
+           AND service_line.active = true
+           AND service_line.is_route_ready = true
+          WHERE segment.active = true
+            AND segment.track_geometry IS NOT NULL
+        )::text AS subway_track_geometry_segments
     `);
     const row = result.rows[0];
     return {
@@ -2252,6 +2686,40 @@ export class TransitRepository {
       routeReadySubwayLines: Number(row?.route_ready_subway_lines ?? 0),
       providerMappedStations: Number(row?.provider_mapped_stations ?? 0),
       busSubwayTransferEdges: Number(row?.bus_subway_transfer_edges ?? 0),
+      routeReadySubwaySegments: Number(
+        row?.route_ready_subway_segments ?? 0,
+      ),
+      subwayTrackGeometrySegments: Number(
+        row?.subway_track_geometry_segments ?? 0,
+      ),
     };
+  }
+
+  public async subwayTrackGeometryCoverage(): Promise<
+    SubwayTrackGeometryCoverage[]
+  > {
+    const result = await this.pool.query<{
+      service_line_id: string;
+      segment_count: string;
+      geometry_count: string;
+    }>(`
+      SELECT
+        service_line.service_line_id,
+        COUNT(segment.*)::text AS segment_count,
+        COUNT(segment.track_geometry)::text AS geometry_count
+      FROM subway_service_lines AS service_line
+      JOIN subway_segments AS segment
+        ON segment.service_line_id = service_line.service_line_id
+       AND segment.active = true
+      WHERE service_line.active = true
+        AND service_line.is_route_ready = true
+      GROUP BY service_line.service_line_id
+      ORDER BY service_line.service_line_id
+    `);
+    return result.rows.map((row) => ({
+      serviceLineId: row.service_line_id,
+      segmentCount: Number(row.segment_count),
+      geometryCount: Number(row.geometry_count),
+    }));
   }
 }

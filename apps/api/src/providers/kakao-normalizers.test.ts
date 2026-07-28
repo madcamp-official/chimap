@@ -134,3 +134,36 @@ describe("실제 Kakao 응답 정규화", () => {
     ).toBe(false);
   });
 });
+
+describe("Kakao 도보 형상 무결성", () => {
+  const response = (steps: unknown[]) => ({
+    status: "OK",
+    route: {
+      properties: { totalDistance: 100, totalTime: 90 },
+      legs: [{ properties: { distance: 100, time: 90 }, steps }],
+    },
+  });
+
+  it("빈 steps를 유효한 도보 경로로 반환하지 않는다", () => {
+    expect(() => normalizeKakaoWalkResponse(response([]))).toThrow(/steps/u);
+  });
+
+  it("path.points가 없는 step을 유효한 도보 경로로 반환하지 않는다", () => {
+    expect(() => normalizeKakaoWalkResponse(response([
+      { properties: { distance: 100, time: 90, x: 127.37, y: 36.35 } },
+    ]))).toThrow(/path\.points/u);
+  });
+
+  it("연속된 여러 step을 하나의 leg로 결합하고 중복 접합점을 제거한다", () => {
+    const a = [127.37, 36.35];
+    const b = [127.3702, 36.3502];
+    const c = [127.3704, 36.3504];
+    const route = normalizeKakaoWalkResponse(response([
+      { properties: { distance: 50, time: 45 }, path: { points: [a, b] } },
+      { properties: { distance: 50, time: 45 }, path: { points: [b, c] } },
+    ]));
+
+    expect(route.legs).toHaveLength(1);
+    expect(route.legs[0]?.coordinates).toHaveLength(3);
+  });
+});

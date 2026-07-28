@@ -108,7 +108,7 @@ export function RecommendationQueryProvider({
       <PersistQueryClientProvider
         client={queryClient}
         persistOptions={{
-          buster: "chimap-mobile-recommendation-v1",
+          buster: "chimap-mobile-recommendation-v3-transit-v2",
           maxAge: RECOMMENDATION_CACHE_MAX_AGE_MS,
           persister,
           dehydrateOptions: { shouldDehydrateQuery: persistentRecommendation },

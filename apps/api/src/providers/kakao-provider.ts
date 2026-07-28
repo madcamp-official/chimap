@@ -17,6 +17,8 @@ import type {
   PlaceSearchOptions,
   RoadGeometryProvider,
   RoadRouteRequest,
+  RoadRouteSectionsRequest,
+  RoadRouteSectionsResult,
   TransitRouteRequest,
   WalkRouteRequest,
 } from "./types.js";
@@ -86,12 +88,12 @@ export function isPlausibleRoadSection(
   const straightDistance = Math.max(1, haversineDistanceMeters(from, to));
   const pathDistance = polylineDistanceMeters(section);
   const endpointTolerance = Math.min(
-    200,
-    Math.max(60, straightDistance * 0.45),
+    250,
+    Math.max(75, straightDistance * 0.5),
   );
   const detourLimit = Math.max(
-    straightDistance + 150,
-    straightDistance * 1.5,
+    straightDistance + 300,
+    straightDistance * 3,
   );
   return (
     haversineDistanceMeters(from, section[0]!) <= endpointTolerance &&
@@ -165,7 +167,7 @@ export class KakaoMobilityProvider
       "/v2/routing/publictraffic",
       parameters,
       {
-        timeoutMilliseconds: 5_000,
+        timeoutMilliseconds: 3_500,
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       },
     );
@@ -196,7 +198,10 @@ export class KakaoMobilityProvider
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       },
     );
-    return normalizeKakaoWalkResponse(response);
+    return normalizeKakaoWalkResponse(response, {
+      origin: request.origin,
+      destination: request.destination,
+    });
   }
 
   public async getRoadRouteGeometry(
@@ -206,8 +211,21 @@ export class KakaoMobilityProvider
     if (points.length < 2) {
       return points;
     }
-    const geometries = await Promise.all(
-      chunkRoadPoints(points).map(async (chunk) => {
+    const { sections } = await this.getRoadRouteSections({
+      points,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
+    return roadGeometryForWaypoints(sections, points);
+  }
+
+  public async getRoadRouteSections(
+    request: RoadRouteSectionsRequest,
+  ): Promise<RoadRouteSectionsResult> {
+    if (request.points.length < 2) {
+      return { sections: [] };
+    }
+    const sectionGroups = await Promise.all(
+      chunkRoadPoints(request.points).map(async (chunk) => {
         const origin = chunk[0]!;
         const destination = chunk.at(-1)!;
         const response = await this.#rest.requestJsonBody(
@@ -228,31 +246,15 @@ export class KakaoMobilityProvider
             summary: false,
           },
           {
-            timeoutMilliseconds: 5_000,
+            timeoutMilliseconds: 3_500,
             ...(request.signal === undefined
               ? {}
               : { signal: request.signal }),
           },
         );
-        return roadGeometryForWaypoints(
-          normalizeKakaoDrivingSections(response),
-          chunk,
-        );
+        return normalizeKakaoDrivingSections(response);
       }),
     );
-    const joined: Coordinate[] = [];
-    for (const geometry of geometries) {
-      for (const coordinate of geometry) {
-        const previous = joined.at(-1);
-        if (
-          previous === undefined ||
-          previous.lng !== coordinate.lng ||
-          previous.lat !== coordinate.lat
-        ) {
-          joined.push(coordinate);
-        }
-      }
-    }
-    return joined;
+    return { sections: sectionGroups.flat() };
   }
 }

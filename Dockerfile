@@ -17,6 +17,10 @@ COPY apps/api apps/api
 COPY apps/alert-relay apps/alert-relay
 COPY apps/web apps/web
 COPY packages/contracts packages/contracts
+COPY data/subway_geometry_sources.json data/subway_geometry_sources.json
+COPY data/subway_segment_shapes.geojson data/subway_segment_shapes.geojson
+COPY data/subway_segment_shapes.report.json data/subway_segment_shapes.report.json
+COPY data/subway_segment_shapes.LICENSE.md data/subway_segment_shapes.LICENSE.md
 
 ARG NAVER_MAP_BROWSER_CLIENT_ID=""
 

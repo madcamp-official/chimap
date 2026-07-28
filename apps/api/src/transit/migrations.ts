@@ -522,4 +522,84 @@ export const TRANSIT_MIGRATIONS: ReadonlyArray<{
       ON CONFLICT(dataset) DO NOTHING;
     `,
   },
+  {
+    version: 10,
+    name: "subway_track_geometry",
+    sql: `
+      ALTER TABLE subway_segments
+        ADD COLUMN IF NOT EXISTS track_geometry geometry(LineString, 4326),
+        ADD COLUMN IF NOT EXISTS track_distance_meters integer,
+        ADD COLUMN IF NOT EXISTS geometry_source varchar(160),
+        ADD COLUMN IF NOT EXISTS geometry_license varchar(240),
+        ADD COLUMN IF NOT EXISTS geometry_version varchar(120),
+        ADD COLUMN IF NOT EXISTS geometry_updated_at timestamptz;
+
+      ALTER TABLE subway_segments
+        ADD CONSTRAINT subway_segments_track_distance_check
+          CHECK (
+            track_distance_meters IS NULL OR track_distance_meters > 0
+          ),
+        ADD CONSTRAINT subway_segments_track_geometry_check
+          CHECK (
+            track_geometry IS NULL OR (
+              ST_SRID(track_geometry) = 4326
+              AND GeometryType(track_geometry) = 'LINESTRING'
+              AND ST_NPoints(track_geometry) >= 2
+            )
+          ),
+        ADD CONSTRAINT subway_segments_track_metadata_check
+          CHECK (
+            (
+              track_geometry IS NULL
+              AND track_distance_meters IS NULL
+              AND geometry_source IS NULL
+              AND geometry_license IS NULL
+              AND geometry_version IS NULL
+              AND geometry_updated_at IS NULL
+            ) OR (
+              track_geometry IS NOT NULL
+              AND track_distance_meters IS NOT NULL
+              AND geometry_source IS NOT NULL
+              AND length(trim(geometry_source)) > 0
+              AND geometry_license IS NOT NULL
+              AND length(trim(geometry_license)) > 0
+              AND geometry_version IS NOT NULL
+              AND length(trim(geometry_version)) > 0
+              AND geometry_updated_at IS NOT NULL
+            )
+          );
+    `,
+  },
+  {
+    version: 11,
+    name: "bus_segment_geometries",
+    sql: `
+      CREATE TABLE IF NOT EXISTS bus_segment_geometries (
+        route_internal_id bigint NOT NULL
+          REFERENCES bus_routes(id) ON DELETE CASCADE,
+        from_node_order integer NOT NULL CHECK (from_node_order >= 0),
+        to_node_order integer NOT NULL CHECK (to_node_order > from_node_order),
+        road_geometry geometry(LineString, 4326) NOT NULL,
+        distance_meters integer NOT NULL CHECK (distance_meters > 0),
+        geometry_source varchar(60) NOT NULL,
+        geometry_version varchar(80) NOT NULL,
+        source_hash char(64) NOT NULL,
+        fresh_until timestamptz NOT NULL,
+        expires_at timestamptz NOT NULL,
+        last_used_at timestamptz NOT NULL DEFAULT now(),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY(route_internal_id, from_node_order, to_node_order),
+        CHECK (expires_at > fresh_until),
+        CHECK (
+          ST_SRID(road_geometry) = 4326
+          AND GeometryType(road_geometry) = 'LINESTRING'
+          AND ST_NPoints(road_geometry) >= 2
+          AND ST_IsValid(road_geometry)
+        )
+      );
+      CREATE INDEX IF NOT EXISTS bus_segment_geometries_expiry_index
+        ON bus_segment_geometries(expires_at);
+    `,
+  },
 ];

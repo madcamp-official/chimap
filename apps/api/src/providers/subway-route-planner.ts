@@ -19,6 +19,16 @@ import type {
   MobilityProvider,
   TransitRouteRequest,
 } from "./types.js";
+import {
+  assembleSubwayRideGeometry,
+  usesTrackGeometry,
+  type RouteGeometryProfile,
+  type SubwayGeometryObservation,
+} from "./subway-track-geometry.js";
+import {
+  classifyGeometryError,
+  withRouteGeometryLimit,
+} from "./route-geometry.js";
 
 const SUBWAY_SEARCH_RADIUS_METERS = 2_500;
 const SUBWAY_STATION_CANDIDATE_LIMIT = 6;
@@ -255,6 +265,8 @@ function subwayStationRef(station: SubwayRoutingStation) {
 function subwayCoreLegs(
   candidate: SubwayPathCandidate,
   departureAt: Date,
+  geometryProfile?: RouteGeometryProfile,
+  observeGeometry?: (observation: SubwayGeometryObservation) => void,
 ): RouteLeg[] {
   const stationByNode = new Map(
     candidate.stations.map((station) => [station.nodeId, station]),
@@ -313,18 +325,37 @@ function subwayCoreLegs(
     const plannedBoardingAt = new Date(
       departureAt.getTime() + elapsedSeconds * 1000,
     ).toISOString();
+    const rideGeometry = assembleSubwayRideGeometry({
+      ...(geometryProfile === undefined ? {} : { profile: geometryProfile }),
+      stationCoordinates: rideStations.map(coordinate),
+      edges: rideEdges.map((ride) => ({
+        from: coordinate(stationByNode.get(ride.fromNodeId)!),
+        to: coordinate(stationByNode.get(ride.toNodeId)!),
+        straightDistanceMeters: ride.distanceMeters,
+        trackCoordinates: ride.trackCoordinates,
+        trackDistanceMeters: ride.trackDistanceMeters,
+        geometrySource: ride.geometrySource,
+      })),
+    });
+    if (usesTrackGeometry(geometryProfile)) {
+      observeGeometry?.(rideGeometry.observation);
+    }
     legs.push({
       id: `subway-${serviceLineId}-${boarding.sourceStationKey}-${alighting.sourceStationKey}`,
       mode: "SUBWAY",
       name: serviceLabel(boarding),
       guidance: `${boarding.stationName}역에서 ${serviceLabel(boarding)} 탑승 · ${alighting.stationName}역 하차 (배차간격 기반 예상)`,
-      distanceMeters: rideEdges.reduce(
-        (total, ride) => total + ride.distanceMeters,
-        0,
-      ),
+      distanceMeters: rideGeometry.distanceMeters,
       durationSeconds: waitingSeconds + rideDurationSeconds,
       stops: rideStations.map((station) => station.stationName),
-      coordinates: rideStations.map(coordinate),
+      coordinates: rideGeometry.coordinates,
+      ...(geometryProfile === "TRANSIT_V2"
+        ? {
+            geometryQuality: rideGeometry.usedTrackGeometry
+              ? "DETAILED" as const
+              : "APPROXIMATE" as const,
+          }
+        : {}),
       isExerciseSegment: false,
       timing: {
         waitSeconds: waitingSeconds,
@@ -413,22 +444,63 @@ export class SubwayRoutePlanner {
     id: string,
     from: Coordinate,
     to: Coordinate,
-    signal?: AbortSignal,
+    request: TransitRouteRequest,
   ): Promise<RouteLeg[]> {
     if (haversineDistanceMeters(from, to) <= 20) {
       return [];
     }
+    const budgetSignal = AbortSignal.timeout(8_000);
+    const walkingSignal = request.signal === undefined
+      ? budgetSignal
+      : AbortSignal.any([request.signal, budgetSignal]);
     try {
-      const route = await this.#baseProvider.getWalkingRoute({
+      const route = await withRouteGeometryLimit(() => this.#baseProvider.getWalkingRoute({
         origin: from,
         destination: to,
         routeMode: "BROAD_FIRST",
-        ...(signal === undefined ? {} : { signal }),
+        signal: walkingSignal,
+      }));
+      const legs = accessLegs(route, id).map((leg) => ({
+        ...leg,
+        ...(request.geometryProfile === "TRANSIT_V2"
+          ? { geometryQuality: "DETAILED" as const }
+          : {}),
+      }));
+      request.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: "DETAILED",
+        reason: "NONE",
+        source: "KAKAO_WALK",
+        cacheState: "NONE",
+        durationMilliseconds: 0,
+        inputVertexCount: 2,
+        outputVertexCount: legs.reduce((total, leg) => total + leg.coordinates.length, 0),
+        successfulSectionCount: 1,
+        failedSectionCount: 0,
+        walkingRole: "ACCESS",
       });
-      return accessLegs(route, id);
-    } catch {
+      return legs;
+    } catch (error) {
+      request.observeRouteGeometry?.({
+        mode: "WALK",
+        outcome: "APPROXIMATE",
+        reason: classifyGeometryError(error),
+        source: "FALLBACK",
+        cacheState: "MISS",
+        durationMilliseconds: 0,
+        inputVertexCount: 2,
+        outputVertexCount: 2,
+        successfulSectionCount: 0,
+        failedSectionCount: 1,
+        walkingRole: "ACCESS",
+      });
       return [
-        fallbackWalk(id, from, to, this.#config.transit.walkSpeedKmh),
+        {
+          ...fallbackWalk(id, from, to, this.#config.transit.walkSpeedKmh),
+          ...(request.geometryProfile === "TRANSIT_V2"
+            ? { geometryQuality: "APPROXIMATE" as const }
+            : {}),
+        },
       ];
     }
   }
@@ -452,13 +524,13 @@ export class SubwayRoutePlanner {
             `subway-access-${candidateIndex}`,
             request.origin.location,
             coordinate(first),
-            request.signal,
+            request,
           ),
           this.#walk(
             `subway-egress-${candidateIndex}`,
             coordinate(last),
             request.destination.location,
-            request.signal,
+            request,
           ),
         ]);
         const accessDurationSeconds = access.reduce(
@@ -470,6 +542,8 @@ export class SubwayRoutePlanner {
           ...subwayCoreLegs(
             candidate,
             new Date(departureAt.getTime() + accessDurationSeconds * 1000),
+            request.geometryProfile,
+            request.observeSubwayGeometry,
           ),
           ...egress,
         ];

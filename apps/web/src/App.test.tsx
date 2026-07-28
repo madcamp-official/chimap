@@ -224,5 +224,8 @@ describe("자동 건강 경로 입력", () => {
     expect(body).not.toHaveProperty("deadline");
     expect(body).not.toHaveProperty("maxExtraMinutes");
     expect(body).not.toHaveProperty("safetyBufferMinutes");
+    expect(request.headers).toMatchObject({
+      "X-Route-Geometry": "transit-v2",
+    });
   });
 });

@@ -31,6 +31,7 @@ const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const API_BASE_URL =
   configuredApiBaseUrl ||
   (import.meta.env.DEV ? "http://localhost:8080" : "");
+const ROUTE_GEOMETRY_PROFILE = "transit-v2";
 
 export class ApiClientError extends Error {
   public readonly code: ErrorCode;
@@ -172,6 +173,7 @@ export async function createRecommendations(
   return recommendationResponseSchema.parse(
     await fetchJson("/api/v1/recommendations", {
       method: "POST",
+      headers: { "X-Route-Geometry": ROUTE_GEOMETRY_PROFILE },
       body: JSON.stringify(payload),
       ...(signal === undefined ? {} : { signal }),
     }),

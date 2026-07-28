@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>CHIMap 지하철 선로 데이터 출처</title>
+    <style>
+      body { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; color: #172b33; font: 16px/1.6 system-ui, sans-serif; }
+      h1, h2 { line-height: 1.25; color: #123c48; }
+      a { color: #12647a; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th, td { padding: 8px; border-bottom: 1px solid #d9e2e5; text-align: left; vertical-align: top; }
+      code { overflow-wrap: anywhere; }
+      .notice { padding: 16px; border-radius: 10px; background: #eef6f5; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>지하철 선로 데이터 출처와 라이선스</h1>
+      <p class="notice">
+        선로 형상: © OpenStreetMap contributors, ODbL-1.0. 공식 운영기관 형상이
+        제공되는 구간은 해당 Feature에 별도 출처와 라이선스를 표시합니다.
+      </p>
+      <p>
+        <a href="https://www.openstreetmap.org/copyright">OpenStreetMap 저작권 안내</a>
+        · <a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL 전문</a>
+      </p>
+      <h2>다운로드</h2>
+      <ul>
+        <li><a href="/subway-track-data/subway_segment_shapes.geojson">선로 형상 GeoJSON</a></li>
+        <li><a href="/subway-track-data/subway_segment_shapes.report.json">coverage·checksum 보고서</a></li>
+        <li><a href="/subway-track-data/subway_geometry_sources.json">전체 원천 manifest</a></li>
+        <li><a href="/subway-track-data/subway_segment_shapes.LICENSE.md">재배포 고지</a></li>
+      </ul>
+      <h2>내부 노선과 OSM 관계 매핑</h2>
+      <table>
+        <thead><tr><th>service_line_id</th><th>OSM relation</th></tr></thead>
+        <tbody id="mappings"><tr><td colspan="2">manifest를 불러오는 중입니다.</td></tr></tbody>
+      </table>
+    </main>
+    <script>
+      fetch("/subway-track-data/subway_geometry_sources.json")
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((manifest) => {
+          const rows = manifest.mappings.map((mapping) => {
+            const row = document.createElement("tr");
+            const line = document.createElement("td");
+            const relations = document.createElement("td");
+            line.textContent = mapping.service_line_id;
+            for (const [index, id] of mapping.osm_relation_ids.entries()) {
+              if (index > 0) relations.append(", ");
+              const link = document.createElement("a");
+              link.href = `https://www.openstreetmap.org/relation/${id}`;
+              link.textContent = String(id);
+              relations.append(link);
+            }
+            row.append(line, relations);
+            return row;
+          });
+          document.querySelector("#mappings").replaceChildren(...rows);
+        })
+        .catch(() => {
+          document.querySelector("#mappings").textContent =
+            "manifest를 불러오지 못했습니다. 다운로드 링크를 이용해 주세요.";
+        });
+    </script>
+  </body>
+</html>

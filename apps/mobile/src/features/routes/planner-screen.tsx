@@ -283,6 +283,11 @@ function RouteDetailSheet({
                 <Text style={styles.detailFactValue}>{route.estimatedSteps.toLocaleString()}</Text>
               </View>
             </View>
+            {route.legs.some((leg) => leg.geometryQuality === "APPROXIMATE") ? (
+              <Text style={styles.geometryNotice}>
+                일부 구간은 상세 도로·도보 형상을 확인하지 못해 근사 경로로 표시합니다.
+              </Text>
+            ) : null}
             <Text style={styles.sectionTitle}>이동 순서</Text>
             <View style={styles.legList}>
               {route.legs.map((leg, index) => (
@@ -1047,6 +1052,7 @@ const styles = StyleSheet.create({
   resultsArrow: { color: chimapTheme.orange },
   sectionTitle: { color: chimapTheme.ink, fontSize: 18, fontWeight: "900" },
   muted: { color: chimapTheme.muted, fontSize: 12, lineHeight: 18 },
+  geometryNotice: { padding: 11, borderRadius: 11, color: chimapTheme.muted, backgroundColor: "#EEF1EF", fontSize: 12, lineHeight: 18 },
   noticeBox: { gap: 5, padding: 11, borderRadius: 12, backgroundColor: "#FFF4E9" },
   noticeTitle: { color: "#825016", fontSize: 12, fontWeight: "900" },
   noticeText: { color: "#825016", fontSize: 11, lineHeight: 16 },

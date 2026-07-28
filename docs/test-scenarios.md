@@ -452,3 +452,17 @@ gate입니다.
   SHA-256 `40fdf6b44cef23f56954f9213e6ac045c3f1dcc19a3404330b0ed063a7acea8c`
 - 별도 PostGIS 18 전체 restore에서 `migration=7`, 버스 통계와 지하철 table·
   index 확인
+
+2026-07-28 14:39~14:48 KST 선로·버스·도보 형상 운영 스냅샷:
+
+- 전체 typecheck 통과
+- 결정적 테스트 266개 통과: contracts 12, app-core 4, alert-relay 4,
+  API 141, web 57, mobile 48
+- 별도 PostgreSQL 18/PostGIS 3.6에서 교통 8개와 mobile auth 2개 통합 테스트,
+  migration 1~11 반복 적용과 전국 선로 2,314개 import 통과
+- API·Web production build와 실제 mobile 환경의 iOS·Android Hermes export 통과
+- production migration 11, `TRANSIT_GEOMETRY_V2_ENABLED=1`, local/public
+  health·readiness와 Prometheus 22개 rule 검증 통과
+- 공개 514번 필수 구간은 `DETAILED`, 25개 좌표. cold HTTP 200(15.1초),
+  warm 5건 HTTP 200(0.84~2.13초)
+- 배포 전후 production custom-format backup 생성과 SHA-256 검증 통과

@@ -15,6 +15,8 @@ import {
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
+import type { SubwayGeometryObservation } from "../providers/subway-track-geometry.js";
+import type { RouteGeometryObservation } from "../providers/route-geometry.js";
 import type { TransitRepository } from "../transit/transit-repository.js";
 
 const backupStatusSchema = z.object({
@@ -110,6 +112,14 @@ export class AppMetrics {
   readonly #subwayTagoRequests: Counter;
   readonly #subwayTagoDuration: Histogram;
   readonly #subwayUnmappedStations: Gauge;
+  readonly #subwayTrackCoverage: Gauge;
+  readonly #subwayTrackFallback: Counter;
+  readonly #subwayTrackVertices: Histogram;
+  readonly #subwayTrackResponseBytes: Histogram;
+  readonly #routeGeometryRequests: Counter;
+  readonly #routeGeometryCache: Counter;
+  readonly #routeGeometryDuration: Histogram;
+  readonly #routeGeometryVertices: Histogram;
   readonly #backupLastSuccess: Gauge;
   readonly #backupBytes: Gauge;
   readonly #transitSyncLastSuccess: Gauge;
@@ -252,6 +262,57 @@ export class AppMetrics {
       help: "활성 지하철역 중 TAGO 역 ID가 매핑되지 않은 수",
       registers: [this.registry],
     });
+    this.#subwayTrackCoverage = new Gauge({
+      name: "chimap_subway_track_geometry_coverage_ratio",
+      help: "route-ready 지하철 노선별 선로 geometry coverage 비율",
+      labelNames: ["service_line_id"] as const,
+      registers: [this.registry],
+    });
+    this.#subwayTrackFallback = new Counter({
+      name: "chimap_subway_track_geometry_fallback_total",
+      help: "지하철 선로 geometry fallback 횟수와 원인",
+      labelNames: ["reason"] as const,
+      registers: [this.registry],
+    });
+    this.#subwayTrackVertices = new Histogram({
+      name: "chimap_subway_track_geometry_vertices",
+      help: "실제 선로 geometry를 사용한 지하철 leg 정점 수",
+      labelNames: ["source"] as const,
+      buckets: [2, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_000],
+      registers: [this.registry],
+    });
+    this.#subwayTrackResponseBytes = new Histogram({
+      name: "chimap_subway_track_geometry_response_bytes",
+      help: "track-v1 추천 응답 JSON 크기",
+      buckets: [10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000],
+      registers: [this.registry],
+    });
+    this.#routeGeometryRequests = new Counter({
+      name: "chimap_route_geometry_requests_total",
+      help: "버스·도보 형상 상세 사용과 근사 fallback 횟수",
+      labelNames: ["mode", "outcome", "reason", "source"] as const,
+      registers: [this.registry],
+    });
+    this.#routeGeometryCache = new Counter({
+      name: "chimap_route_geometry_cache_total",
+      help: "버스·도보 형상 캐시 상태",
+      labelNames: ["mode", "outcome"] as const,
+      registers: [this.registry],
+    });
+    this.#routeGeometryDuration = new Histogram({
+      name: "chimap_route_geometry_duration_seconds",
+      help: "버스·도보 형상 처리 시간",
+      labelNames: ["mode", "source"] as const,
+      buckets: [0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 8],
+      registers: [this.registry],
+    });
+    this.#routeGeometryVertices = new Histogram({
+      name: "chimap_route_geometry_vertices",
+      help: "버스·도보 leg 형상 정점 수",
+      labelNames: ["mode", "quality"] as const,
+      buckets: [2, 5, 10, 25, 50, 100, 250, 500, 1_000],
+      registers: [this.registry],
+    });
     this.#backupLastSuccess = new Gauge({
       name: "chimap_backup_last_success_timestamp_seconds",
       help: "마지막 PostgreSQL 백업 성공 Unix timestamp",
@@ -388,8 +449,51 @@ export class AppMetrics {
     this.#subwayTagoDuration.observe(labels, input.durationSeconds);
   }
 
+  public observeSubwayTrackGeometry(
+    observation: SubwayGeometryObservation,
+  ): void {
+    if (observation.outcome === "fallback") {
+      this.#subwayTrackFallback.inc({ reason: observation.reason });
+      return;
+    }
+    this.#subwayTrackVertices.observe(
+      { source: observation.source },
+      observation.vertexCount,
+    );
+  }
+
+  public observeSubwayTrackResponseBytes(bytes: number): void {
+    this.#subwayTrackResponseBytes.observe(bytes);
+  }
+
+  public observeRouteGeometry(observation: RouteGeometryObservation): void {
+    const labels = {
+      mode: observation.mode,
+      outcome: observation.outcome,
+      reason: observation.reason,
+      source: observation.source,
+    };
+    this.#routeGeometryRequests.inc(labels);
+    this.#routeGeometryCache.inc({
+      mode: observation.mode,
+      outcome: observation.cacheState,
+    });
+    this.#routeGeometryDuration.observe(
+      { mode: observation.mode, source: observation.source },
+      observation.durationMilliseconds / 1_000,
+    );
+    this.#routeGeometryVertices.observe(
+      { mode: observation.mode, quality: observation.outcome },
+      observation.outputVertexCount,
+    );
+  }
+
   async #refreshInfrastructure(): Promise<void> {
-    const [database, transit] = await Promise.all([
+    const coveragePromise =
+      typeof this.#repository.subwayTrackGeometryCoverage === "function"
+        ? this.#repository.subwayTrackGeometryCoverage().catch(() => [])
+        : Promise.resolve([]);
+    const [database, transit, geometryCoverage] = await Promise.all([
       this.#repository.status(),
       this.#repository.stats().catch(() => ({
         stops: 0,
@@ -400,6 +504,7 @@ export class AppMetrics {
         activeSubwayStations: 0,
         mappedSubwayStations: 0,
       })),
+      coveragePromise,
     ]);
     this.#databaseReady.set(
       database.connected && database.postgis && database.migrationsCurrent
@@ -427,6 +532,15 @@ export class AppMetrics {
         transit.activeSubwayStations - transit.mappedSubwayStations,
       ),
     );
+    this.#subwayTrackCoverage.reset();
+    for (const line of geometryCoverage) {
+      this.#subwayTrackCoverage.set(
+        { service_line_id: line.serviceLineId },
+        line.segmentCount === 0
+          ? 1
+          : line.geometryCount / line.segmentCount,
+      );
+    }
     this.#providerConfigured.set(
       { provider: "KAKAO" },
       this.#config.kakaoRestApiKey === undefined ? 0 : 1,

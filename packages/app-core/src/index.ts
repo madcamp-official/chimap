@@ -4,7 +4,7 @@ import type {
   RecommendationType,
 } from "@chimap/contracts";
 
-export const RECOMMENDATION_CACHE_VERSION = "v1";
+export const RECOMMENDATION_CACHE_VERSION = "v3-transit-v2";
 export const RECOMMENDATION_STALE_TIME_MS = 5 * 60 * 1000;
 export const RECOMMENDATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

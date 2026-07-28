@@ -14,7 +14,11 @@ playwright-report
 test-results
 **/test-results
 .data
-data
+data/*
+!data/subway_geometry_sources.json
+!data/subway_segment_shapes.geojson
+!data/subway_segment_shapes.report.json
+!data/subway_segment_shapes.LICENSE.md
 *.sqlite*
 *.log
 *.tsbuildinfo

@@ -1,4 +1,5 @@
 import {
+  HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND,
   haversineDistanceMeters,
   normalizedRouteSchema,
   type BusRouteStop,
@@ -13,6 +14,14 @@ import pLimit, { type LimitFunction } from "p-limit";
 
 import { ProviderError } from "../errors.js";
 import type { MobilityProvider } from "../providers/types.js";
+import type {
+  RouteGeometryProfile,
+  SubwayGeometryObservation,
+} from "../providers/subway-track-geometry.js";
+import {
+  classifyGeometryError,
+  type RouteGeometryObservation,
+} from "../providers/route-geometry.js";
 import {
   calculateRemainingSteps,
   calculateTargetWalkDistanceMeters,
@@ -52,10 +61,26 @@ class RouteCallBudget {
   readonly #limit: LimitFunction;
   #transitCalls = 0;
   #walkCalls = 0;
+  readonly #geometryProfile: RouteGeometryProfile | undefined;
+  readonly #observeSubwayGeometry:
+    | ((observation: SubwayGeometryObservation) => void)
+    | undefined;
+  readonly #observeRouteGeometry:
+    | ((observation: RouteGeometryObservation) => void)
+    | undefined;
 
-  public constructor(provider: MobilityProvider, concurrency = 3) {
+  public constructor(
+    provider: MobilityProvider,
+    concurrency = 3,
+    geometryProfile?: RouteGeometryProfile,
+    observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void,
+    observeRouteGeometry?: (observation: RouteGeometryObservation) => void,
+  ) {
     this.#provider = provider;
     this.#limit = pLimit(concurrency);
+    this.#geometryProfile = geometryProfile;
+    this.#observeSubwayGeometry = observeSubwayGeometry;
+    this.#observeRouteGeometry = observeRouteGeometry;
   }
 
   public get totalCalls(): number {
@@ -80,6 +105,15 @@ class RouteCallBudget {
       this.#provider.getTransitRoutes({
         origin,
         destination,
+        ...(this.#geometryProfile === undefined
+          ? {}
+          : { geometryProfile: this.#geometryProfile }),
+        ...(this.#observeSubwayGeometry === undefined
+          ? {}
+          : { observeSubwayGeometry: this.#observeSubwayGeometry }),
+        ...(this.#observeRouteGeometry === undefined
+          ? {}
+          : { observeRouteGeometry: this.#observeRouteGeometry }),
         ...(signal === undefined ? {} : { signal }),
       }),
     );
@@ -99,14 +133,93 @@ class RouteCallBudget {
       );
     }
     this.#walkCalls += 1;
-    return this.#limit(() =>
-      this.#provider.getWalkingRoute({
-        origin,
-        destination,
-        routeMode: "BROAD_FIRST",
-        ...(signal === undefined ? {} : { signal }),
-      }),
-    );
+    const callId = this.#walkCalls;
+    return this.#limit(async () => {
+      const startedAt = performance.now();
+      try {
+        const route = await this.#provider.getWalkingRoute({
+          origin,
+          destination,
+          routeMode: "BROAD_FIRST",
+          ...(signal === undefined ? {} : { signal }),
+        });
+        if (this.#geometryProfile !== "TRANSIT_V2") {
+          return route;
+        }
+        const quality = route.distanceMeters <= 20
+          ? "APPROXIMATE" as const
+          : "DETAILED" as const;
+        const normalized = normalizedRouteSchema.parse({
+          ...route,
+          legs: route.legs.map((leg) => ({
+            ...leg,
+            geometryQuality: quality,
+          })),
+        });
+        this.#observeRouteGeometry?.({
+          mode: "WALK",
+          outcome: quality,
+          reason: quality === "DETAILED" ? "NONE" : "SHORT_DISTANCE",
+          source: "KAKAO_WALK",
+          cacheState: "NONE",
+          durationMilliseconds: Math.round(performance.now() - startedAt),
+          inputVertexCount: 2,
+          outputVertexCount: normalized.legs.reduce(
+            (total, leg) => total + leg.coordinates.length,
+            0,
+          ),
+          successfulSectionCount: quality === "DETAILED" ? 1 : 0,
+          failedSectionCount: quality === "DETAILED" ? 0 : 1,
+        });
+        return normalized;
+      } catch (error) {
+        this.#observeRouteGeometry?.({
+          mode: "WALK",
+          outcome: "APPROXIMATE",
+          reason: classifyGeometryError(error),
+          source: "FALLBACK",
+          cacheState: "NONE",
+          durationMilliseconds: Math.round(performance.now() - startedAt),
+          inputVertexCount: 2,
+          outputVertexCount: 0,
+          successfulSectionCount: 0,
+          failedSectionCount: 1,
+        });
+        if (this.#geometryProfile === "TRANSIT_V2") {
+          const distanceMeters = Math.max(
+            1,
+            Math.round(haversineDistanceMeters(origin, destination) * 1.25),
+          );
+          const durationSeconds = Math.max(
+            1,
+            Math.round(
+              distanceMeters /
+                (HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND / 100),
+            ),
+          );
+          return normalizedRouteSchema.parse({
+            id: `candidate-walk-fallback-${callId}`,
+            source: this.#provider.source,
+            durationSeconds,
+            distanceMeters,
+            walkDistanceMeters: distanceMeters,
+            transitDistanceMeters: 0,
+            transferCount: 0,
+            legs: [{
+              id: `candidate-walk-fallback-${callId}-leg`,
+              mode: "WALK",
+              guidance: "도보 이동 (근사 경로)",
+              distanceMeters,
+              durationSeconds,
+              coordinates: [origin, destination],
+              geometryQuality: "APPROXIMATE",
+              isExerciseSegment: false,
+            }],
+          });
+        }
+        throw error;
+      }
+    });
   }
 }
 
@@ -635,8 +748,23 @@ export class CandidateGenerator {
   public async generate(
     request: RecommendationRequest,
     signal?: AbortSignal,
+    options: {
+      geometryProfile?: RouteGeometryProfile;
+      observeSubwayGeometry?: (
+        observation: SubwayGeometryObservation,
+      ) => void;
+      observeRouteGeometry?: (
+        observation: RouteGeometryObservation,
+      ) => void;
+    } = {},
   ): Promise<CandidateGenerationResult> {
-    const budget = new RouteCallBudget(this.#provider, 3);
+    const budget = new RouteCallBudget(
+      this.#provider,
+      3,
+      options.geometryProfile,
+      options.observeSubwayGeometry,
+      options.observeRouteGeometry,
+    );
     const baselineRoutes = await budget.transit(
       request.origin,
       request.destination,

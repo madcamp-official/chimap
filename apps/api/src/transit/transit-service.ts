@@ -13,6 +13,7 @@ import type { Logger } from "pino";
 
 import type { AppConfig, TagoServiceKind } from "../config.js";
 import { MemoryCache } from "../services/cache.js";
+import { busSegmentSourceHash } from "../providers/route-geometry.js";
 import {
   adjustedSeoulWaitSeconds,
   SeoulSubwayClient,
@@ -194,6 +195,25 @@ export class TransitService {
 
   public setSubwayMetricsObserver(observer: SubwayMetricsObserver): void {
     this.#subwayMetricsObserver = observer;
+  }
+
+  async #removeMismatchedBusGeometry(
+    route: BusRoute,
+    stops: BusRouteStop[],
+  ): Promise<void> {
+    const hashes = stops.slice(0, -1).map((from, index) =>
+      busSegmentSourceHash(
+        route.cityCode,
+        route.routeId,
+        from,
+        stops[index + 1]!,
+      ),
+    );
+    await this.repository.removeMismatchedBusSegmentGeometries(
+      route.cityCode,
+      route.routeId,
+      hashes,
+    );
   }
 
   async #observeSubwayRequest<T>(
@@ -771,7 +791,9 @@ export class TransitService {
     );
     const route = await this.getRoute(cityCode, routeId, signal);
     await this.repository.replaceRouteStops(route, stops);
-    return this.repository.getRouteStops(cityCode, routeId);
+    const storedStops = await this.repository.getRouteStops(cityCode, routeId);
+    await this.#removeMismatchedBusGeometry(route, storedStops);
+    return storedStops;
   }
 
   public getArrivals(
@@ -827,9 +849,12 @@ export class TransitService {
       this.client.getRouteStops(cityCode, routeId, signal),
     ]);
     await this.repository.replaceRouteStops(route, stops);
+    const storedRoute = (await this.repository.getRoute(cityCode, routeId)) ?? route;
+    const storedStops = await this.repository.getRouteStops(cityCode, routeId);
+    await this.#removeMismatchedBusGeometry(storedRoute, storedStops);
     return {
-      route: (await this.repository.getRoute(cityCode, routeId)) ?? route,
-      stops: await this.repository.getRouteStops(cityCode, routeId),
+      route: storedRoute,
+      stops: storedStops,
     };
   }
 }

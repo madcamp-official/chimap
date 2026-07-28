@@ -437,6 +437,7 @@ export function createApp(options: CreateAppOptions): Express {
         "X-App-Version",
         "X-Client-Platform",
         "X-Contract-Version",
+        "X-Route-Geometry",
       ],
       credentials: true,
     }),
@@ -759,6 +760,8 @@ export function createApp(options: CreateAppOptions): Express {
         subwayStations: 0,
         activeSubwayStations: 0,
         mappedSubwayStations: 0,
+        routeReadySubwaySegments: 0,
+        subwayTrackGeometrySegments: 0,
       })),
     ]);
     const tago = (
@@ -774,12 +777,17 @@ export function createApp(options: CreateAppOptions): Express {
       transit.linkedStops > 0 &&
       transit.routes > 0 &&
       transit.routeStops > 0;
+    const trackGeometryReady =
+      (transit.routeReadySubwaySegments ?? 0) > 0 &&
+      transit.subwayTrackGeometrySegments ===
+        transit.routeReadySubwaySegments;
     const ready =
       database.connected &&
       database.postgis &&
       database.migrationsCurrent &&
       providersReady &&
-      transitReady;
+      transitReady &&
+      trackGeometryReady;
     const payload = readinessResponseSchema.parse({
       status: ready ? "ready" : "not_ready",
       timestamp: (options.clock ?? (() => new Date()))().toISOString(),
@@ -862,16 +870,38 @@ export function createApp(options: CreateAppOptions): Express {
       }
       const abortController = new AbortController();
       request.once("aborted", () => abortController.abort());
+      const geometryHeader = request.get("x-route-geometry");
+      const geometryProfile = geometryHeader === "transit-v2" && options.config.transit.geometryV2Enabled
+        ? "TRANSIT_V2" as const
+        : geometryHeader === "track-v1" || geometryHeader === "transit-v2"
+          ? "TRACK_V1" as const
+          : undefined;
       const result = await recommendationService.createRecommendations({
         request: parsedRequest,
         requestId: requestId(response),
         signal: abortController.signal,
+        ...(geometryProfile === undefined ? {} : { geometryProfile }),
+        observeSubwayGeometry: (observation) =>
+          metrics.observeSubwayTrackGeometry(observation),
+        observeRouteGeometry: (observation) => {
+          metrics.observeRouteGeometry(observation);
+          logger.info({
+            event: "route.geometry",
+            requestId: requestId(response),
+            ...observation,
+          });
+        },
       });
       metrics.observeRecommendation({
         outcome: "success",
         durationSeconds: (performance.now() - startedAt) / 1000,
         resultCount: result.recommendations.length,
       });
+      if (geometryProfile !== undefined) {
+        metrics.observeSubwayTrackResponseBytes(
+          Buffer.byteLength(JSON.stringify(result)),
+        );
+      }
       response.json(result);
     } catch (error) {
       metrics.observeRecommendation({

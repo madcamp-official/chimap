@@ -63,7 +63,7 @@ DB를 조회하지 않습니다.
 ```json
 {
   "status": "ready",
-  "timestamp": "2026-07-27T12:45:48.159Z",
+  "timestamp": "2026-07-28T05:39:48.941Z",
   "database": {
     "connected": true,
     "postgis": true,
@@ -75,23 +75,25 @@ DB를 조회하지 않습니다.
     "tago": true
   },
   "transit": {
-    "stops": 227308,
-    "linkedStops": 3271,
+    "stops": 227310,
+    "linkedStops": 3325,
     "routes": 156,
-    "routeStops": 6398,
+    "routeStops": 6907,
     "subwayStations": 1097,
     "activeSubwayStations": 1097,
     "mappedSubwayStations": 706,
     "subwayServiceLines": 46,
     "routeReadySubwayLines": 30,
     "providerMappedStations": 697,
-    "busSubwayTransferEdges": 182
+    "busSubwayTransferEdges": 182,
+    "routeReadySubwaySegments": 2314,
+    "subwayTrackGeometrySegments": 2314
   }
 }
 ```
 
-위 응답은 2026-07-27 migration 9·멀티모달 seed와 서울 실시간 활성화 후
-예시이며 실제 데이터 동기화에 따라 시각과 통계가 달라질 수 있습니다.
+위 응답은 2026-07-28 migration 11과 `transit-v2` 운영 승격 후 예시이며 실제
+데이터 동기화에 따라 시각과 통계가 달라질 수 있습니다.
 
 다음 조건을 모두 만족하면 HTTP 200과 `ready`를 반환합니다.
 
@@ -404,6 +406,18 @@ type RecommendationRequest = {
 };
 ```
 
+기존 선로 지원 클라이언트의 `X-Route-Geometry: track-v1`은 계속 지원합니다.
+이 profile은 지하철 `RouteLeg.coordinates`와 표시용 `distanceMeters`에 검증된
+실제 선로 형상을 사용하지만 버스·도보 품질 필드는 추가하지 않습니다. 헤더가
+없는 구버전은 종전 좌표 계약을 유지합니다.
+
+현재 Web·iOS·Android처럼 버스·도보 형상 품질을 지원하는 클라이언트는
+`X-Route-Geometry: transit-v2`를 사용합니다. 이 profile은 `track-v1` 지하철
+선로 형상을 포함하며 각 leg에 선택 필드
+`geometryQuality: "DETAILED" | "APPROXIMATE"`를 반환합니다. 형상 조회가
+실패해도 추천은 유지하고 `APPROXIMATE` 좌표를 반환합니다. 구버전 strict
+클라이언트를 위해 `track-v1`과 헤더 없는 응답에는 이 필드를 추가하지 않습니다.
+
 브라우저는 최초 설정에서 받은 만 나이·신장·체중·생물학적 성별로 한 걸음
 길이를 계산합니다. 연구식 적용 직전에 만 나이를 출생연도로 변환하며, 원본
 프로필은 요청 계약에 포함하지 않고 서버에는 위 `walkingMetric` 파생값만
@@ -472,8 +486,9 @@ type RecommendationResponse = {
 추천 타입은 `FAST`, `BALANCED`, `GOAL`입니다. `BALANCED`는 호환성을 위해
 유지하며 화면 의미는 FAST 예상 걸음의 2배에 가장 가까운 `2배 걸음 경로`입니다.
 `GOAL`은 남은 목표 걸음에 가장 가까운 `목표 근접 경로`입니다. 세 타입에는
-서로 다른 route ID만 배정합니다. 모든 경로 좌표와 거리는 정규화된
-Kakao/TAGO 응답에서 가져옵니다.
+서로 다른 route ID만 배정합니다. 도보·버스 경로 좌표는 정규화된 Kakao/TAGO
+응답을 사용하고, `track-v1` 지하철 좌표는 DB의 검증된 선로 LineString을
+사용합니다.
 
 각 추천은 `stepDifference`와
 `goalFit: "WITHIN_TOLERANCE" | "UNDER" | "OVER"`를 포함합니다.

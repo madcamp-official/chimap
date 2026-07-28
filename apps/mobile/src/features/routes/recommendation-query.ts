@@ -65,6 +65,7 @@ export function useRecommendationQuery(input: {
               ? {}
               : { Authorization: `Bearer ${input.accessToken}` }),
             "Content-Type": "application/json",
+            "X-Route-Geometry": "transit-v2",
           }),
           body: JSON.stringify(input.request),
         },
