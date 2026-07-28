@@ -512,12 +512,20 @@ export function normalizeKakaoWalkResponse(
         });
       }
       const previous = coordinates.at(-1);
-      const forwardGap = previous === undefined
+      const orientationReference = previous ??
+        (legIndex === 0 ? endpoints?.origin : undefined);
+      const forwardGap = orientationReference === undefined
         ? 0
-        : haversineDistanceMeters(previous, pathCoordinates[0]!);
-      const reverseGap = previous === undefined
+        : haversineDistanceMeters(
+            orientationReference,
+            pathCoordinates[0]!,
+          );
+      const reverseGap = orientationReference === undefined
         ? Infinity
-        : haversineDistanceMeters(previous, pathCoordinates.at(-1)!);
+        : haversineDistanceMeters(
+            orientationReference,
+            pathCoordinates.at(-1)!,
+          );
       const oriented = reverseGap < forwardGap
         ? [...pathCoordinates].reverse()
         : pathCoordinates;

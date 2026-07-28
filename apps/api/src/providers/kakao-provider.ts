@@ -194,7 +194,7 @@ export class KakaoMobilityProvider
       "/v2/routing/walk",
       parameters,
       {
-        timeoutMilliseconds: 5_000,
+        timeoutMilliseconds: 3_500,
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       },
     );

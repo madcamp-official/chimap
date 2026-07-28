@@ -166,4 +166,31 @@ describe("Kakao 도보 형상 무결성", () => {
     expect(route.legs).toHaveLength(1);
     expect(route.legs[0]?.coordinates).toHaveLength(3);
   });
+
+  it("첫 step이 역방향이어도 요청 출발점 기준으로 바로잡는다", () => {
+    const origin = { lng: 127.37, lat: 36.35 };
+    const middle = { lng: 127.3702, lat: 36.3502 };
+    const destination = { lng: 127.3704, lat: 36.3504 };
+    const route = normalizeKakaoWalkResponse(
+      response([
+        {
+          properties: { distance: 100, time: 90 },
+          path: {
+            points: [
+              [destination.lng, destination.lat],
+              [middle.lng, middle.lat],
+              [origin.lng, origin.lat],
+            ],
+          },
+        },
+      ]),
+      { origin, destination },
+    );
+
+    expect(route.legs[0]?.coordinates).toEqual([
+      { lat: origin.lat, lng: origin.lng },
+      { lat: middle.lat, lng: middle.lng },
+      { lat: destination.lat, lng: destination.lng },
+    ]);
+  });
 });

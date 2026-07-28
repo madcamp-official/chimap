@@ -5,6 +5,7 @@ import {
   type BusRouteStop,
   type Coordinate,
   type NormalizedRoute,
+  type Recommendation,
   type RecommendationRequest,
   type RouteLeg,
   type TransitBusLeg,
@@ -20,6 +21,7 @@ import type {
 } from "../providers/subway-track-geometry.js";
 import {
   classifyGeometryError,
+  withWalkingGeometryLimit,
   type RouteGeometryObservation,
 } from "../providers/route-geometry.js";
 import {
@@ -56,11 +58,85 @@ type AdjustmentSpec = {
   fit: number;
 };
 
+const FINAL_WALK_GEOMETRY_BUDGET_MILLISECONDS = 8_000;
+const FINAL_WALK_GEOMETRY_CALL_LIMIT = 8;
+
+function approximateWalkingRoute(
+  source: MobilityProvider["source"],
+  origin: Coordinate,
+  destination: Coordinate,
+  id: string,
+): NormalizedRoute {
+  const distanceMeters = Math.max(
+    1,
+    Math.round(haversineDistanceMeters(origin, destination) * 1.25),
+  );
+  const durationSeconds = Math.max(
+    1,
+    Math.round(
+      distanceMeters /
+        (HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND / 100),
+    ),
+  );
+  return normalizedRouteSchema.parse({
+    id: `candidate-walk-fallback-${id}`,
+    source,
+    durationSeconds,
+    distanceMeters,
+    walkDistanceMeters: distanceMeters,
+    transitDistanceMeters: 0,
+    transferCount: 0,
+    legs: [{
+      id: `candidate-walk-fallback-${id}-leg`,
+      mode: "WALK",
+      guidance: "도보 이동 (근사 경로)",
+      distanceMeters,
+      durationSeconds,
+      coordinates: [origin, destination],
+      geometryQuality: "APPROXIMATE",
+      isExerciseSegment: false,
+    }],
+  });
+}
+
+type ResolvedWalkingGeometry = {
+  coordinates: Coordinate[] | null;
+  reason: ReturnType<typeof classifyGeometryError> | "NONE" | "EMPTY_PATH";
+  durationMilliseconds: number;
+};
+
+function walkingGeometryKey(from: Coordinate, to: Coordinate): string {
+  return [
+    from.lng.toFixed(5),
+    from.lat.toFixed(5),
+    to.lng.toFixed(5),
+    to.lat.toFixed(5),
+  ].join(":");
+}
+
+function joinedWalkingCoordinates(route: NormalizedRoute): Coordinate[] {
+  const coordinates: Coordinate[] = [];
+  for (const leg of route.legs) {
+    for (const point of leg.coordinates) {
+      const previous = coordinates.at(-1);
+      if (
+        previous === undefined ||
+        previous.lat !== point.lat ||
+        previous.lng !== point.lng
+      ) {
+        coordinates.push(point);
+      }
+    }
+  }
+  return coordinates;
+}
+
 class RouteCallBudget {
   readonly #provider: MobilityProvider;
   readonly #limit: LimitFunction;
   #transitCalls = 0;
   #walkCalls = 0;
+  #walkCandidates = 0;
   readonly #geometryProfile: RouteGeometryProfile | undefined;
   readonly #observeSubwayGeometry:
     | ((observation: SubwayGeometryObservation) => void)
@@ -124,6 +200,18 @@ class RouteCallBudget {
     destination: Coordinate,
     signal?: AbortSignal,
   ): Promise<NormalizedRoute> {
+    this.#walkCandidates += 1;
+    const callId = this.#walkCandidates;
+    if (this.#geometryProfile === "TRANSIT_V2") {
+      return Promise.resolve(
+        approximateWalkingRoute(
+          this.#provider.source,
+          origin,
+          destination,
+          String(callId),
+        ),
+      );
+    }
     if (this.#walkCalls >= 8) {
       return Promise.reject(
         new ProviderError({
@@ -133,93 +221,12 @@ class RouteCallBudget {
       );
     }
     this.#walkCalls += 1;
-    const callId = this.#walkCalls;
-    return this.#limit(async () => {
-      const startedAt = performance.now();
-      try {
-        const route = await this.#provider.getWalkingRoute({
-          origin,
-          destination,
-          routeMode: "BROAD_FIRST",
-          ...(signal === undefined ? {} : { signal }),
-        });
-        if (this.#geometryProfile !== "TRANSIT_V2") {
-          return route;
-        }
-        const quality = route.distanceMeters <= 20
-          ? "APPROXIMATE" as const
-          : "DETAILED" as const;
-        const normalized = normalizedRouteSchema.parse({
-          ...route,
-          legs: route.legs.map((leg) => ({
-            ...leg,
-            geometryQuality: quality,
-          })),
-        });
-        this.#observeRouteGeometry?.({
-          mode: "WALK",
-          outcome: quality,
-          reason: quality === "DETAILED" ? "NONE" : "SHORT_DISTANCE",
-          source: "KAKAO_WALK",
-          cacheState: "NONE",
-          durationMilliseconds: Math.round(performance.now() - startedAt),
-          inputVertexCount: 2,
-          outputVertexCount: normalized.legs.reduce(
-            (total, leg) => total + leg.coordinates.length,
-            0,
-          ),
-          successfulSectionCount: quality === "DETAILED" ? 1 : 0,
-          failedSectionCount: quality === "DETAILED" ? 0 : 1,
-        });
-        return normalized;
-      } catch (error) {
-        this.#observeRouteGeometry?.({
-          mode: "WALK",
-          outcome: "APPROXIMATE",
-          reason: classifyGeometryError(error),
-          source: "FALLBACK",
-          cacheState: "NONE",
-          durationMilliseconds: Math.round(performance.now() - startedAt),
-          inputVertexCount: 2,
-          outputVertexCount: 0,
-          successfulSectionCount: 0,
-          failedSectionCount: 1,
-        });
-        if (this.#geometryProfile === "TRANSIT_V2") {
-          const distanceMeters = Math.max(
-            1,
-            Math.round(haversineDistanceMeters(origin, destination) * 1.25),
-          );
-          const durationSeconds = Math.max(
-            1,
-            Math.round(
-              distanceMeters /
-                (HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND / 100),
-            ),
-          );
-          return normalizedRouteSchema.parse({
-            id: `candidate-walk-fallback-${callId}`,
-            source: this.#provider.source,
-            durationSeconds,
-            distanceMeters,
-            walkDistanceMeters: distanceMeters,
-            transitDistanceMeters: 0,
-            transferCount: 0,
-            legs: [{
-              id: `candidate-walk-fallback-${callId}-leg`,
-              mode: "WALK",
-              guidance: "도보 이동 (근사 경로)",
-              distanceMeters,
-              durationSeconds,
-              coordinates: [origin, destination],
-              geometryQuality: "APPROXIMATE",
-              isExerciseSegment: false,
-            }],
-          });
-        }
-        throw error;
-      }
-    });
+    return this.#limit(() => this.#provider.getWalkingRoute({
+      origin,
+      destination,
+      routeMode: "BROAD_FIRST",
+      ...(signal === undefined ? {} : { signal }),
+    }));
   }
 }
 
@@ -743,6 +750,139 @@ export class CandidateGenerator {
 
   public constructor(provider: MobilityProvider) {
     this.#provider = provider;
+  }
+
+  public async enrichWalkingGeometry(
+    recommendations: readonly Recommendation[],
+    signal?: AbortSignal,
+    observe?: (observation: RouteGeometryObservation) => void,
+  ): Promise<Recommendation[]> {
+    const targets = new Map<
+      string,
+      { from: Coordinate; to: Coordinate }
+    >();
+    for (const recommendation of recommendations) {
+      for (const leg of recommendation.legs) {
+        const from = leg.coordinates[0];
+        const to = leg.coordinates.at(-1);
+        if (
+          leg.mode !== "WALK" ||
+          leg.geometryQuality === "DETAILED" ||
+          leg.distanceMeters <= 20 ||
+          from === undefined ||
+          to === undefined
+        ) {
+          continue;
+        }
+        const key = walkingGeometryKey(from, to);
+        if (!targets.has(key)) targets.set(key, { from, to });
+      }
+    }
+    if (targets.size === 0) return [...recommendations];
+
+    const budgetSignal = AbortSignal.timeout(
+      FINAL_WALK_GEOMETRY_BUDGET_MILLISECONDS,
+    );
+    const walkingSignal = signal === undefined
+      ? budgetSignal
+      : AbortSignal.any([signal, budgetSignal]);
+    const resolutions = new Map<
+      string,
+      Promise<ResolvedWalkingGeometry>
+    >();
+    let callCount = 0;
+    for (const [key, target] of targets) {
+      if (callCount >= FINAL_WALK_GEOMETRY_CALL_LIMIT) {
+        resolutions.set(key, Promise.resolve({
+          coordinates: null,
+          reason: "UPSTREAM",
+          durationMilliseconds: 0,
+        }));
+        continue;
+      }
+      callCount += 1;
+      const startedAt = performance.now();
+      resolutions.set(
+        key,
+        withWalkingGeometryLimit(
+          () => this.#provider.getWalkingRoute({
+            origin: target.from,
+            destination: target.to,
+            routeMode: "BROAD_FIRST",
+            signal: walkingSignal,
+          }),
+          walkingSignal,
+        ).then((route): ResolvedWalkingGeometry => {
+          const coordinates = joinedWalkingCoordinates(route);
+          return coordinates.length >= 2
+            ? {
+                coordinates,
+                reason: "NONE",
+                durationMilliseconds: performance.now() - startedAt,
+              }
+            : {
+                coordinates: null,
+                reason: "EMPTY_PATH",
+                durationMilliseconds: performance.now() - startedAt,
+              };
+        }).catch((error: unknown): ResolvedWalkingGeometry => ({
+          coordinates: null,
+          reason: classifyGeometryError(error),
+          durationMilliseconds: performance.now() - startedAt,
+        })),
+      );
+    }
+    const resolved = new Map<string, ResolvedWalkingGeometry>();
+    await Promise.all(
+      [...resolutions].map(async ([key, resolution]) => {
+        resolved.set(key, await resolution);
+      }),
+    );
+
+    return recommendations.map((recommendation) => ({
+      ...recommendation,
+      legs: recommendation.legs.map((leg) => {
+        const from = leg.coordinates[0];
+        const to = leg.coordinates.at(-1);
+        if (
+          leg.mode !== "WALK" ||
+          leg.geometryQuality === "DETAILED" ||
+          leg.distanceMeters <= 20 ||
+          from === undefined ||
+          to === undefined
+        ) {
+          return leg;
+        }
+        const geometry = resolved.get(walkingGeometryKey(from, to)) ?? {
+          coordinates: null,
+          reason: "UPSTREAM" as const,
+          durationMilliseconds: 0,
+        };
+        const detailed = geometry.coordinates !== null;
+        observe?.({
+          mode: "WALK",
+          outcome: detailed ? "DETAILED" : "APPROXIMATE",
+          reason: detailed ? "NONE" : geometry.reason,
+          source: detailed ? "KAKAO_WALK" : "FALLBACK",
+          cacheState: "NONE",
+          durationMilliseconds: geometry.durationMilliseconds,
+          inputVertexCount: 2,
+          outputVertexCount: geometry.coordinates?.length ?? leg.coordinates.length,
+          successfulSectionCount: detailed ? 1 : 0,
+          failedSectionCount: detailed ? 0 : 1,
+          ...(leg.walkingRole === undefined
+            ? {}
+            : { walkingRole: leg.walkingRole }),
+        });
+        return detailed
+          ? {
+              ...leg,
+              coordinates: geometry.coordinates!,
+              geometryQuality: "DETAILED" as const,
+            }
+          : leg;
+      }),
+    }));
   }
 
   public async generate(

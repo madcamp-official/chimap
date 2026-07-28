@@ -27,7 +27,7 @@ import {
 } from "./subway-track-geometry.js";
 import {
   classifyGeometryError,
-  withRouteGeometryLimit,
+  withWalkingGeometryLimit,
 } from "./route-geometry.js";
 
 const SUBWAY_SEARCH_RADIUS_METERS = 2_500;
@@ -449,17 +449,23 @@ export class SubwayRoutePlanner {
     if (haversineDistanceMeters(from, to) <= 20) {
       return [];
     }
+    if (request.geometryProfile === "TRANSIT_V2") {
+      return [{
+        ...fallbackWalk(id, from, to, this.#config.transit.walkSpeedKmh),
+        geometryQuality: "APPROXIMATE",
+      }];
+    }
     const budgetSignal = AbortSignal.timeout(8_000);
     const walkingSignal = request.signal === undefined
       ? budgetSignal
       : AbortSignal.any([request.signal, budgetSignal]);
     try {
-      const route = await withRouteGeometryLimit(() => this.#baseProvider.getWalkingRoute({
+      const route = await withWalkingGeometryLimit(() => this.#baseProvider.getWalkingRoute({
         origin: from,
         destination: to,
         routeMode: "BROAD_FIRST",
         signal: walkingSignal,
-      }));
+      }), walkingSignal);
       const legs = accessLegs(route, id).map((leg) => ({
         ...leg,
         ...(request.geometryProfile === "TRANSIT_V2"
@@ -497,9 +503,6 @@ export class SubwayRoutePlanner {
       return [
         {
           ...fallbackWalk(id, from, to, this.#config.transit.walkSpeedKmh),
-          ...(request.geometryProfile === "TRANSIT_V2"
-            ? { geometryQuality: "APPROXIMATE" as const }
-            : {}),
         },
       ];
     }

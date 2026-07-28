@@ -85,4 +85,28 @@ describe("Kakao REST 오류와 재시도 경계", () => {
     });
     expect(calls).toBe(1);
   });
+
+  it("상위 시간 예산 만료는 사용자 취소가 아니라 timeout으로 분류한다", async () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException("budget expired", "TimeoutError"));
+    let calls = 0;
+    const client = new KakaoRestClient(
+      "server-key",
+      async (_url, options) => {
+        calls += 1;
+        throw options?.signal?.reason;
+      },
+    );
+
+    await expect(
+      client.requestJson("/v2/routing/walk", new URLSearchParams(), {
+        timeoutMilliseconds: 3_500,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject<Partial<ProviderError>>({
+      kind: "TIMEOUT",
+      retryable: true,
+    });
+    expect(calls).toBe(1);
+  });
 });

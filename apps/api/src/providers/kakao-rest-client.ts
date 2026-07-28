@@ -122,9 +122,15 @@ export class KakaoRestClient {
           throw error;
         }
         if (options.signal?.aborted === true) {
+          const timedOut =
+            options.signal.reason instanceof DOMException &&
+            options.signal.reason.name === "TimeoutError";
           throw new ProviderError({
-            kind: "ABORTED",
-            message: "Kakao 요청이 취소되었습니다.",
+            kind: timedOut ? "TIMEOUT" : "ABORTED",
+            message: timedOut
+              ? "Kakao 요청 시간이 초과되었습니다."
+              : "Kakao 요청이 취소되었습니다.",
+            retryable: timedOut,
             cause: error,
           });
         }
