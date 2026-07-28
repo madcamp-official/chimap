@@ -147,21 +147,31 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   const busLegs = page.locator(".bus-leg-meta");
   await expect.poll(() => busLegs.count()).toBeGreaterThan(0);
   if (process.env.E2E_REQUIRE_NAVER_MAP === "1") {
-    await expect(page.locator(".map-marker-boarding")).toHaveCount(1);
+    await expect(page.locator(".map-marker-origin")).toHaveCount(1);
     await expect(page.locator(".map-marker-transfer")).toHaveCount(
       balancedRecommendation?.transferCount ?? 0,
     );
-    await expect(page.locator(".map-marker-alighting")).toHaveCount(1);
+    await expect(page.locator(".map-marker-destination")).toHaveCount(1);
+    await expect(page.locator(".map-marker-boarding")).toHaveCount(0);
+    await expect(page.locator(".map-marker-alighting")).toHaveCount(0);
     await expect(page.locator(".map-marker-stop")).toHaveCount(0);
+  } else {
+    const preview = page.locator(".route-preview-svg");
+    await expect(preview.locator("[data-marker-role='origin']")).toHaveCount(1);
+    await expect(preview.locator("[data-marker-role='transfer']")).toHaveCount(
+      balancedRecommendation?.transferCount ?? 0,
+    );
+    await expect(preview.locator("[data-marker-role='destination']")).toHaveCount(1);
   }
   await expect.poll(() => vehicleResponseCount).toBeGreaterThan(0);
   await page.waitForTimeout(250);
   const vehicleMarkers = page.locator(".map-marker-vehicle");
   for (const marker of await vehicleMarkers.all()) {
-    await expect(marker.locator("img")).toHaveAttribute(
-      "src",
-      /bus-(left|right).*\.png/u,
-    );
+    await expect(marker.locator(".map-marker-vehicle-body")).toHaveCount(1);
+    const heading = Number(await marker.getAttribute("data-heading"));
+    expect(Number.isFinite(heading)).toBe(true);
+    expect(heading).toBeGreaterThanOrEqual(0);
+    expect(heading).toBeLessThan(360);
     await expect(marker.locator(".map-marker-vehicle-number")).toHaveCSS(
       "color",
       "rgb(255, 255, 255)",

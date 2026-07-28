@@ -4,11 +4,13 @@ import type {
   Recommendation,
   RouteLeg,
 } from "@chimap/contracts";
+import {
+  buildJourneyMapMarkers,
+  resolveVehicleHeading,
+} from "@chimap/app-core";
 import { AlertTriangle, Map as MapIcon, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import busLeftUrl from "../assets/bus-left.png";
-import busRightUrl from "../assets/bus-right.png";
 import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
 
 type NaverLatLng = object;
@@ -93,16 +95,6 @@ const NAVER_SDK_SCRIPT_ID = "chimap-naver-maps-sdk";
 const NAVER_SDK_TIMEOUT_MS = 12_000;
 const NAVER_SDK_AUTH_SETTLE_MS = 500;
 const DEFAULT_CENTER: Coordinate = { lng: 127.3845, lat: 36.3504 };
-const VEHICLE_LONGITUDE_MOVEMENT_THRESHOLD = 0.00002;
-
-export type VehicleMarkerDirection = "left" | "right";
-
-type TransitMarker = {
-  coordinate: Coordinate;
-  label: "탑승" | "환승" | "하차";
-  tone: "boarding" | "transfer" | "alighting";
-  title: string;
-};
 
 let sdkPromise: Promise<NaverMapsApi> | undefined;
 let sdkAuthenticationFailed = false;
@@ -240,86 +232,60 @@ function legStyle(leg: RouteLeg): {
 
 export function vehicleMarkerIdentity(
   vehicle: RelevantVehiclePosition,
-  index: number,
 ): string {
   return [
     vehicle.cityCode,
     vehicle.routeId,
-    vehicle.vehicleNo ?? vehicle.nodeId ?? `position-${index}`,
+    vehicle.vehicleNo ?? vehicle.displayReason,
   ].join(":");
 }
 
-export function resolveVehicleMarkerDirection(
-  previousLongitude: number | undefined,
-  currentLongitude: number,
-  previousDirection: VehicleMarkerDirection | undefined,
-  fallbackDirection: VehicleMarkerDirection,
-): VehicleMarkerDirection {
-  if (previousLongitude === undefined) {
-    return previousDirection ?? fallbackDirection;
-  }
-  const movement = currentLongitude - previousLongitude;
-  if (Math.abs(movement) < VEHICLE_LONGITUDE_MOVEMENT_THRESHOLD) {
-    return previousDirection ?? fallbackDirection;
-  }
-  return movement > 0 ? "right" : "left";
-}
-
-function routeVehicleDirection(
+function routeVehicleSegments(
   route: Recommendation | undefined,
   vehicle: RelevantVehiclePosition,
-): VehicleMarkerDirection {
-  const leg = route?.legs.find(
-    (candidate) =>
-      candidate.mode === "BUS" && candidate.bus?.routeId === vehicle.routeId,
-  );
-  const first = leg?.coordinates[0];
-  const last = leg?.coordinates.at(-1);
-  return first !== undefined && last !== undefined && last.lng < first.lng
-    ? "left"
-    : "right";
+): Coordinate[][] {
+  return route?.legs.flatMap((leg) =>
+    leg.mode === "BUS" && leg.bus?.routeId === vehicle.routeId
+      ? [leg.coordinates]
+      : [],
+  ) ?? [];
 }
 
-function vehicleImageUrl(direction: VehicleMarkerDirection): string {
-  return direction === "left" ? busLeftUrl : busRightUrl;
-}
-
-function useVehicleMarkerDirections(
+function useVehicleMarkerHeadings(
   vehiclePositions: RelevantVehiclePosition[],
   selectedRoute: Recommendation | undefined,
-): Map<string, VehicleMarkerDirection> {
-  const previousLongitudesRef = useRef(new Map<string, number>());
-  const previousDirectionsRef = useRef(
-    new Map<string, VehicleMarkerDirection>(),
-  );
-  const directions = useMemo(() => {
-    const resolved = new Map<string, VehicleMarkerDirection>();
-    vehiclePositions.forEach((vehicle, index) => {
-      const identity = vehicleMarkerIdentity(vehicle, index);
+): Map<string, number> {
+  const previousPositionsRef = useRef(new Map<string, Coordinate>());
+  const previousHeadingsRef = useRef(new Map<string, number>());
+  const headings = useMemo(() => {
+    const resolved = new Map<string, number>();
+    vehiclePositions.forEach((vehicle) => {
+      const identity = vehicleMarkerIdentity(vehicle);
+      const current = { lat: vehicle.latitude, lng: vehicle.longitude };
       resolved.set(
         identity,
-        resolveVehicleMarkerDirection(
-          previousLongitudesRef.current.get(identity),
-          vehicle.longitude,
-          previousDirectionsRef.current.get(identity),
-          routeVehicleDirection(selectedRoute, vehicle),
-        ),
+        resolveVehicleHeading({
+          current,
+          previous: previousPositionsRef.current.get(identity),
+          previousHeading: previousHeadingsRef.current.get(identity),
+          routeSegments: routeVehicleSegments(selectedRoute, vehicle),
+        }),
       );
     });
     return resolved;
   }, [selectedRoute, vehiclePositions]);
 
   useEffect(() => {
-    previousLongitudesRef.current = new Map(
-      vehiclePositions.map((vehicle, index) => [
-        vehicleMarkerIdentity(vehicle, index),
-        vehicle.longitude,
+    previousPositionsRef.current = new Map(
+      vehiclePositions.map((vehicle) => [
+        vehicleMarkerIdentity(vehicle),
+        { lat: vehicle.latitude, lng: vehicle.longitude },
       ]),
     );
-    previousDirectionsRef.current = directions;
-  }, [directions, vehiclePositions]);
+    previousHeadingsRef.current = headings;
+  }, [headings, vehiclePositions]);
 
-  return directions;
+  return headings;
 }
 
 function createMarkerElement(
@@ -327,29 +293,37 @@ function createMarkerElement(
   tone:
     | "origin"
     | "destination"
-    | "boarding"
     | "transfer"
-    | "alighting"
     | "vehicle",
   title?: string,
-  vehicleDirection: VehicleMarkerDirection = "right",
+  vehicleHeading = 0,
 ): { element: HTMLElement; width: number; height: number } {
   if (tone === "vehicle") {
     const element = document.createElement("div");
-    element.className = `map-marker map-marker-vehicle is-${vehicleDirection}`;
-    element.dataset.direction = vehicleDirection;
+    element.className = "map-marker map-marker-vehicle";
+    element.dataset.heading = vehicleHeading.toFixed(1);
     element.title = title ?? label;
     element.setAttribute("role", "img");
     element.setAttribute("aria-label", title ?? label);
-    const image = document.createElement("img");
-    image.src = vehicleImageUrl(vehicleDirection);
-    image.alt = "";
+    const body = document.createElement("span");
+    body.className = "map-marker-vehicle-body";
+    body.style.transform = `rotate(${vehicleHeading}deg)`;
+    for (const className of [
+      "front-window",
+      "rear-window",
+      "left-wheels",
+      "right-wheels",
+    ]) {
+      const part = document.createElement("span");
+      part.className = `map-marker-vehicle-${className}`;
+      body.append(part);
+    }
     const routeNumber = document.createElement("span");
     routeNumber.className = "map-marker-vehicle-number";
     routeNumber.textContent = label;
     routeNumber.style.fontSize = `${Math.max(5, Math.min(12, 38 / Math.max(1, label.length)))}px`;
     routeNumber.style.transform = `scaleX(${Math.min(1, 4.5 / Math.max(1, label.length))})`;
-    element.append(image, routeNumber);
+    element.append(body, routeNumber);
     return { element, width: 60, height: 60 };
   }
   const width = Math.max(48, Math.min(96, label.length * 13 + 22));
@@ -375,73 +349,6 @@ function vehicleMarkerTitle(vehicle: RelevantVehiclePosition): string {
   return `${vehicle.routeNo}번 · 방금 승차 정류장을 지난 버스${vehicleLabel}`;
 }
 
-export function transitMarkers(
-  route: Recommendation | undefined,
-): TransitMarker[] {
-  const transitLegs =
-    route?.legs.flatMap((leg) => {
-      if (leg.mode === "BUS" && leg.bus !== undefined) {
-        return [{
-          start: {
-            lat: leg.bus.boardingStop.latitude,
-            lng: leg.bus.boardingStop.longitude,
-          },
-          end: {
-            lat: leg.bus.alightingStop.latitude,
-            lng: leg.bus.alightingStop.longitude,
-          },
-          startName: leg.bus.boardingStop.name,
-          endName: leg.bus.alightingStop.name,
-          label: `${leg.bus.routeNo}번`,
-        }];
-      }
-      if (leg.mode === "SUBWAY") {
-        const start = leg.coordinates[0];
-        const end = leg.coordinates.at(-1);
-        if (start !== undefined && end !== undefined) {
-          return [{
-            start,
-            end,
-            startName: leg.stops?.[0] ?? "지하철역",
-            endName: leg.stops?.at(-1) ?? "지하철역",
-            label: leg.name ?? "지하철",
-          }];
-        }
-      }
-      return [];
-    }) ?? [];
-  if (transitLegs.length === 0) {
-    return [];
-  }
-  const first = transitLegs[0]!;
-  const last = transitLegs.at(-1)!;
-  const markers: TransitMarker[] = [
-    {
-      coordinate: first.start,
-      label: "탑승",
-      tone: "boarding",
-      title: `${first.startName} · ${first.label} 탑승`,
-    },
-  ];
-  for (let index = 1; index < transitLegs.length; index += 1) {
-    const previous = transitLegs[index - 1]!;
-    const current = transitLegs[index]!;
-    markers.push({
-      coordinate: current.start,
-      label: "환승",
-      tone: "transfer",
-      title: `${current.startName} · ${previous.label}에서 ${current.label}으로 환승`,
-    });
-  }
-  markers.push({
-    coordinate: last.end,
-    label: "하차",
-    tone: "alighting",
-    title: `${last.endName} · ${last.label} 하차`,
-  });
-  return markers;
-}
-
 function RoutePreview({
   recommendations,
   selectedRouteId,
@@ -449,7 +356,7 @@ function RoutePreview({
   origin,
   destination,
   vehiclePositions,
-  vehicleDirections,
+  vehicleHeadings,
 }: {
   recommendations: Recommendation[];
   selectedRouteId: string | undefined;
@@ -457,7 +364,7 @@ function RoutePreview({
   origin: Place | undefined;
   destination: Place | undefined;
   vehiclePositions: RelevantVehiclePosition[];
-  vehicleDirections: Map<string, VehicleMarkerDirection>;
+  vehicleHeadings: Map<string, number>;
 }) {
   const selectedRoute =
     recommendations.find((route) => route.id === selectedRouteId) ??
@@ -560,38 +467,29 @@ function RoutePreview({
           );
         });
       })}
-      {origin === undefined ? null : (
-        <g transform={`translate(${geometry.project(origin.location).join(" ")})`}>
-          <circle r="9" fill="#2e6dd8" stroke="white" strokeWidth="4" />
-          <text x="12" y="4" className="preview-label">
-            출발
-          </text>
-        </g>
-      )}
-      {destination === undefined ? null : (
-        <g
-          transform={`translate(${geometry.project(destination.location).join(" ")})`}
-        >
-          <circle r="9" fill="#2a9864" stroke="white" strokeWidth="4" />
-          <text x="-12" y="-14" textAnchor="end" className="preview-label">
-            도착
-          </text>
-        </g>
-      )}
-      {transitMarkers(selectedRoute).map((marker) => {
+      {buildJourneyMapMarkers({
+        route: selectedRoute,
+        origin: origin?.location,
+        destination: destination?.location,
+        originName: origin?.name,
+        destinationName: destination?.name,
+      }).map((marker) => {
           const [x, y] = geometry.project(marker.coordinate);
           const fill =
-            marker.tone === "boarding"
-              ? "#2e6dd8"
-              : marker.tone === "transfer"
+            marker.role === "ORIGIN"
+              ? "#22a765"
+              : marker.role === "TRANSFER"
                 ? "#f47b35"
-                : "#7957b8";
+                : "#e54863";
           return (
             <g
-              key={`${marker.label}:${marker.coordinate.lat}:${marker.coordinate.lng}`}
+              key={marker.role === "TRANSFER"
+                ? `${marker.role}:${marker.coordinate.lat}:${marker.coordinate.lng}`
+                : marker.role}
               transform={`translate(${x} ${y})`}
+              data-marker-role={marker.role.toLowerCase()}
             >
-              <circle r="7" fill={fill} stroke="white" strokeWidth="2" />
+              <circle r="9" fill={fill} stroke="white" strokeWidth="4" />
               <text x="10" y="4" className="preview-label">
                 {marker.label}
               </text>
@@ -599,8 +497,8 @@ function RoutePreview({
           );
         })}
       {vehiclePositions.map((vehicle, index) => {
-        const identity = vehicleMarkerIdentity(vehicle, index);
-        const direction = vehicleDirections.get(identity) ?? "right";
+        const identity = vehicleMarkerIdentity(vehicle);
+        const heading = vehicleHeadings.get(identity) ?? 0;
         const [x, y] = geometry.project({
           lat: vehicle.latitude,
           lng: vehicle.longitude,
@@ -609,20 +507,24 @@ function RoutePreview({
           <g
             key={identity}
             transform={`translate(${x} ${y})`}
-            data-direction={direction}
+            data-heading={heading.toFixed(1)}
           >
             <title>{vehicleMarkerTitle(vehicle)}</title>
-            <image
-              href={vehicleImageUrl(direction)}
-              x="-24"
-              y="-34"
-              width="48"
-              height="48"
-              className="preview-vehicle-image"
-            />
+            <g
+              className="preview-vehicle-body"
+              transform={`rotate(${heading})`}
+            >
+              <rect x="-11" y="-22" width="22" height="44" rx="7" fill="#2e6dd8" stroke="#fff" strokeWidth="2" />
+              <rect x="-7" y="-17" width="14" height="6" rx="2" fill="#b9dcff" />
+              <rect x="-7" y="12" width="14" height="5" rx="2" fill="#153963" />
+              <rect x="-13" y="-11" width="3" height="9" rx="1.5" fill="#152334" />
+              <rect x="10" y="-11" width="3" height="9" rx="1.5" fill="#152334" />
+              <rect x="-13" y="5" width="3" height="9" rx="1.5" fill="#152334" />
+              <rect x="10" y="5" width="3" height="9" rx="1.5" fill="#152334" />
+            </g>
             <text
               x="0"
-              y="-12.5"
+              y="3"
               textAnchor="middle"
               fill="#fff"
               stroke="#123c48"
@@ -679,7 +581,7 @@ export function MapView({
   const selectedRoute =
     recommendations.find((route) => route.id === selectedRouteId) ??
     recommendations[0];
-  const vehicleDirections = useVehicleMarkerDirections(
+  const vehicleHeadings = useVehicleMarkerHeadings(
     vehiclePositions,
     selectedRoute,
   );
@@ -834,37 +736,21 @@ export function MapView({
         }
       }
 
-      const markerPoints: Array<{
-        coordinate: Coordinate;
-        label: string;
+      const markerPoints = buildJourneyMapMarkers({
+        route: selectedRoute,
+        origin: origin?.location,
+        destination: destination?.location,
+        originName: origin?.name,
+        destinationName: destination?.name,
+      }).map((marker) => ({
+        ...marker,
         tone:
-          | "origin"
-          | "destination"
-          | "boarding"
-          | "transfer"
-          | "alighting";
-        title?: string;
-      }> = [
-        ...(origin === undefined
-          ? []
-          : [
-              {
-                coordinate: origin.location,
-                label: "출발",
-                tone: "origin" as const,
-              },
-            ]),
-        ...(destination === undefined
-          ? []
-          : [
-              {
-                coordinate: destination.location,
-                label: "도착",
-                tone: "destination" as const,
-              },
-            ]),
-        ...transitMarkers(selectedRoute),
-      ];
+          marker.role === "ORIGIN"
+            ? "origin" as const
+            : marker.role === "TRANSFER"
+              ? "transfer" as const
+              : "destination" as const,
+      }));
       markerPoints.forEach((marker) => {
         const icon = createMarkerElement(marker.label, marker.tone, marker.title);
         overlays.push(
@@ -918,15 +804,15 @@ export function MapView({
     vehicleOverlaysRef.current.forEach(detachOverlay);
     const overlays: NaverOverlay[] = [];
     try {
-      vehiclePositions.forEach((vehicle, index) => {
-        const identity = vehicleMarkerIdentity(vehicle, index);
-        const direction = vehicleDirections.get(identity) ?? "right";
+      vehiclePositions.forEach((vehicle) => {
+        const identity = vehicleMarkerIdentity(vehicle);
+        const heading = vehicleHeadings.get(identity) ?? 0;
         const title = vehicleMarkerTitle(vehicle);
         const icon = createMarkerElement(
           vehicle.routeNo,
           "vehicle",
           title,
-          direction,
+          heading,
         );
         overlays.push(
           new maps.Marker({
@@ -957,7 +843,7 @@ export function MapView({
         vehicleOverlaysRef.current = [];
       }
     };
-  }, [status, vehicleDirections, vehiclePositions]);
+  }, [status, vehicleHeadings, vehiclePositions]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1034,7 +920,7 @@ export function MapView({
             origin={origin}
             destination={destination}
             vehiclePositions={vehiclePositions}
-            vehicleDirections={vehicleDirections}
+            vehicleHeadings={vehicleHeadings}
           />
           <div className="map-fallback-notice">
             <AlertTriangle aria-hidden="true" size={17} />
