@@ -1,4 +1,5 @@
 import type { AuthUser } from "@chimap/contracts";
+import type { Logger } from "pino";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
@@ -79,6 +80,7 @@ function testApp(
   auth: AuthServiceLike,
   mobileAuth: MobileAuthServiceLike = mobileAuthService(),
   environment: NodeJS.ProcessEnv = {},
+  logger?: Logger,
 ) {
   const config = loadConfig({
     NODE_ENV: "test",
@@ -105,6 +107,7 @@ function testApp(
   } as unknown as TransitRepository;
   return createApp({
     config,
+    ...(logger === undefined ? {} : { logger }),
     authService: auth,
     mobileAuthService: mobileAuth,
     transitService: { repository } as unknown as TransitService,
@@ -171,6 +174,37 @@ describe("카카오 로그인 HTTP 흐름", () => {
         appleEnabled: false,
       },
     });
+  });
+
+  it("검증된 mobile metadata만 request ID와 completion log에 연결한다", async () => {
+    const info = vi.fn();
+    const logger = { info } as unknown as Logger;
+    const response = await request(
+      testApp(authService(), mobileAuthService(), {}, logger),
+    )
+      .get("/api/v1/health?query=대전역&x=127.1&y=36.1")
+      .set("X-Client-Platform", "android")
+      .set("X-App-Version", "0.1.0")
+      .set("X-Contract-Version", "v1")
+      .set("Authorization", `Bearer ${"a".repeat(43)}`);
+
+    expect(response.status).toBe(200);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "request.completed",
+        requestId: response.headers["x-request-id"],
+        path: "/api/v1/health",
+        clientPlatform: "android",
+        appVersion: "0.1.0",
+        contractVersion: "v1",
+      }),
+    );
+    const completion = info.mock.calls.find(
+      ([entry]) => entry.event === "request.completed",
+    )?.[0];
+    expect(completion).not.toHaveProperty("query");
+    expect(completion).not.toHaveProperty("authorization");
+    expect(completion).not.toHaveProperty("coordinates");
   });
 
   it("부분 metadata header와 지원 종료된 mobile version을 거절한다", async () => {
