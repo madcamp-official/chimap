@@ -38,7 +38,15 @@ import {
 import { AppIcon } from "../../components/app-icon";
 import { requestCurrentLocation } from "../../platform/location/current-location";
 import { NativeRouteMap } from "../../platform/maps/native-route-map";
-import { stepsSource } from "../../platform/steps/steps-source";
+import {
+  openStepRecovery,
+  stepsSource,
+} from "../../platform/steps/steps-source";
+import {
+  StepSourceError,
+  type StepSourceErrorCode,
+  type StepSourceRecoveryAction,
+} from "../../platform/steps/steps-contract";
 import { chimapTheme } from "../../theme/chimap-theme";
 import { useMobileConfig } from "../api/mobile-config";
 import { reverseGeocode } from "../places/place-api";
@@ -70,6 +78,34 @@ import { useRouteStore } from "./route-store-context";
 
 function integer(value: string): number {
   return Number.parseInt(value.trim(), 10);
+}
+
+type HealthStatus = "reading" | "connected" | StepSourceErrorCode;
+
+function healthServiceName(): string {
+  return Platform.OS === "android" ? "Health Connect" : "HealthKit";
+}
+
+function healthStatusLabel(status: HealthStatus): string {
+  if (status === "reading") return "확인 중";
+  if (status === "connected") return "걸음 연동됨";
+  if (status === "PROVIDER_UPDATE_REQUIRED") return "업데이트 필요";
+  if (status === "PERMISSION_DENIED") return "걸음 접근 필요";
+  if (status === "READ_FAILED") return "다시 시도 필요";
+  return "사용할 수 없음";
+}
+
+function healthErrorMessage(error: StepSourceError): string {
+  if (error.code === "PROVIDER_UPDATE_REQUIRED") {
+    return "Health Connect를 설치하거나 최신 버전으로 업데이트해 주세요. 검색과 수동 걸음 입력은 계속 사용할 수 있습니다.";
+  }
+  if (error.code === "PERMISSION_DENIED") {
+    return `${healthServiceName()}에서 CHIMap의 걸음 읽기 권한을 허용해 주세요. 검색과 수동 걸음 입력은 계속 사용할 수 있습니다.`;
+  }
+  if (error.code === "UNAVAILABLE") {
+    return `${healthServiceName()}를 사용할 수 없습니다. 잠시 후 다시 시도하거나 걸음 수를 직접 입력해 주세요.`;
+  }
+  return `${healthServiceName()} 걸음 수를 읽지 못했습니다. 다시 시도하거나 걸음 수를 직접 입력해 주세요.`;
 }
 
 function RouteTracer() {
@@ -283,22 +319,26 @@ function AccountSheet({
   open,
   displayName,
   healthStatus,
+  recoveryAction,
   profile,
   refreshingSteps,
   onClose,
   onEditProfile,
   onRefreshSteps,
+  onRecoverSteps,
   onLogout,
   onDeleteAccount,
 }: {
   open: boolean;
   displayName: string;
-  healthStatus: "reading" | "connected" | "unavailable";
+  healthStatus: HealthStatus;
+  recoveryAction: StepSourceRecoveryAction | null;
   profile: SavedWalkingProfile;
   refreshingSteps: boolean;
   onClose(): void;
   onEditProfile(): void;
   onRefreshSteps(): Promise<void>;
+  onRecoverSteps(): Promise<void>;
   onLogout(): Promise<void>;
   onDeleteAccount(): Promise<void>;
 }) {
@@ -332,9 +372,9 @@ function AccountSheet({
               <Text style={styles.accountFactValue}>{profile.dailyGoalSteps.toLocaleString()}걸음</Text>
             </View>
             <View style={styles.accountFactRow}>
-              <Text style={styles.accountFactLabel}>HealthKit</Text>
+              <Text style={styles.accountFactLabel}>{healthServiceName()}</Text>
               <Text style={styles.accountFactValue}>
-                {healthStatus === "reading" ? "확인 중" : healthStatus === "connected" ? "걸음 연동됨" : "걸음 접근 필요"}
+                {healthStatusLabel(healthStatus)}
               </Text>
             </View>
           </View>
@@ -351,6 +391,21 @@ function AccountSheet({
             )}
             <Text style={styles.accountRefreshText}>현재 걸음 새로고침</Text>
           </Pressable>
+          {recoveryAction === "OPEN_PROVIDER_UPDATE" ||
+          recoveryAction === "OPEN_SETTINGS" ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void onRecoverSteps()}
+              style={styles.accountRefreshAction}
+            >
+              <AppIcon color={chimapTheme.teal} name="settings" size={18} />
+              <Text style={styles.accountRefreshText}>
+                {recoveryAction === "OPEN_PROVIDER_UPDATE"
+                  ? "Health Connect 설치·업데이트"
+                  : `${healthServiceName()} 설정 열기`}
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={() => {
@@ -699,7 +754,9 @@ export function PlannerScreen({
   const [activeRequestSavedAt, setActiveRequestSavedAt] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [readingSteps, setReadingSteps] = useState(false);
-  const [healthStatus, setHealthStatus] = useState<"reading" | "connected" | "unavailable">("reading");
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>("reading");
+  const [stepRecoveryAction, setStepRecoveryAction] =
+    useState<StepSourceRecoveryAction | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [warningsOpen, setWarningsOpen] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -754,20 +811,31 @@ export function PlannerScreen({
     setMessage(null);
   }, []);
 
-  const readSteps = useCallback(async () => {
+  const readSteps = useCallback(async (requestPermission = false) => {
     setReadingSteps(true);
     setHealthStatus("reading");
+    setStepRecoveryAction(null);
     setMessage(null);
     try {
-      const steps = await stepsSource.readTodaySteps();
+      const steps = await stepsSource.readTodaySteps({
+        now: new Date(),
+        requestPermission,
+      });
       setCurrentSteps(String(steps));
       setHealthStatus("connected");
       invalidateResult();
-    } catch {
-      setHealthStatus("unavailable");
-      setMessage(
-        "iPhone 건강 앱의 걸음을 읽지 못했어요. 설정에서 CHIMap의 건강 접근 권한을 확인한 뒤 다시 시도해 주세요.",
-      );
+    } catch (error) {
+      if (error instanceof StepSourceError) {
+        setHealthStatus(error.code);
+        setStepRecoveryAction(error.recoveryAction);
+        setMessage(healthErrorMessage(error));
+      } else {
+        setHealthStatus("READ_FAILED");
+        setStepRecoveryAction("RETRY");
+        setMessage(
+          `${healthServiceName()} 걸음 수를 읽지 못했습니다. 걸음 수를 직접 입력하거나 다시 시도해 주세요.`,
+        );
+      }
     } finally {
       setReadingSteps(false);
     }
@@ -883,7 +951,7 @@ export function PlannerScreen({
         setActiveHash(null);
         setActiveRequestSavedAt(null);
       }
-      void readSteps();
+      void readSteps(false);
     });
     return () => subscription.remove();
   }, [readSteps]);
@@ -893,7 +961,7 @@ export function PlannerScreen({
       return;
     }
     automaticStepRead.current = true;
-    void readSteps();
+    void readSteps(false);
   }, [hydrated, readSteps]);
 
   const selectedRoute = useMemo(() => {
@@ -991,7 +1059,9 @@ export function PlannerScreen({
       walkingMetric,
     });
     if (!parsed.success) {
-      setMessage("HealthKit 걸음 정보를 확인하지 못했습니다. 내 정보에서 다시 불러와 주세요.");
+      setMessage(
+        `${healthServiceName()} 걸음 정보를 확인하지 못했습니다. 내 정보에서 다시 불러오거나 직접 입력해 주세요.`,
+      );
       return;
     }
     setSubmitting(true);
@@ -1348,6 +1418,7 @@ export function PlannerScreen({
       <AccountSheet
         displayName={displayName}
         healthStatus={healthStatus}
+        recoveryAction={stepRecoveryAction}
         onClose={() => setAccountOpen(false)}
         onDeleteAccount={async () => {
           try {
@@ -1357,7 +1428,12 @@ export function PlannerScreen({
           }
         }}
         onEditProfile={onEditProfile}
-        onRefreshSteps={readSteps}
+        onRefreshSteps={() => readSteps(true)}
+        onRecoverSteps={async () => {
+          if (stepRecoveryAction !== null) {
+            await openStepRecovery(stepRecoveryAction);
+          }
+        }}
         onLogout={async () => {
           try {
             await onLogout();

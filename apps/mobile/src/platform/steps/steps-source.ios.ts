@@ -3,22 +3,42 @@ import {
   queryStatisticsForQuantity,
   requestAuthorization,
 } from "@kingstinct/react-native-healthkit";
+import { Linking } from "react-native";
 
 import {
   startOfLocalDay,
   StepSourceError,
+  type ReadTodayStepsOptions,
   type StepsSource,
+  type StepSourceRecoveryAction,
 } from "./steps-contract";
 
 const stepType = "HKQuantityTypeIdentifierStepCount" as const;
 
+export async function openStepRecovery(
+  action: StepSourceRecoveryAction,
+): Promise<void> {
+  if (action === "OPEN_SETTINGS") {
+    await Linking.openSettings();
+  }
+}
+
 export class HealthKitStepsSource implements StepsSource {
-  public async readTodaySteps(now = new Date()): Promise<number> {
+  public async readTodaySteps(
+    options: ReadTodayStepsOptions = {},
+  ): Promise<number> {
+    const now = options.now ?? new Date();
     try {
       if (!(await isHealthDataAvailable())) {
-        throw new StepSourceError("UNAVAILABLE", "HealthKit을 사용할 수 없습니다.");
+        throw new StepSourceError(
+          "UNAVAILABLE",
+          "HealthKit을 사용할 수 없습니다.",
+          { recoveryAction: "RETRY" },
+        );
       }
-      await requestAuthorization({ toRead: [stepType] });
+      if (options.requestPermission === true) {
+        await requestAuthorization({ toRead: [stepType] });
+      }
       const result = await queryStatisticsForQuantity(
         stepType,
         ["cumulativeSum"],
@@ -39,9 +59,11 @@ export class HealthKitStepsSource implements StepsSource {
       if (error instanceof StepSourceError) {
         throw error;
       }
-      throw new StepSourceError("READ_FAILED", "HealthKit 걸음 수를 읽지 못했습니다.", {
-        cause: error,
-      });
+      throw new StepSourceError(
+        "READ_FAILED",
+        "HealthKit 걸음 수를 읽지 못했습니다.",
+        { cause: error, recoveryAction: "RETRY" },
+      );
     }
   }
 }

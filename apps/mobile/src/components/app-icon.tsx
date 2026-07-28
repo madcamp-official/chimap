@@ -11,6 +11,7 @@ export type AppIconName =
   | "person"
   | "refresh"
   | "search"
+  | "settings"
   | "shield"
   | "swap";
 
@@ -24,6 +25,7 @@ const symbols: Record<AppIconName, SFSymbol> = {
   person: "person.crop.circle",
   refresh: "arrow.clockwise",
   search: "magnifyingglass",
+  settings: "gearshape.fill",
   shield: "lock.shield.fill",
   swap: "arrow.up.arrow.down",
 };
@@ -38,6 +40,7 @@ const fallbacks: Record<AppIconName, string> = {
   person: "●",
   refresh: "↻",
   search: "⌕",
+  settings: "⚙",
   shield: "●",
   swap: "↕",
 };

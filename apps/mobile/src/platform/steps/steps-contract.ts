@@ -1,44 +1,45 @@
 export type StepSourceErrorCode =
   | "UNAVAILABLE"
+  | "PROVIDER_UPDATE_REQUIRED"
   | "PERMISSION_DENIED"
   | "READ_FAILED";
 
+export type StepSourceRecoveryAction =
+  | "OPEN_PROVIDER_UPDATE"
+  | "OPEN_SETTINGS"
+  | "RETRY";
+
+export type StepSourceErrorOptions = ErrorOptions & {
+  recoveryAction: StepSourceRecoveryAction;
+};
+
 export class StepSourceError extends Error {
+  public readonly recoveryAction: StepSourceRecoveryAction;
+
   public constructor(
     public readonly code: StepSourceErrorCode,
     message: string,
-    options?: ErrorOptions,
+    options: StepSourceErrorOptions,
   ) {
-    super(message, options);
+    super(message, { cause: options.cause });
     this.name = "StepSourceError";
+    this.recoveryAction = options.recoveryAction;
   }
 }
 
-export type StepRecord = { count?: number | null };
-
-export function sumStepRecords(
-  records: readonly StepRecord[] | null | undefined,
-): number {
-  if (records === null || records === undefined || records.length === 0) {
-    return 0;
-  }
-  return Math.max(
-    0,
-    Math.round(
-      records.reduce(
-        (total, record) =>
-          total +
-          (typeof record.count === "number" && Number.isFinite(record.count)
-            ? record.count
-            : 0),
-        0,
-      ),
-    ),
-  );
+export function normalizeAggregatedSteps(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : 0;
 }
+
+export type ReadTodayStepsOptions = {
+  now?: Date;
+  requestPermission?: boolean;
+};
 
 export interface StepsSource {
-  readTodaySteps(now?: Date): Promise<number>;
+  readTodaySteps(options?: ReadTodayStepsOptions): Promise<number>;
 }
 
 export function startOfLocalDay(now: Date): Date {

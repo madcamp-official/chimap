@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -10,8 +11,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppIcon } from "../components/app-icon";
 import { useMobileConfig } from "../features/api/mobile-config";
-import { apiBaseUrl } from "../features/api/runtime-config";
-import { kakaoLoginErrorMessage } from "../features/auth/kakao-login-error";
+import {
+  apiBaseUrl,
+  runtimeAppEnvironment,
+  runtimeApplicationId,
+} from "../features/api/runtime-config";
+import {
+  kakaoLoginErrorCode,
+  kakaoLoginErrorMessage,
+} from "../features/auth/kakao-login-error";
 import { MobileApiError } from "../features/auth/mobile-api-error";
 import { useMobileSession } from "../features/auth/mobile-session";
 import { WalkingProfileScreen } from "../features/profile/walking-profile-screen";
@@ -43,12 +51,17 @@ function KakaoLoginScreen({ message }: { message: string | null }) {
     prepareKakaoLogin();
 
     let accessToken: string;
+    const platform = Platform.OS === "android" ? "android" : "ios";
+    const errorContext = {
+      platform,
+      environment: runtimeAppEnvironment(),
+      applicationId: runtimeApplicationId(platform),
+    } as const;
     try {
       accessToken = await requestKakaoAccessToken();
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "알 수 없는 오류";
-      console.error(`[CHIMap Kakao] native login failed: ${message}`);
-      setError(kakaoLoginErrorMessage(caught));
+      console.error(`[CHIMap Kakao] code=${kakaoLoginErrorCode(caught)}`);
+      setError(kakaoLoginErrorMessage(caught, errorContext));
       setWorking(false);
       return;
     }
@@ -58,12 +71,13 @@ function KakaoLoginScreen({ message }: { message: string | null }) {
     } catch (caught) {
       if (caught instanceof MobileApiError) {
         console.error(
-          `[CHIMap auth] ${caught.code} status=${caught.status ?? "unknown"} requestId=${caught.requestId ?? "unknown"}`,
+          `[CHIMap auth] code=${caught.code} requestId=${caught.requestId ?? "unknown"}`,
         );
-        setError(kakaoLoginErrorMessage(caught));
+        setError(kakaoLoginErrorMessage(caught, errorContext));
       } else {
-        const message = caught instanceof Error ? caught.message : "알 수 없는 오류";
-        console.error(`[CHIMap auth] session completion failed: ${message}`);
+        console.error(
+          "[CHIMap auth] code=SESSION_COMPLETION_FAILED requestId=unknown",
+        );
         setError(
           "카카오 인증은 완료했지만 앱 세션을 저장하지 못했습니다. 앱을 다시 열어 시도해 주세요.",
         );

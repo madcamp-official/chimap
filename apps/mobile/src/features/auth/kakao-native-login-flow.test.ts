@@ -18,18 +18,30 @@ describe("Kakao native login flow", () => {
     expect(accountLogin).not.toHaveBeenCalled();
   });
 
-  it("falls back to Kakao Account after a non-cancellation native failure", async () => {
+  it.each(["native callback failed", "KakaoTalk hand-off failed"])(
+    "falls back after a recoverable native failure: %s",
+    async (nativeMessage) => {
+      await expect(
+        requestKakaoAccessTokenWithFallback({
+          preferredLogin: async () => {
+            throw new Error(nativeMessage);
+          },
+          accountLogin: async () => ({ accessToken: "account-access-token" }),
+        }),
+      ).resolves.toBe("account-access-token");
+    },
+  );
+
+  it("falls back when the native wrapper returns an empty token", async () => {
     await expect(
       requestKakaoAccessTokenWithFallback({
-        preferredLogin: async () => {
-          throw new Error("native callback failed");
-        },
+        preferredLogin: async () => ({ accessToken: "" }),
         accountLogin: async () => ({ accessToken: "account-access-token" }),
       }),
     ).resolves.toBe("account-access-token");
   });
 
-  it("does not reopen login after the user cancels KakaoTalk", async () => {
+  it("does not reopen login after cancellation", async () => {
     const accountLogin = vi.fn();
 
     await expect(
@@ -39,11 +51,31 @@ describe("Kakao native login flow", () => {
         },
         accountLogin,
       }),
-    ).rejects.toThrow("cancelled");
+    ).rejects.toMatchObject({ code: "CANCELLED" });
     expect(accountLogin).not.toHaveBeenCalled();
   });
 
-  it("surfaces account fallback cancellation as a cancellation", async () => {
+  it.each([
+    ["KOE009 native origin mismatch", "CONFIGURATION_ERROR"],
+    ["Android key hash mismatch", "CONFIGURATION_ERROR"],
+    ["HTTP 401 unauthorized", "AUTHORIZATION_REJECTED"],
+    ["HTTP 403 forbidden", "AUTHORIZATION_REJECTED"],
+    ["opaque SDK failure", "NATIVE_LOGIN_FAILED"],
+  ])("does not fall back for %s", async (nativeMessage, code) => {
+    const accountLogin = vi.fn();
+
+    await expect(
+      requestKakaoAccessTokenWithFallback({
+        preferredLogin: async () => {
+          throw new Error(nativeMessage);
+        },
+        accountLogin,
+      }),
+    ).rejects.toMatchObject({ code });
+    expect(accountLogin).not.toHaveBeenCalled();
+  });
+
+  it("classifies fallback cancellation without exposing SDK text", async () => {
     await expect(
       requestKakaoAccessTokenWithFallback({
         preferredLogin: async () => {
@@ -53,22 +85,10 @@ describe("Kakao native login flow", () => {
           throw new Error("사용자가 취소했습니다");
         },
       }),
-    ).rejects.toThrow("취소");
-  });
-
-  it("keeps both SDK failures for device diagnostics", async () => {
-    await expect(
-      requestKakaoAccessTokenWithFallback({
-        preferredLogin: async () => {
-          throw new Error("KOE009 native origin mismatch");
-        },
-        accountLogin: async () => {
-          throw new Error("account authorization failed");
-        },
-      }),
-    ).rejects.toThrow(
-      "Kakao native login failed: KOE009 native origin mismatch; Kakao account fallback failed: account authorization failed",
-    );
+    ).rejects.toMatchObject({
+      code: "CANCELLED",
+      message: "Kakao login failed (CANCELLED)",
+    });
   });
 
   it("recognizes localized cancellation messages", () => {
