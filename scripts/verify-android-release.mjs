@@ -161,6 +161,12 @@ function verifyAabManifest(manifest, apkVersionCode) {
   return versionCode;
 }
 
+function verifyAabConfig(config) {
+  if (!config.includes("PAGE_ALIGNMENT_16K")) {
+    throw new Error("Release AAB must request 16KB ZIP page alignment.");
+  }
+}
+
 function verifyPermissions(permissions, label) {
   for (const required of [
     "android.permission.ACCESS_COARSE_LOCATION",
@@ -314,12 +320,16 @@ if (aabOnly && !hasBundletool) {
     "bundletool is required for --aab-only verification. Install it or set BUNDLETOOL.",
   );
 }
-const aabVersionCode = hasBundletool
-  ? verifyAabManifest(
-      run(bundletoolCommand, ["dump", "manifest", `--bundle=${aabPath}`]),
-      apkVersionCode,
-    )
-  : null;
+let aabVersionCode = null;
+if (hasBundletool) {
+  aabVersionCode = verifyAabManifest(
+    run(bundletoolCommand, ["dump", "manifest", `--bundle=${aabPath}`]),
+    apkVersionCode,
+  );
+  verifyAabConfig(
+    run(bundletoolCommand, ["dump", "config", `--bundle=${aabPath}`]),
+  );
+}
 
 const extractionRoot = await mkdtemp(join(tmpdir(), "chimap-android-release-"));
 try {
@@ -352,7 +362,16 @@ try {
   ) {
     throw new Error("Android release artifacts do not contain arm64-v8a libraries.");
   }
-  await verifyElfAlignment(readElf, libraries);
+  // Android's 16KB compatibility requirement applies to 64-bit devices. The
+  // official checker reports arm64-v8a and x86_64 libraries; 32-bit ABIs keep
+  // their platform-specific alignment and must not fail this release gate.
+  const sixtyFourBitLibraries = libraries.filter(
+    (file) =>
+      file.includes("/arm64-v8a/") ||
+      file.includes("/arm64_v8a/") ||
+      file.includes("/x86_64/"),
+  );
+  await verifyElfAlignment(readElf, sixtyFourBitLibraries);
   await verifyNoSecrets(apkRoot === null ? [aabRoot] : [apkRoot, aabRoot]);
 } finally {
   await rm(extractionRoot, { recursive: true, force: true });

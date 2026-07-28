@@ -175,8 +175,10 @@ node scripts/verify-android-release.mjs
 ```
 
 검사 범위는 application ID, versionCode, min/target SDK, release debuggable 여부,
-Manifest 권한, arm64 포함, 모든 `.so`의 ELF LOAD 16KB 정렬, APK
-`zipalign -P 16`, forbidden permission과 server secret 부재입니다.
+Manifest 권한, arm64 포함, `arm64-v8a`/`x86_64` `.so`의 ELF LOAD 16KB 정렬,
+AAB `PAGE_ALIGNMENT_16K`, APK `zipalign -P 16`, forbidden permission과 server
+secret 부재입니다. Android의 16KB Play gate는 64비트 기기 대상이므로 32비트
+`armeabi-v7a`/`x86` ELF 정렬은 이 판정에 포함하지 않습니다.
 
 EAS에서 내려받은 AAB는 bundletool을 사용해 단독으로 같은 manifest/ELF/secret
 검사를 실행합니다. EAS build 상세의 versionCode를 반드시 명시합니다.
