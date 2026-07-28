@@ -8,18 +8,6 @@
     "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --navy: #123c48;
-  --navy-strong: #082d37;
-  --teal: #1d6c68;
-  --orange: #f47b35;
-  --green: #2a9864;
-  --purple: #7957b8;
-  --bus-blue: #2e6dd8;
-  --ink: #173137;
-  --muted: #647276;
-  --line: #dfe3de;
-  --paper: #fffef9;
-  --canvas: #f6f4ee;
   --shadow: 0 14px 45px rgb(25 52 58 / 13%);
 }
 
@@ -2673,13 +2661,13 @@ summary:focus-visible,
 }
 
 .realtime-badge {
-  color: #096343;
-  background: #dff5ea;
+  color: var(--status-realtime-text);
+  background: var(--status-realtime-surface);
 }
 
 .estimate-badge {
-  color: #825016;
-  background: #fff0d4;
+  color: var(--status-estimated-text);
+  background: var(--status-estimated-surface);
 }
 
 .low-floor-badge {

@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AppIcon } from "../components/app-icon";
 import { useMobileConfig } from "../features/api/mobile-config";
 import { apiBaseUrl } from "../features/api/runtime-config";
 import { kakaoLoginErrorMessage } from "../features/auth/kakao-login-error";
@@ -78,7 +79,7 @@ function KakaoLoginScreen({ message }: { message: string | null }) {
         <View style={styles.orbitLarge} />
         <View style={styles.orbitSmall} />
         <View style={styles.loginBrandMark}>
-          <Text style={styles.loginBrandArrow}>↗</Text>
+          <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={34} />
         </View>
         <Text style={styles.loginBrand}>CHIMap</Text>
         <Text style={styles.loginTagline}>가는 길을 더 건강하게</Text>
@@ -231,7 +232,6 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     backgroundColor: "rgba(255,255,255,0.14)",
   },
-  loginBrandArrow: { color: chimapTheme.navyStrong, fontSize: 34, fontWeight: "900" },
   loginBrand: { color: chimapTheme.navyStrong, fontSize: 54, fontWeight: "900", letterSpacing: -2 },
   loginTagline: { marginTop: 8, color: chimapTheme.navyStrong, fontSize: 14, fontWeight: "800" },
   loginSheet: {

@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AppIcon } from "../../components/app-icon";
 import { chimapTheme } from "../../theme/chimap-theme";
 
 const numberInputAccessoryId = "chimap-profile-number-inputs";
@@ -117,6 +118,10 @@ export function WalkingProfileScreen({
     profile === null
       ? null
       : estimatePersonalizedStepLengthMeters(profile, currentYear);
+  const bodyMassIndex =
+    profile === null
+      ? null
+      : profile.weightKg / Math.pow(profile.heightCm / 100, 2);
 
   const save = async () => {
     if (profile === null || !goalValid) {
@@ -147,7 +152,7 @@ export function WalkingProfileScreen({
         >
           <View style={styles.brandRow}>
             <View style={styles.brandMark}>
-              <Text style={styles.brandMarkText}>↗</Text>
+              <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={25} />
             </View>
             <View>
               <Text style={styles.brand}>CHIMap</Text>
@@ -238,10 +243,20 @@ export function WalkingProfileScreen({
               </Text>
             </View>
 
-            <Text style={styles.privacy}>
-              🔒 신체정보는 이 기기에만 저장되며 서버에는 계산된 한 걸음 길이와
-              걸음 수만 전송됩니다.
-            </Text>
+            {bodyMassIndex !== null && bodyMassIndex >= 30 ? (
+              <Text accessibilityRole="alert" style={styles.scopeWarning}>
+                적용 연구는 BMI 30 미만의 건강한 성인을 대상으로 했으므로 현재
+                추정값의 오차가 더 클 수 있습니다.
+              </Text>
+            ) : null}
+
+            <View style={styles.privacyRow}>
+              <AppIcon color={chimapTheme.teal} name="shield" size={16} />
+              <Text style={styles.privacy}>
+                신체정보는 이 기기에만 저장되며 서버에는 계산된 한 걸음 길이와
+                현재·목표 걸음만 전송됩니다.
+              </Text>
+            </View>
           </View>
 
           {message === null ? null : (
@@ -298,7 +313,6 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: chimapTheme.orange,
   },
-  brandMarkText: { color: chimapTheme.navyStrong, fontSize: 25, fontWeight: "900" },
   brand: { color: chimapTheme.navyStrong, fontSize: 22, fontWeight: "900" },
   brandTagline: { color: chimapTheme.muted, fontSize: 12 },
   heading: { gap: 7, marginTop: 8 },
@@ -358,12 +372,14 @@ const styles = StyleSheet.create({
     gap: 5,
     padding: 16,
     borderRadius: 16,
-    backgroundColor: "#EAF4EF",
+    backgroundColor: chimapTheme.personalizationSurface,
   },
   estimateLabel: { color: chimapTheme.teal, fontSize: 12, fontWeight: "800" },
   estimateValue: { color: chimapTheme.navyStrong, fontSize: 26, fontWeight: "900" },
   estimateNote: { color: chimapTheme.muted, fontSize: 11, lineHeight: 16 },
-  privacy: { color: chimapTheme.muted, fontSize: 11, lineHeight: 17 },
+  scopeWarning: { padding: 12, borderRadius: 12, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 11, lineHeight: 17 },
+  privacyRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  privacy: { minWidth: 0, flex: 1, color: chimapTheme.muted, fontSize: 11, lineHeight: 17 },
   error: { color: chimapTheme.danger, fontSize: 13, lineHeight: 19 },
   primaryButton: {
     minHeight: 54,
@@ -383,7 +399,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: chimapTheme.line,
-    backgroundColor: "#F1F2F3",
+    backgroundColor: chimapTheme.keyboardSurface,
   },
   inputAccessoryDone: { color: chimapTheme.teal, fontSize: 16, fontWeight: "800" },
 });

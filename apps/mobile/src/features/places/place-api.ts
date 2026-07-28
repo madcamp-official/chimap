@@ -39,26 +39,31 @@ export async function searchPlaces(input: {
 export async function reverseGeocode(input: {
   apiBaseUrl: string;
   coordinate: Coordinate;
+  fallbackName?: string;
+  signal?: AbortSignal;
 }): Promise<Place> {
   const url = new URL("/api/v1/places/reverse", input.apiBaseUrl);
   url.searchParams.set("x", String(input.coordinate.lng));
   url.searchParams.set("y", String(input.coordinate.lat));
   const response = await fetchWithTimeout(
     url,
-    { headers: mobileClientHeaders() },
+    {
+      headers: mobileClientHeaders(),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    },
     8_000,
   );
   if (!response.ok) {
-    throw new Error("현재 위치의 주소를 찾지 못했습니다.");
+    throw new Error(`${input.fallbackName ?? "선택한 위치"}의 주소를 찾지 못했습니다.`);
   }
   const place = reverseGeocodeResponseSchema.parse(await response.json()).place;
   return (
     place ?? {
       id: `coordinate:${input.coordinate.lat},${input.coordinate.lng}`,
-      name: "현재 위치",
+      name: input.fallbackName ?? "선택한 위치",
       address: "",
       roadAddress: "",
-      category: "현재 위치",
+      category: input.fallbackName ?? "선택한 위치",
       location: input.coordinate,
     }
   );

@@ -11,7 +11,15 @@ import {
 } from "react-native";
 
 import { chimapTheme } from "../../theme/chimap-theme";
+import { AppIcon } from "../../components/app-icon";
 import { searchPlaces } from "./place-api";
+
+function providerLabel(place: Place): string {
+  if (place.id.startsWith("naver:")) return "NAVER 주소";
+  if (place.id.startsWith("kakao:")) return "KAKAO 장소";
+  if (place.id.startsWith("coordinate:")) return "좌표 위치";
+  return "장소 정보";
+}
 
 export function PlaceSearchField({
   apiBaseUrl,
@@ -36,6 +44,8 @@ export function PlaceSearchField({
   const [results, setResults] = useState<Place[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   const requestSequence = useRef(0);
 
   useEffect(() => {
@@ -94,8 +104,8 @@ export function PlaceSearchField({
   return (
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputWrap}>
-        <View style={styles.placeDot} />
+      <View style={[styles.inputWrap, focused && styles.inputWrapFocused]}>
+        <AppIcon color={focused ? chimapTheme.teal : chimapTheme.muted} name="search" size={19} />
         <TextInput
           accessibilityLabel={`${label} 검색`}
           autoCorrect={false}
@@ -105,29 +115,40 @@ export function PlaceSearchField({
               onClear();
             }
           }}
-          onFocus={onFocus}
+          onBlur={() => setFocused(false)}
+          onFocus={() => {
+            setFocused(true);
+            onFocus?.();
+          }}
           onSubmitEditing={Keyboard.dismiss}
           placeholder={placeholder}
-          placeholderTextColor="#8A9694"
+          placeholderTextColor={chimapTheme.placeholder}
           returnKeyType="search"
+          ref={inputRef}
           style={styles.input}
           value={query}
         />
-        {loading ? (
-          <ActivityIndicator color={chimapTheme.teal} size="small" />
-        ) : query.length > 0 ? (
+        {loading ? <ActivityIndicator color={chimapTheme.teal} size="small" /> : null}
+        {query.length > 0 ? (
           <Pressable
-            accessibilityLabel={`${label} 지우기`}
+            accessibilityHint="입력 내용과 검색 결과를 지우고 키보드를 닫습니다."
+            accessibilityLabel={`${label} 입력 취소`}
             accessibilityRole="button"
             hitSlop={10}
             onPress={() => {
+              requestSequence.current += 1;
               setQuery("");
               setResults([]);
+              setMessage(null);
+              setLoading(false);
+              setFocused(false);
               onClear();
+              inputRef.current?.blur();
+              Keyboard.dismiss();
             }}
             style={styles.clearButton}
           >
-            <Text style={styles.clearText}>×</Text>
+            <AppIcon color={chimapTheme.muted} name="close" size={15} />
           </Pressable>
         ) : null}
       </View>
@@ -151,8 +172,16 @@ export function PlaceSearchField({
                 <Text style={styles.resultAddress} numberOfLines={1}>
                   {place.roadAddress || place.address}
                 </Text>
+                <View style={styles.resultTags}>
+                  {place.category.length === 0 ? null : (
+                    <Text numberOfLines={1} style={styles.categoryTag}>
+                      {place.category}
+                    </Text>
+                  )}
+                  <Text style={styles.providerTag}>{providerLabel(place)}</Text>
+                </View>
               </View>
-              <Text style={styles.resultArrow}>›</Text>
+              <AppIcon color={chimapTheme.teal} name="chevronRight" size={17} />
             </Pressable>
           ))}
         </View>
@@ -175,10 +204,9 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: chimapTheme.white,
   },
-  placeDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: chimapTheme.teal },
+  inputWrapFocused: { borderWidth: 2, borderColor: chimapTheme.teal },
   input: { minWidth: 0, flex: 1, color: chimapTheme.ink, fontSize: 15, fontWeight: "700" },
-  clearButton: { minWidth: 28, minHeight: 44, alignItems: "center", justifyContent: "center" },
-  clearText: { color: chimapTheme.muted, fontSize: 24, lineHeight: 26 },
+  clearButton: { width: 32, minHeight: 44, alignItems: "center", justifyContent: "center" },
   message: { marginHorizontal: 3, color: chimapTheme.danger, fontSize: 12, lineHeight: 17 },
   results: {
     overflow: "hidden",
@@ -188,7 +216,7 @@ const styles = StyleSheet.create({
     backgroundColor: chimapTheme.white,
   },
   result: {
-    minHeight: 58,
+    minHeight: 72,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -200,5 +228,24 @@ const styles = StyleSheet.create({
   resultCopy: { minWidth: 0, flex: 1, gap: 3 },
   resultTitle: { color: chimapTheme.ink, fontSize: 14, fontWeight: "800" },
   resultAddress: { color: chimapTheme.muted, fontSize: 11 },
-  resultArrow: { color: chimapTheme.teal, fontSize: 24 },
+  resultTags: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: 5 },
+  categoryTag: {
+    maxWidth: "68%",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    color: chimapTheme.navy,
+    backgroundColor: chimapTheme.surfaceSubtle,
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  providerTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    color: chimapTheme.teal,
+    backgroundColor: chimapTheme.selectedSurface,
+    fontSize: 9,
+    fontWeight: "800",
+  },
 });

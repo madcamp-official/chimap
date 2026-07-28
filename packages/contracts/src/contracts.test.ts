@@ -154,6 +154,30 @@ describe("공유 계약", () => {
     expect(result.success).toBe(false);
   });
 
+  it("상세·근사 경로 geometry 품질을 구분한다", () => {
+    const leg = {
+      id: "subway-1",
+      mode: "SUBWAY",
+      distanceMeters: 1300,
+      durationSeconds: 240,
+      coordinates: [
+        { lng: 127.381, lat: 36.357 },
+        { lng: 127.384, lat: 36.346 },
+      ],
+      isExerciseSegment: false,
+    };
+
+    expect(
+      routeLegSchema.safeParse({ ...leg, geometryQuality: "DETAILED" }).success,
+    ).toBe(true);
+    expect(
+      routeLegSchema.safeParse({ ...leg, geometryQuality: "APPROXIMATE" }).success,
+    ).toBe(true);
+    expect(
+      routeLegSchema.safeParse({ ...leg, geometryQuality: "UNKNOWN" }).success,
+    ).toBe(false);
+  });
+
   it("추천 입력의 걸음 수와 개인화 한 걸음 길이 경계를 검증한다", () => {
     const baseRequest = {
       origin: {

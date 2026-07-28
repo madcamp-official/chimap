@@ -14,7 +14,9 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@chimap/app-core": "workspace:*",
     "@chimap/contracts": "workspace:*",
+    "@chimap/design-tokens": "workspace:*",
     "@tanstack/react-query": "^5.85.5",
     "lucide-react": "^0.542.0",
     "react": "^19.1.1",

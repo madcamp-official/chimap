@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   RECOMMENDATION_CACHE_MAX_AGE_MS,
+  RECOMMENDATION_CACHE_VERSION,
   RECOMMENDATION_STALE_TIME_MS,
 } from "@chimap/app-core";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
@@ -108,7 +109,7 @@ export function RecommendationQueryProvider({
       <PersistQueryClientProvider
         client={queryClient}
         persistOptions={{
-          buster: "chimap-mobile-recommendation-v3-transit-v2",
+          buster: `chimap-mobile-recommendation-${RECOMMENDATION_CACHE_VERSION}`,
           maxAge: RECOMMENDATION_CACHE_MAX_AGE_MS,
           persister,
           dehydrateOptions: { shouldDehydrateQuery: persistentRecommendation },
