@@ -281,6 +281,10 @@ if (verifyAndroid) {
     !androidPermissions.includes("android.permission.FOREGROUND_SERVICE_LOCATION"),
   );
   checks.set(
+    "Android excludes system alert window",
+    !androidPermissions.includes("android.permission.SYSTEM_ALERT_WINDOW"),
+  );
+  checks.set(
     "Android excludes Health Connect write/background/history permissions",
     androidPermissions.every(
       (permission) =>

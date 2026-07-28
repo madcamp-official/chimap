@@ -13,6 +13,9 @@ Development Build 애플리케이션입니다. `apps/ios`, `apps/android`처럼 
 - 의미 기반 색·간격: `@chimap/design-tokens`
 - CNG 결과인 `ios/`, `android/`는 commit하지 않음
 
+Android SDK, Galaxy 실기기, Health Connect, EAS Build와 Play Internal 운영 절차는
+[`docs/android-development.md`](../../docs/android-development.md)를 기준으로 합니다.
+
 Web DOM component, CSS, browser storage와 backend 내부 파일을 직접 import하지
 않습니다. 루트의 `pnpm boundaries:check`가 이 규칙을 검사합니다.
 

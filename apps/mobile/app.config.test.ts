@@ -163,6 +163,7 @@ describe("Expo platform identity", () => {
       expect.arrayContaining([
         "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.health.WRITE_STEPS",
         "android.permission.health.READ_HEALTH_DATA_HISTORY",
         "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
