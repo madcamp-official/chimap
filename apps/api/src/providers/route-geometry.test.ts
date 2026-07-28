@@ -6,6 +6,7 @@ import {
   RouteGeometryService,
   busSegmentSourceHash,
   validateRoadSection,
+  withWalkingGeometryLimit,
 } from "./route-geometry.js";
 
 function stop(nodeOrder: number, lat: number, lng: number): BusRouteStop {
@@ -132,5 +133,33 @@ describe("버스 인접 정류장 형상", () => {
       reason: "TIMEOUT",
       failedSectionCount: 2,
     });
+  });
+
+  it("대기열에서 취소된 도보 형상은 공급자를 호출하지 않는다", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    const running = Array.from({ length: 4 }, () =>
+      withWalkingGeometryLimit(async () => {
+        started += 1;
+        await gate;
+      }),
+    );
+    await vi.waitFor(() => expect(started).toBe(4));
+
+    const controller = new AbortController();
+    const queuedTask = vi.fn(async () => undefined);
+    const queued = withWalkingGeometryLimit(queuedTask, controller.signal);
+    controller.abort(new Error("client-aborted"));
+
+    await expect(queued).rejects.toMatchObject<Partial<ProviderError>>({
+      kind: "ABORTED",
+    });
+    release();
+    await Promise.all(running);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(queuedTask).not.toHaveBeenCalled();
   });
 });

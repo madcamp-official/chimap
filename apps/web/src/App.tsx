@@ -15,7 +15,6 @@ import {
   Crosshair,
   Info,
   MapPin,
-  Navigation,
   Settings2,
   ShieldCheck,
   TriangleAlert,
@@ -692,7 +691,13 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
         <header className="app-header">
           <div className="brand">
             <span className="brand-mark">
-              <Navigation aria-hidden="true" />
+              <img
+                src="/images/logo.png"
+                alt=""
+                width="42"
+                height="42"
+                aria-hidden="true"
+              />
             </span>
             <span>
               <strong>CHIMap</strong>

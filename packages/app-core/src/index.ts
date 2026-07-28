@@ -5,6 +5,8 @@ import type {
 } from "@chimap/contracts";
 
 export * from "./vehicle-positions.js";
+export * from "./route-map-markers.js";
+export * from "./vehicle-heading.js";
 
 export const RECOMMENDATION_CACHE_VERSION = "v3-transit-v2";
 export const RECOMMENDATION_STALE_TIME_MS = 5 * 60 * 1000;

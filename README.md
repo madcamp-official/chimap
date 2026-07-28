@@ -314,6 +314,7 @@ Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
 - [API 레퍼런스](./docs/api-reference.md)
 - [데이터베이스 스키마와 저장 계약](./docs/database-schema.md)
 - [배포·백업·복구](./docs/deployment.md)
+- [Android 개발·검증](./docs/android-development.md)
 - [Kakao 연동](./docs/kakao-api-integration.md)
 - [NAVER 연동](./docs/naver-map-integration.md)
 - [TAGO 연동](./docs/tago-transit-integration.md)

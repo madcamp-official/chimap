@@ -6,7 +6,7 @@ import {
   type WalkingRole,
 } from "@chimap/contracts";
 import { createHash } from "node:crypto";
-import pLimit from "p-limit";
+import pLimit, { type LimitFunction } from "p-limit";
 
 import { ProviderError } from "../errors.js";
 import { MemoryCache } from "../services/cache.js";
@@ -62,10 +62,63 @@ type ValidatedRoadSection = {
 
 const FRESH_MILLISECONDS = 30 * 24 * 60 * 60 * 1_000;
 const EXPIRES_MILLISECONDS = 180 * 24 * 60 * 60 * 1_000;
-const routeGeometryLimit = pLimit(4);
+const busGeometryLimit = pLimit(4);
+const walkingGeometryLimit = pLimit(4);
 
-export function withRouteGeometryLimit<T>(task: () => Promise<T>): Promise<T> {
-  return routeGeometryLimit(task);
+function abortReason(signal: AbortSignal): ProviderError {
+  const timedOut =
+    signal.reason instanceof DOMException &&
+    signal.reason.name === "TimeoutError";
+  return new ProviderError({
+    kind: timedOut ? "TIMEOUT" : "ABORTED",
+    message: timedOut
+      ? "경로 형상 요청 시간이 초과되었습니다."
+      : "경로 형상 요청이 취소되었습니다.",
+    retryable: timedOut,
+    cause: signal.reason,
+  });
+}
+
+function withAbortableLimit<T>(
+  limit: LimitFunction,
+  task: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted === true) {
+    return Promise.reject(abortReason(signal));
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const settle = (operation: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", handleAbort);
+      operation();
+    };
+    const handleAbort = () => settle(() => reject(abortReason(signal!)));
+    signal?.addEventListener("abort", handleAbort, { once: true });
+    void limit(async () => {
+      if (signal?.aborted === true) throw abortReason(signal);
+      return task();
+    }).then(
+      (value) => settle(() => resolve(value)),
+      (error: unknown) => settle(() => reject(error)),
+    );
+  });
+}
+
+export function withRouteGeometryLimit<T>(
+  task: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return withAbortableLimit(busGeometryLimit, task, signal);
+}
+
+export function withWalkingGeometryLimit<T>(
+  task: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return withAbortableLimit(walkingGeometryLimit, task, signal);
 }
 
 function stopCoordinate(stop: BusRouteStop): Coordinate {
@@ -213,10 +266,10 @@ export class RouteGeometryService {
     ].join(":");
     return this.#refreshCache.getOrLoad(key, 30_000, () => {
       const budgetSignal = AbortSignal.timeout(8_000);
+      const combinedSignal = signal === undefined
+        ? budgetSignal
+        : AbortSignal.any([signal, budgetSignal]);
       return withRouteGeometryLimit(async () => {
-        const combinedSignal = signal === undefined
-          ? budgetSignal
-          : AbortSignal.any([signal, budgetSignal]);
         const response = await this.#provider.getRoadRouteSections({
           points: stops.map(stopCoordinate),
           signal: combinedSignal,
@@ -264,7 +317,7 @@ export class RouteGeometryService {
           // Cache persistence must never make an otherwise valid route fail.
         }
         return result;
-      });
+      }, combinedSignal);
     });
   }
 

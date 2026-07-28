@@ -30,7 +30,7 @@ import { MultimodalRoutePlanner } from "./multimodal-route-planner.js";
 import {
   classifyGeometryError,
   RouteGeometryService,
-  withRouteGeometryLimit,
+  withWalkingGeometryLimit,
   type ResolvedBusGeometry,
 } from "./route-geometry.js";
 import { SubwayRoutePlanner } from "./subway-route-planner.js";
@@ -234,6 +234,43 @@ function toProviderError(error: unknown): ProviderError {
     message: "TAGO 버스 경로 계산에 실패했습니다.",
     retryable: false,
     cause: error,
+  });
+}
+
+function approximateWalkingRoute(
+  from: Coordinate,
+  to: Coordinate,
+  walkSpeedKmh: number,
+  includeGeometryQuality: boolean,
+): NormalizedRoute {
+  const distanceMeters = Math.max(
+    1,
+    Math.round(haversineDistanceMeters(from, to)),
+  );
+  const durationSeconds = Math.max(
+    1,
+    Math.round(distanceMeters / ((walkSpeedKmh * 1_000) / 3_600)),
+  );
+  return normalizedRouteSchema.parse({
+    id: `tago-walk-fallback-${coordinateCacheKey(from)}-${coordinateCacheKey(to)}`,
+    source: "TAGO",
+    durationSeconds,
+    distanceMeters,
+    walkDistanceMeters: distanceMeters,
+    transitDistanceMeters: 0,
+    transferCount: 0,
+    legs: [{
+      id: "tago-walk-fallback",
+      mode: "WALK",
+      guidance: "도보 이동 (근사 경로)",
+      distanceMeters,
+      durationSeconds,
+      coordinates: [from, to],
+      ...(includeGeometryQuality
+        ? { geometryQuality: "APPROXIMATE" as const }
+        : {}),
+      isExerciseSegment: false,
+    }],
   });
 }
 
@@ -891,6 +928,14 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     if (distanceMeters <= 3) {
       return undefined;
     }
+    if (request.geometryProfile === "TRANSIT_V2") {
+      return approximateWalkingRoute(
+        from,
+        to,
+        this.#config.transit.walkSpeedKmh,
+        true,
+      );
+    }
     const key = `tago:walk:${coordinateCacheKey(from)}:${coordinateCacheKey(to)}:${request.geometryProfile ?? "legacy"}`;
     const walkingCacheHit = this.#walkingCache.get<NormalizedRoute>(key) !== undefined;
     const startedAt = performance.now();
@@ -902,12 +947,12 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
       const route = await this.#walkingCache.getOrLoad(
         key,
         30 * 60 * 1000,
-        () => withRouteGeometryLimit(() => this.#baseProvider.getWalkingRoute({
+        () => withWalkingGeometryLimit(() => this.#baseProvider.getWalkingRoute({
           origin: from,
           destination: to,
           routeMode: "BROAD_FIRST",
           signal: walkingSignal,
-        })),
+        }), walkingSignal),
       );
       request.observeRouteGeometry?.({
         mode: "WALK",
@@ -921,15 +966,7 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         successfulSectionCount: 1,
         failedSectionCount: 0,
       });
-      return request.geometryProfile === "TRANSIT_V2"
-        ? normalizedRouteSchema.parse({
-            ...route,
-            legs: route.legs.map((leg) => ({
-              ...leg,
-              geometryQuality: "DETAILED" as const,
-            })),
-          })
-        : route;
+      return route;
     } catch (error) {
       request.observeRouteGeometry?.({
         mode: "WALK",
@@ -943,31 +980,12 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         successfulSectionCount: 0,
         failedSectionCount: 1,
       });
-      const durationSeconds = Math.max(
-        1,
-        Math.round(distanceMeters / ((this.#config.transit.walkSpeedKmh * 1000) / 3600)),
+      return approximateWalkingRoute(
+        from,
+        to,
+        this.#config.transit.walkSpeedKmh,
+        false,
       );
-      return normalizedRouteSchema.parse({
-        id: `tago-walk-fallback-${coordinateCacheKey(from)}-${coordinateCacheKey(to)}`,
-        source: "TAGO",
-        durationSeconds,
-        distanceMeters,
-        walkDistanceMeters: distanceMeters,
-        transitDistanceMeters: 0,
-        transferCount: 0,
-        legs: [{
-          id: "tago-walk-fallback",
-          mode: "WALK",
-          guidance: "도보 이동 (근사 경로)",
-          distanceMeters,
-          durationSeconds,
-          coordinates: [from, to],
-          ...(request.geometryProfile === "TRANSIT_V2"
-            ? { geometryQuality: "APPROXIMATE" as const }
-            : {}),
-          isExerciseSegment: false,
-        }],
-      });
     }
   }
 

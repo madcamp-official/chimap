@@ -1,5 +1,5 @@
-import type { NormalizedRoute } from "@chimap/contracts";
-import { describe, expect, it } from "vitest";
+import type { NormalizedRoute, Recommendation } from "@chimap/contracts";
+import { describe, expect, it, vi } from "vitest";
 
 import { ProviderError } from "../errors.js";
 import type { MobilityProvider } from "../providers/types.js";
@@ -184,13 +184,14 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
         },
       }],
     };
+    const getWalkingRoute = vi.fn(async () => {
+      throw new ProviderError({ kind: "ABORTED", message: "cancelled" });
+    });
     const provider: MobilityProvider = {
       source: "TAGO",
       searchPlaces: async () => [],
       getTransitRoutes: async () => [route],
-      getWalkingRoute: async () => {
-        throw new ProviderError({ kind: "ABORTED", message: "cancelled" });
-      },
+      getWalkingRoute,
     };
 
     const generated = await new CandidateGenerator(provider).generate(
@@ -231,5 +232,89 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
         ),
       ),
     ).toBe(true);
+    expect(getWalkingRoute).not.toHaveBeenCalled();
+  });
+
+  it("최종 선택된 중복 도보 구간만 한 번 상세화하고 ETA·거리는 유지한다", async () => {
+    const from = { lat: 36.35, lng: 127.37 };
+    const middle = { lat: 36.351, lng: 127.3715 };
+    const to = { lat: 36.352, lng: 127.373 };
+    const getWalkingRoute = vi.fn(async (): Promise<NormalizedRoute> => ({
+      id: "kakao-walk",
+      source: "KAKAO",
+      durationSeconds: 999,
+      distanceMeters: 999,
+      walkDistanceMeters: 999,
+      transitDistanceMeters: 0,
+      transferCount: 0,
+      legs: [{
+        id: "kakao-walk-leg",
+        mode: "WALK",
+        guidance: "상세 도보",
+        distanceMeters: 999,
+        durationSeconds: 999,
+        coordinates: [from, middle, to],
+        isExerciseSegment: false,
+      }],
+    }));
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [],
+      getWalkingRoute,
+    };
+    const recommendation: Recommendation = {
+      id: "selected",
+      type: "FAST",
+      title: "빠른 경로",
+      reason: "test",
+      durationSeconds: 600,
+      arrivalAt: "2026-07-28T03:10:00.000Z",
+      extraMinutes: 0,
+      walkDistanceMeters: 300,
+      estimatedSteps: 430,
+      stepDifference: -100,
+      goalFit: "UNDER",
+      expectedTotalSteps: 430,
+      dailyGoalCompletionRate: 0.1,
+      shortfallCoverageRate: 0.1,
+      transferCount: 0,
+      legs: [{
+        id: "selected-walk",
+        mode: "WALK",
+        guidance: "근사 도보",
+        distanceMeters: 300,
+        durationSeconds: 240,
+        coordinates: [from, to],
+        geometryQuality: "APPROXIMATE",
+        isExerciseSegment: false,
+        walkingRole: "ACCESS",
+      }],
+    };
+    const observations: unknown[] = [];
+    const enriched = await new CandidateGenerator(provider).enrichWalkingGeometry(
+      [recommendation, { ...recommendation, id: "selected-duplicate" }],
+      undefined,
+      (observation) => observations.push(observation),
+    );
+
+    expect(getWalkingRoute).toHaveBeenCalledTimes(1);
+    expect(enriched).toHaveLength(2);
+    for (const result of enriched) {
+      expect(result.durationSeconds).toBe(600);
+      expect(result.walkDistanceMeters).toBe(300);
+      expect(result.legs[0]).toMatchObject({
+        durationSeconds: 240,
+        distanceMeters: 300,
+        coordinates: [from, middle, to],
+        geometryQuality: "DETAILED",
+      });
+    }
+    expect(observations).toHaveLength(2);
+    expect(observations[0]).toMatchObject({
+      outcome: "DETAILED",
+      source: "KAKAO_WALK",
+      walkingRole: "ACCESS",
+    });
   });
 });
