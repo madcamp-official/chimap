@@ -136,12 +136,12 @@ describe("현재 위치 출발지 UX", () => {
 });
 
 describe("Route Pulse 화면 설정과 동의 경계", () => {
-  it("상단 브랜드에 CHIMap 앱 아이콘을 표시한다", () => {
+  it("상단 브랜드에 새 CHIMap 로고를 표시한다", () => {
     render(<App authEnabled={false} />, { wrapper: createWrapper() });
 
     expect(document.querySelector(".brand-mark img")).toHaveAttribute(
       "src",
-      "/app_icon.png",
+      "/logo.png",
     );
   });
 
