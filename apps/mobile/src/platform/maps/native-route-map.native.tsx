@@ -31,8 +31,8 @@ const endpointMarker = {
   width: 50,
 } as const;
 
-const originMarkerImage = require("./assets/route-marker-origin.png");
-const destinationMarkerImage = require("./assets/route-marker-destination.png");
+const originMarkerImage = require("./images/route-marker-origin.png");
+const destinationMarkerImage = require("./images/route-marker-destination.png");
 
 function trackGeometrySourcesUrl(): string {
   const baseUrl = Constants.expoConfig?.extra?.apiBaseUrl;

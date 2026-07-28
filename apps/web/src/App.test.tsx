@@ -141,7 +141,7 @@ describe("Route Pulse 화면 설정과 동의 경계", () => {
 
     expect(document.querySelector(".brand-mark img")).toHaveAttribute(
       "src",
-      "/logo.png",
+      "/images/logo.png",
     );
   });
 

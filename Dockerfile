@@ -11,8 +11,6 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/app-core/package.json packages/app-core/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/design-tokens/package.json packages/design-tokens/package.json
-COPY bus_icon.webp bus_icon.webp
-
 RUN pnpm install --frozen-lockfile
 
 COPY apps/api apps/api

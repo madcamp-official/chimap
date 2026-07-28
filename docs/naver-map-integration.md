@@ -75,8 +75,8 @@ https://oapi.map.naver.com/openapi/v3/maps.js
 - 실패 시 script·map·overlay 정리
 - 사용자 재시도 시 SDK 재요청
 
-지도에는 추천 경로 polyline, 출발·도착, 운동 구간, 첫 승차·환승·최종
-하차를 표시합니다. 차량은 도착 600초 이하일 때 승차 전 가장 가까운 1대와
+지도에는 추천 경로 polyline, 운동 구간과 전체 여정의 출발·환승·도착을
+표시합니다. 차량은 도착 600초 이하일 때 승차 전 가장 가까운 1대와
 승차~하차 정류장 순서 안에서 운행 중인 모든 차량을 중복 없이 표시합니다.
 버스 중간 정류장은 마커로 표시하지 않습니다. 버스 polyline은
 TAGO 정류장 순서를 Kakao Mobility Directions 도로 vertex에 매칭한 좌표를
@@ -84,11 +84,12 @@ TAGO 정류장 순서를 Kakao Mobility Directions 도로 vertex에 매칭한 �
 지점을 지난 차량은 표시하지 않으며 차량 좌표는 지도 bounds 계산에서
 제외합니다.
 
-차량 marker는 240×240 RGBA 원본 `bus_icon.webp`를 60×60 CSS marker로
-사용합니다. 중앙에는 흰 전광판을 겹치고 길이에 따라 축소한 검은색 굵은 노선번호를
-겹치고, 이미지 alt는 비우되 marker role/title에는 도착 분 또는 `이동 구간
-운행 중` 상태를 제공합니다. anchor는 이미지 하단 중앙입니다. SVG fallback도
-같은 PNG와 노선번호·title 규칙을 사용합니다.
+차량 marker는 외부 bitmap 없이 CSS/React Native view로 버스 본체·창문·바퀴와
+노선번호를 그립니다. 첫 위치는 선택 경로의 가장 가까운 구간 방향을 사용하고,
+5m 이상 이동한 뒤에는 실제 이동 방위로 회전합니다. GPS 미세 흔들림에는 직전
+방향을 유지하며 marker role/title 또는 접근성 label에는 도착 분·운행 상태와
+진행 방향을 제공합니다. NAVER 지도와 SVG/native fallback도 같은 방향 계산을
+공유합니다.
 
 경로 polyline·출발/도착·승하차 marker와 차량 marker는 별도 overlay 배열로
 관리합니다. 차량 query는 화면이 보일 때 10초마다 다시 조회하지만 차량

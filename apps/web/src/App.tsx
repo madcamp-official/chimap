@@ -692,7 +692,7 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
           <div className="brand">
             <span className="brand-mark">
               <img
-                src="/logo.png"
+                src="/images/logo.png"
                 alt=""
                 width="42"
                 height="42"
