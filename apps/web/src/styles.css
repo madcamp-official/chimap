@@ -1359,28 +1359,35 @@ summary:focus-visible,
   width: 100%;
   height: 100%;
   filter: drop-shadow(0 4px 5px rgb(11 53 107 / 28%));
+  mix-blend-mode: multiply;
 }
 
 .map-marker-vehicle-number {
   position: absolute;
   top: 34%;
-  left: 30%;
+  left: 28%;
   display: flex;
-  width: 40%;
-  height: 22%;
+  width: 44%;
+  height: 18%;
   align-items: center;
   justify-content: center;
-  color: #111;
-  background: #fff;
+  color: #fff;
   font-weight: 900;
   line-height: 1;
+  text-shadow:
+    0 1px 2px rgb(4 25 61 / 95%),
+    0 0 2px rgb(4 25 61 / 90%);
   white-space: nowrap;
   transform-origin: center;
 }
 
+.preview-vehicle-image {
+  mix-blend-mode: multiply;
+}
+
 .preview-vehicle-number {
-  fill: #111;
-  font-size: 5px;
+  fill: #fff;
+  font-size: 6px;
   font-weight: 900;
 }
 

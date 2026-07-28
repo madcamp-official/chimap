@@ -3,7 +3,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
-import { MapView, transitMarkers } from "./MapView.js";
+import {
+  MapView,
+  resolveVehicleMarkerDirection,
+  transitMarkers,
+} from "./MapView.js";
 
 const origin: Place = {
   id: "kakao:place:10491355",
@@ -108,6 +112,20 @@ const vehicle: RelevantVehiclePosition = {
 describe("MapView", () => {
   afterEach(() => {
     delete (window as Window & { naver?: unknown }).naver;
+  });
+  it("실시간 경도 이동과 정차 상태로 좌우 버스 방향을 안정적으로 판정한다", () => {
+    expect(
+      resolveVehicleMarkerDirection(undefined, 127.4, undefined, "left"),
+    ).toBe("left");
+    expect(
+      resolveVehicleMarkerDirection(127.4, 127.40003, "left", "left"),
+    ).toBe("right");
+    expect(
+      resolveVehicleMarkerDirection(127.4, 127.39997, "right", "right"),
+    ).toBe("left");
+    expect(
+      resolveVehicleMarkerDirection(127.4, 127.400001, "left", "right"),
+    ).toBe("left");
   });
   it("지하철 탑승·노선 환승·하차 마커를 만든다", () => {
     const subwayRoute: Recommendation = {
@@ -266,7 +284,7 @@ describe("MapView", () => {
     expect(line).toHaveAttribute("stroke-opacity", "0.45");
   });
 
-  it("SVG fallback도 WebP 버스 이미지와 흰 전광판·검은 노선번호를 표시한다", () => {
+  it("SVG fallback도 오른쪽 버스 이미지와 버스 위 흰색 노선번호를 표시한다", () => {
     const { container } = render(
       <MapView
         origin={origin}
@@ -281,14 +299,18 @@ describe("MapView", () => {
     const number = container.querySelector(".preview-vehicle-number");
     expect(image).toHaveAttribute(
       "href",
-      expect.stringContaining("bus_icon.webp"),
+      expect.stringContaining("bus-right.png"),
     );
     expect(number).toHaveTextContent("603");
     expect(number).toHaveClass("preview-vehicle-number");
-    expect(number).toHaveAttribute("fill", "#111");
-    expect(container.querySelector(".preview-vehicle-display")).toHaveAttribute(
-      "fill",
-      "#fff",
+    expect(number).toHaveAttribute("fill", "#fff");
+    expect(container.querySelector("[data-direction='right']")).toBeInTheDocument();
+    expect(
+      container.querySelector(".preview-vehicle-display"),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector(".preview-vehicle-image")).toHaveAttribute(
+      "href",
+      expect.stringContaining("bus-right.png"),
     );
     expect(container.querySelector(".route-preview-svg title")).toHaveTextContent(
       "603번 · 1분 후 도착",
@@ -348,13 +370,17 @@ describe("MapView", () => {
     );
     expect(vehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
       "src",
-      expect.stringContaining("bus_icon"),
+      expect.stringContaining("bus-right.png"),
     );
     expect(vehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
       "alt",
       "",
     );
     expect(vehicleMarker?.icon.content).toHaveTextContent("603");
+    expect(vehicleMarker?.icon.content).toHaveAttribute(
+      "data-direction",
+      "right",
+    );
     expect(vehicleMarker?.title).toContain("1분 후 도착");
     expect(vehicleMarker?.icon.content).toHaveAttribute(
       "aria-label",
@@ -370,7 +396,12 @@ describe("MapView", () => {
         cameraResetKey="request-1"
         ncpKeyId="public-map-key"
         vehiclePositions={[
-          { ...vehicle, latitude: 36.351, fetchedAt: "2026-07-25T06:37:10.000Z" },
+          {
+            ...vehicle,
+            latitude: 36.351,
+            longitude: 127.399,
+            fetchedAt: "2026-07-25T06:37:10.000Z",
+          },
         ]}
       />,
     );
@@ -380,6 +411,19 @@ describe("MapView", () => {
           option.icon.content.classList.contains("map-marker-vehicle"),
         ),
       ).toHaveLength(2),
+    );
+    const updatedVehicleMarker = markerOptions
+      .filter((option) =>
+        option.icon.content.classList.contains("map-marker-vehicle"),
+      )
+      .at(-1);
+    expect(updatedVehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("bus-left.png"),
+    );
+    expect(updatedVehicleMarker?.icon.content).toHaveAttribute(
+      "data-direction",
+      "left",
     );
     expect(fitBounds).toHaveBeenCalledTimes(1);
     expect(setCenter).not.toHaveBeenCalled();
@@ -393,9 +437,35 @@ describe("MapView", () => {
         selectedRouteId={alternateRoute.id}
         cameraResetKey="request-1"
         ncpKeyId="public-map-key"
-        vehiclePositions={[vehicle]}
+        vehiclePositions={[
+          {
+            ...vehicle,
+            longitude: 127.401,
+            fetchedAt: "2026-07-25T06:37:20.000Z",
+          },
+        ]}
       />,
     );
     await waitFor(() => expect(fitBounds).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        markerOptions.filter((option) =>
+          option.icon.content.classList.contains("map-marker-vehicle"),
+        ),
+      ).toHaveLength(3),
+    );
+    const rightMovingVehicleMarker = markerOptions
+      .filter((option) =>
+        option.icon.content.classList.contains("map-marker-vehicle"),
+      )
+      .at(-1);
+    expect(rightMovingVehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("bus-right.png"),
+    );
+    expect(rightMovingVehicleMarker?.icon.content).toHaveAttribute(
+      "data-direction",
+      "right",
+    );
   });
 });

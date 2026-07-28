@@ -160,15 +160,15 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   for (const marker of await vehicleMarkers.all()) {
     await expect(marker.locator("img")).toHaveAttribute(
       "src",
-      /bus_icon\.webp/u,
+      /bus-(left|right).*\.png/u,
     );
     await expect(marker.locator(".map-marker-vehicle-number")).toHaveCSS(
       "color",
-      "rgb(17, 17, 17)",
+      "rgb(255, 255, 255)",
     );
     await expect(marker.locator(".map-marker-vehicle-number")).toHaveCSS(
       "background-color",
-      "rgb(255, 255, 255)",
+      "rgba(0, 0, 0, 0)",
     );
     await expect(marker).toHaveAttribute(
       "title",
