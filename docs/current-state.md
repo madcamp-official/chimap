@@ -8,13 +8,13 @@
   API 147개, mobile 56개, web 59개, contracts 13개, app-core 10개,
   alert-relay 4개이며
   PostGIS 의존 통합 테스트 10개는 별도 환경에서 실행합니다.
-- **현재 공개 배포**: 2026-07-28 14:39 KST에 이미지
-  `sha256:d6348b3d…`로 API/웹/alert relay를 교체했습니다.
+- **현재 공개 배포**: 2026-07-28 22:46 KST에 `main@95f518c` 이미지
+  `sha256:138deb8f…`로 API/웹/alert relay를 교체했습니다.
   `TRANSIT_ROUTER_MODE=multimodal`, `TRANSIT_GEOMETRY_V2_ENABLED=1`이며
   `transit-v2`는 실제 지하철 선로와 검증된 버스·도보 형상을 반환합니다.
-- **마지막 전체 운영 점검**: 2026-07-28 14:40 KST에 컨테이너, PostgreSQL,
-  migration 11, 공개 health/readiness, 514번 실제 추천, Prometheus 22개 규칙,
-  정적 출처 페이지와 배포 전후 백업을 대조했습니다.
+- **마지막 전체 운영 점검**: 2026-07-28 22:50 KST에 컨테이너, PostgreSQL,
+  migration 11, 공개 health/readiness, 실제 검색·멀티모달 추천, Prometheus 22개
+  규칙, 새 로고·favicon과 공개 번들 비밀값을 확인했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
@@ -119,7 +119,7 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:d6348b3d…`), 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:138deb8f…`, `main@95f518c`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, migration 11, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 22개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
@@ -132,10 +132,10 @@
 | 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 구현 브랜치 | `main` (`feat/mobile/cross-platform-foundation@1df41a5`와 iOS staging 통합) |
-| 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
-| foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
-| 공개 웹 asset | `index-DVyoPrrl.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
+| 구현 브랜치 | `main@95f518c` (Web·API·iOS·Android 공용 변경 통합) |
+| 마지막 공개 기준선 CI | PR run `30362358806`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
+| 추가 push CI | run `30362353644`, 같은 다섯 job 성공 |
+| 공개 웹 asset | `index-BELtThX5.js`·`index-B5t-EbPr.css`·`/images/logo.png`·`/images/app-icon.png` |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | staging server는 guest/Kakao enabled·Apple disabled, 현재 iOS 앱 화면은 Kakao session 필수 |
 | 기본 브랜치 | `main`에 Web/API foundation과 iOS staging 구현 통합 |

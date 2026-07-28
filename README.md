@@ -4,14 +4,14 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production health/readiness 재확인: 2026-07-28 14:39 KST
-- 전체 운영 검증 스냅샷: 2026-07-28 14:40 KST
+- production health/readiness 재확인: 2026-07-28 22:49 KST
+- 전체 운영 검증 스냅샷: 2026-07-28 22:50 KST
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
 - 저장소 기준선: `main` (Web/API cross-platform foundation과 iOS staging 통합)
 - 통합한 upstream 기준: `feat/mobile/cross-platform-foundation` (`1df41a5`)
-- 실제 지하철 선로와 버스·도보 `transit-v2`·migration 11 운영 배포:
-  2026-07-28 14:39 KST
+- 실제 지하철 선로와 버스·도보 `transit-v2`·migration 11, 정리된 이미지 자산
+  운영 배포: 2026-07-28 22:46 KST
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
   health/readiness 200·guest/Kakao 활성·Apple 비활성, 실제 추천 3건 확인
 

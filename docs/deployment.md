@@ -18,10 +18,10 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-현재 production 기준선은 2026-07-28 14:39 KST의 이미지
-`sha256:d6348b3d...`이며 migration 11, 실제 지하철 선로와 버스·도보
-`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 운영
-`transit-v2` 승격 기록을 기준으로 합니다.
+현재 production 기준선은 2026-07-28 22:46 KST의 `main@95f518c` 이미지
+`sha256:138deb8f...`이며 migration 11, 실제 지하철 선로와 버스·도보
+`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 이미지 자산 정리
+승격 기록을 기준으로 합니다.
 
 ## 1. 사전 조건
 
@@ -900,3 +900,29 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
   cold 요청은 HTTP 200(15.1초), warm 5건은 모두 HTTP 200(0.84~2.13초)입니다.
 - Prometheus rule 22개 검증 성공, geometry 원인 504와 배포 후 API error는
   확인되지 않았습니다.
+
+## 22. 2026-07-28 이미지 자산 정리와 경로 표시 개선 운영 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay
+- source: `main@95f518c0ab749763077ad0e94c7e56359b0f802f`, PR #4
+- image: `sha256:138deb8f90f62b67aa822afd8b233290ccf324e4dea802dda9bb655ac6295ef6`
+- rollback image: `chimap:rollback-pre-route-assets-20260728`
+  (`sha256:5389ad43312bfaac35e2066924a23e4aa44a0fa143d66cf88758d463f052477c`)
+- schema 변경 없음, migration 11과 `TRANSIT_GEOMETRY_V2_ENABLED=1` 유지
+- 배포 직전 backup: `chimap-daily-20260728T134548Z.dump`, 18,148,791 bytes,
+  SHA-256 `0741c7052bd8edd517f773600eba3dcd72d1b7355bdf9b18a87fc76933f7112c`
+- Web 이미지는 `/images/logo.png`와 `/images/app-icon.png`로 정리하고, 사용하지
+  않는 좌·우 버스 bitmap과 루트 `bus_icon.webp`는 제거했습니다. 모바일 지도
+  출발·도착 bitmap은 `src/platform/maps/images`로 이동했습니다.
+- 모바일 도착시각은 `Asia/Seoul`을 명시해 Mac·GitHub UTC에서 같은 결과를
+  반환합니다. Expo iOS·Android bundle, clean prebuild, native config 검증과
+  GitHub Web/API·Mobile JS·iOS·Android·PostGIS job을 모두 통과했습니다.
+- local·public health/readiness/mobile-config HTTP 200, 이미지 해시 일치,
+  공개 JavaScript `index-BELtThX5.js`의 서버 비밀값 미검출을 확인했습니다.
+- 공개 `KAIST 본원`·`대전역` 검색은 정확한 장소가 각각 첫 결과이고 실제
+  `transit-v2` 추천은 `FAST/BALANCED/GOAL` 3건, `BUS/SUBWAY/WALK`를 반환했습니다.
+- Prometheus target 3개 `up`, rule 22개, API·alert relay 배포 직후 error 0건을
+  확인했습니다.
+- strict Web E2E 첫 실행은 TAGO 차량 위치 호출의 단발성 `UPSTREAM_TIMEOUT`으로
+  10초 polling 응답 횟수가 한 번 부족해 2/3 통과했습니다. 같은 핵심 사례를
+  즉시 재실행해 통과했으며 경로 추천·형상·지도 카메라 실패는 없었습니다.
