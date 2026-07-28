@@ -117,6 +117,7 @@ export function createExpoConfig(
   return {
     name: `CHIMap${identity.displaySuffix}`,
     slug: "chimap",
+    owner: "seojinlee",
     version: "0.1.0",
     icon: "./assets/branding/app-icon.png",
     orientation: "portrait",
@@ -232,6 +233,9 @@ export function createExpoConfig(
     extra: {
       appEnvironment: appEnv,
       apiBaseUrl,
+      eas: {
+        projectId: "785a6a49-e276-4c29-a0d5-db59017deee2",
+      },
     },
   };
 }

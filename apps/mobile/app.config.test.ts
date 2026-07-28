@@ -28,6 +28,10 @@ describe("Expo platform identity", () => {
 
     expect(config.orientation).toBe("portrait");
     expect(config.userInterfaceStyle).toBe("light");
+    expect(config.owner).toBe("seojinlee");
+    expect(config.extra?.eas).toEqual({
+      projectId: "785a6a49-e276-4c29-a0d5-db59017deee2",
+    });
     expect(config.ios).toMatchObject({
       bundleIdentifier: "org.madcamp.chimap.dev",
       deploymentTarget: "17.0",
