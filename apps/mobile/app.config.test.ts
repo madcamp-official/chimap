@@ -34,6 +34,7 @@ describe("Expo platform identity", () => {
     });
     expect(config.android?.package).toBe("org.madcamp.chimap.dev");
     expect(config.android).toMatchObject({
+      versionCode: 1,
       predictiveBackGestureEnabled: true,
       softwareKeyboardLayoutMode: "resize",
     });
@@ -72,6 +73,18 @@ describe("Expo platform identity", () => {
     ).toThrow(/trailing slash/u);
   });
 
+  it("production은 운영 HTTPS API만 사용한다", () => {
+    const config = createExpoConfig(context, environment("production"));
+
+    expect(config.extra?.apiBaseUrl).toBe("https://chimap.madcamp-kaist.org");
+    expect(() =>
+      createExpoConfig(context, {
+        ...environment("production"),
+        EXPO_PUBLIC_API_BASE_URL: "https://staging.chimap.madcamp-kaist.org",
+      }),
+    ).toThrow(/production API URL/u);
+  });
+
   it("Apple, HealthKit read, foreground location과 Privacy Manifest 설정을 보존한다", () => {
     const config = createExpoConfig(context, environment());
 
@@ -106,8 +119,61 @@ describe("Expo platform identity", () => {
       "expo-build-properties",
       {
         ios: { privacyManifestAggregationEnabled: true },
-        android: { minSdkVersion: 26 },
+        android: {
+          compileSdkVersion: 36,
+          minSdkVersion: 26,
+          targetSdkVersion: 36,
+          usesCleartextTraffic: true,
+        },
       },
+    ]);
+  });
+
+  it.each([
+    ["development", true],
+    ["staging", false],
+    ["production", false],
+  ] as const)("%s cleartext 정책을 분리한다", (appEnv, expected) => {
+    const config = createExpoConfig(context, environment(appEnv));
+    const buildProperties = config.plugins?.find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties",
+    );
+
+    expect(buildProperties).toEqual([
+      "expo-build-properties",
+      expect.objectContaining({
+        android: expect.objectContaining({ usesCleartextTraffic: expected }),
+      }),
+    ]);
+  });
+
+  it("Android icon, splash와 차단 permission을 public config에 고정한다", () => {
+    const config = createExpoConfig(context, environment("production"));
+
+    expect(config.icon).toBe("./assets/branding/app-icon.png");
+    expect(config.android?.adaptiveIcon).toEqual({
+      backgroundColor: "#FFFFFF",
+      foregroundImage: "./assets/branding/app-icon-foreground.png",
+      monochromeImage: "./assets/branding/app-icon-monochrome.png",
+    });
+    expect(config.android?.permissions).toEqual([
+      "android.permission.health.READ_STEPS",
+    ]);
+    expect(config.android?.blockedPermissions).toEqual(
+      expect.arrayContaining([
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.health.WRITE_STEPS",
+        "android.permission.health.READ_HEALTH_DATA_HISTORY",
+        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+      ]),
+    );
+    expect(config.plugins).toContainEqual([
+      "expo-splash-screen",
+      expect.objectContaining({
+        backgroundColor: "#FFFFFF",
+        image: "./assets/branding/splash-icon.png",
+      }),
     ]);
   });
 

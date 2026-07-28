@@ -150,6 +150,43 @@ async function findMainActivity(directory) {
   return null;
 }
 
+const textFileExtensions = new Set([
+  ".gradle",
+  ".java",
+  ".json",
+  ".kt",
+  ".kts",
+  ".properties",
+  ".txt",
+  ".xml",
+]);
+
+async function generatedText(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const contents = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      contents.push(await generatedText(path));
+      continue;
+    }
+    const extension = entry.name.includes(".")
+      ? entry.name.slice(entry.name.lastIndexOf("."))
+      : "";
+    if (textFileExtensions.has(extension)) {
+      contents.push(await readFile(path, "utf8"));
+    }
+  }
+  return contents.join("\n");
+}
+
+function effectiveAndroidPermissions(manifest) {
+  return [...manifest.matchAll(/<uses-permission\b[^>]*>/gu)]
+    .filter((match) => !match[0].includes('tools:node="remove"'))
+    .map((match) => /android:name="([^"]+)"/u.exec(match[0])?.[1] ?? null)
+    .filter((permission) => permission !== null);
+}
+
 if (verifyAndroid) {
   const androidRoot = join(mobileRoot, "android");
   const androidManifest = await readFile(
@@ -179,6 +216,32 @@ if (verifyAndroid) {
     throw new Error("Generated Android MainActivity was not found.");
   }
   const mainActivity = await readFile(mainActivityPath, "utf8");
+  const adaptiveIcon = await readFile(
+    join(
+      androidRoot,
+      "app",
+      "src",
+      "main",
+      "res",
+      "mipmap-anydpi-v26",
+      "ic_launcher.xml",
+    ),
+    "utf8",
+  );
+  const reactNativeVersions = await readFile(
+    join(mobileRoot, "node_modules", "react-native", "gradle", "libs.versions.toml"),
+    "utf8",
+  );
+  const generatedAndroidConfiguration = await generatedText(androidRoot);
+  const androidPermissions = effectiveAndroidPermissions(androidManifest);
+  const serverSecretValues = serverSecretVariableNames
+    .map((name) => process.env[name])
+    .filter((value) => value !== undefined && value.length > 0);
+  const forbiddenServerMarkers = [
+    ...serverSecretVariableNames,
+    ...serverSecretValues,
+    "postgresql://",
+  ];
 
   checks.set(
     "Android NAVER metadata",
@@ -191,7 +254,15 @@ if (verifyAndroid) {
   );
   checks.set(
     "Android Health Connect steps permission",
-    androidManifest.includes("android.permission.health.READ_STEPS"),
+    androidPermissions.includes("android.permission.health.READ_STEPS"),
+  );
+  checks.set(
+    "Android coarse location permission",
+    androidPermissions.includes("android.permission.ACCESS_COARSE_LOCATION"),
+  );
+  checks.set(
+    "Android fine location permission",
+    androidPermissions.includes("android.permission.ACCESS_FINE_LOCATION"),
   );
   checks.set(
     "Android Health Connect rationale",
@@ -203,11 +274,20 @@ if (verifyAndroid) {
   );
   checks.set(
     "Android excludes background location",
-    !androidManifest.includes("android.permission.ACCESS_BACKGROUND_LOCATION"),
+    !androidPermissions.includes("android.permission.ACCESS_BACKGROUND_LOCATION"),
   );
   checks.set(
     "Android excludes location foreground service",
-    !androidManifest.includes("android.permission.FOREGROUND_SERVICE_LOCATION"),
+    !androidPermissions.includes("android.permission.FOREGROUND_SERVICE_LOCATION"),
+  );
+  checks.set(
+    "Android excludes Health Connect write/background/history permissions",
+    androidPermissions.every(
+      (permission) =>
+        !permission.startsWith("android.permission.health.WRITE_") &&
+        permission !== "android.permission.health.READ_HEALTH_DATA_HISTORY" &&
+        permission !== "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+    ),
   );
   checks.set(
     "Android Health Connect permission delegate",
@@ -234,6 +314,22 @@ if (verifyAndroid) {
   checks.set(
     "Android minimum SDK",
     androidGradleProperties.includes("android.minSdkVersion=26"),
+  );
+  checks.set(
+    "Android compile SDK",
+    androidGradleProperties.includes("android.compileSdkVersion=36"),
+  );
+  checks.set(
+    "Android target SDK",
+    androidGradleProperties.includes("android.targetSdkVersion=36"),
+  );
+  checks.set(
+    "Android Build Tools",
+    reactNativeVersions.includes('buildTools = "36.0.0"'),
+  );
+  checks.set(
+    "Android NDK",
+    reactNativeVersions.includes('ndkVersion = "27.1.12297006"'),
   );
   checks.set(
     "Android excludes unscoped extra Maven repositories",
@@ -266,6 +362,35 @@ if (verifyAndroid) {
   checks.set(
     "Android application ID",
     androidGradle.includes(`applicationId '${expectedIdentifier}'`),
+  );
+  checks.set("Android version code", /\bversionCode\s+1\b/u.test(androidGradle));
+  checks.set(
+    "Android cleartext policy",
+    androidManifest.includes(
+      `android:usesCleartextTraffic="${appEnvironment === "development" ? "true" : "false"}"`,
+    ),
+  );
+  checks.set(
+    "Android predictive back",
+    androidManifest.includes('android:enableOnBackInvokedCallback="true"'),
+  );
+  checks.set(
+    "Android resize keyboard mode",
+    androidManifest.includes('android:windowSoftInputMode="adjustResize"'),
+  );
+  checks.set(
+    "Android adaptive icon foreground",
+    adaptiveIcon.includes('@mipmap/ic_launcher_foreground'),
+  );
+  checks.set(
+    "Android adaptive monochrome icon",
+    adaptiveIcon.includes('@mipmap/ic_launcher_monochrome'),
+  );
+  checks.set(
+    "Android excludes server secrets",
+    forbiddenServerMarkers.every(
+      (marker) => !generatedAndroidConfiguration.includes(marker),
+    ),
   );
 }
 

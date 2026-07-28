@@ -4,6 +4,7 @@ type AppEnvironment = "development" | "staging" | "production";
 
 const androidKotlinVersion = "2.1.20";
 const stagingApiBaseUrl = "https://staging.chimap.madcamp-kaist.org";
+const productionApiBaseUrl = "https://chimap.madcamp-kaist.org";
 
 const identifiers: Record<
   AppEnvironment,
@@ -98,11 +99,15 @@ export function createExpoConfig(
   if (appEnv === "staging" && apiBaseUrl !== stagingApiBaseUrl) {
     throw new Error(`staging API URL은 ${stagingApiBaseUrl}이어야 합니다.`);
   }
+  if (appEnv === "production" && apiBaseUrl !== productionApiBaseUrl) {
+    throw new Error(`production API URL은 ${productionApiBaseUrl}이어야 합니다.`);
+  }
 
   return {
     name: `CHIMap${identity.displaySuffix}`,
     slug: "chimap",
     version: "0.1.0",
+    icon: "./assets/branding/app-icon.png",
     orientation: "portrait",
     scheme: `chimap-${appEnv}`,
     userInterfaceStyle: "light",
@@ -121,14 +126,36 @@ export function createExpoConfig(
       },
     },
     android: {
+      adaptiveIcon: {
+        backgroundColor: "#FFFFFF",
+        foregroundImage: "./assets/branding/app-icon-foreground.png",
+        monochromeImage: "./assets/branding/app-icon-monochrome.png",
+      },
+      blockedPermissions: [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.health.WRITE_STEPS",
+        "android.permission.health.READ_HEALTH_DATA_HISTORY",
+        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+      ],
       package: identity.bundleIdentifier,
       permissions: ["android.permission.health.READ_STEPS"],
       predictiveBackGestureEnabled: true,
       softwareKeyboardLayoutMode: "resize",
+      versionCode: 1,
     },
     plugins: [
       "expo-router",
       "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          backgroundColor: "#FFFFFF",
+          image: "./assets/branding/splash-icon.png",
+          imageWidth: 280,
+          resizeMode: "contain",
+        },
+      ],
       ...(usesAppleSignIn ? (["expo-apple-authentication"] as const) : []),
       [
         "@kingstinct/react-native-healthkit",
@@ -163,7 +190,10 @@ export function createExpoConfig(
             privacyManifestAggregationEnabled: true,
           },
           android: {
+            compileSdkVersion: 36,
             minSdkVersion: 26,
+            targetSdkVersion: 36,
+            usesCleartextTraffic: appEnv === "development",
           },
         },
       ],

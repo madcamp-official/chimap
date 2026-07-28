@@ -198,11 +198,12 @@ jobs:
           build
 
   android-native:
-    name: Android native compile
+    name: Android native artifacts and 16KB verification
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
     env:
       APP_ENV: development
+      NODE_ENV: production
       KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
       NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
       NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
@@ -222,6 +223,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install Android SDK 36 and NDK 27.1
+        run: >-
+          sdkmanager
+          "platform-tools"
+          "platforms;android-36"
+          "build-tools;36.0.0"
+          "ndk;27.1.12297006"
+
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10.15.1 --activate
 
@@ -232,12 +241,23 @@ jobs:
           pnpm --filter @chimap/app-core build
           pnpm --filter @chimap/design-tokens build
 
-      - name: Generate and compile Android debug app
+      - name: Generate Android project and verify native config
         run: |
           pnpm --filter @chimap/mobile exec expo prebuild --clean --platform android --no-install
           node scripts/verify-mobile-native-config.mjs android
-          cd apps/mobile/android
-          ./gradlew :app:assembleDebug --no-daemon --max-workers=2
+
+      - name: Build debug APK, release APK, and release AAB
+        working-directory: apps/mobile/android
+        run: >-
+          ./gradlew
+          :app:assembleDebug
+          :app:assembleRelease
+          :app:bundleRelease
+          --no-daemon
+          --max-workers=2
+
+      - name: Verify release artifacts and 16KB page alignment
+        run: node scripts/verify-android-release.mjs
 
   postgis:
     name: PostgreSQL and PostGIS integration
