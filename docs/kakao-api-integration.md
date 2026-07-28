@@ -110,8 +110,10 @@ platform 정보를 설정할 수 있습니다. CHIMap은 서비스 앱 하나를
 CHIMap Kakao 앱 / 하나의 App ID
   ├─ production-server REST key
   ├─ staging-server REST key
-  ├─ production-mobile Native key
-  └─ staging-mobile Native key
+  ├─ production-ios Native key
+  ├─ production-android Native key
+  ├─ staging-ios Native key
+  └─ staging-android Native key
 ```
 
 같은 앱 안의 key는 App ID, 사용자 service identity, 동의 설정과 앱 단위 quota를
@@ -153,10 +155,10 @@ token은 사용자 정보 확인 중에만 메모리에서 사용하고 저장�
 
 ### iOS·Android 필수 로그인
 
-React Native 앱은 환경별 `KAKAO_NATIVE_APP_KEY`를 native SDK에 주입합니다.
-staging Native key에는 `org.madcamp.chimap.staging`, production Native key에는
-`org.madcamp.chimap` iOS Bundle ID와 Android package를 등록하고
-`kakao{NativeAppKey}` URL scheme를 생성합니다. Expo Go가 아니라 Development
+React Native 앱은 환경별 `KAKAO_NATIVE_IOS_APP_KEY`와
+`KAKAO_NATIVE_ANDROID_APP_KEY`를 각 native SDK에 주입합니다. iOS key에는
+환경별 Bundle ID를, Android key에는 같은 package와 signing key hash를
+등록하고 각각 `kakao{NativeAppKey}` URL scheme를 생성합니다. Expo Go가 아니라 Development
 Build에서 카카오톡 설치·미설치 흐름과 앱 복귀를 각각 검증합니다. 생성된
 plist/manifest에 반대 OS 설정이 섞이지 않는지는 native config verifier가
 확인합니다.
@@ -181,8 +183,9 @@ guest만 활성화되고 Kakao provider는 disabled였습니다. 이는 과거 �
 구성해 `guestEnabled=true`, `kakaoEnabled=true`, `appleEnabled=false`를
 반환합니다. 이는 server config 준비 상태이며 실제 iPhone의 KakaoTalk 성공·취소·
 browser fallback과 refresh/logout/account deletion E2E를 대신하지 않습니다.
-현재 Native App Key는 생성된 plist/scheme와 signed device build까지 일치하지만,
-Kakao Developers의 동일 Native App Key에 `org.madcamp.chimap.staging`를 등록한 뒤
+현재 iOS/Android Native App Key는 생성된 plist/manifest/scheme과 signed device
+build에 플랫폼별로 일치해야 하며, Kakao Developers의 각 Native App Key에
+`org.madcamp.chimap.staging`의 Bundle ID 또는 package/key hash를 등록한 뒤
 새 바이너리로 native login E2E를 다시 통과해야 합니다.
 
 무료 쿼터 적용 범위, 초과 과금과 비즈월렛 필요 여부는 앱·계정 상태에 따라

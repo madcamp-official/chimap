@@ -113,7 +113,8 @@ jobs:
     timeout-minutes: 20
     env:
       APP_ENV: development
-      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      KAKAO_NATIVE_IOS_APP_KEY: ci-kakao-ios-native-key
+      KAKAO_NATIVE_ANDROID_APP_KEY: ci-kakao-android-native-key
       NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
       NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
       EXPO_PUBLIC_API_BASE_URL: https://api.invalid
@@ -157,7 +158,8 @@ jobs:
     timeout-minutes: 45
     env:
       APP_ENV: development
-      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      KAKAO_NATIVE_IOS_APP_KEY: ci-kakao-ios-native-key
+      KAKAO_NATIVE_ANDROID_APP_KEY: ci-kakao-android-native-key
       NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
       NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
       EXPO_PUBLIC_API_BASE_URL: https://api.invalid
@@ -204,7 +206,8 @@ jobs:
     env:
       APP_ENV: development
       NODE_ENV: production
-      KAKAO_NATIVE_APP_KEY: ci-kakao-native-key
+      KAKAO_NATIVE_IOS_APP_KEY: ci-kakao-ios-native-key
+      KAKAO_NATIVE_ANDROID_APP_KEY: ci-kakao-android-native-key
       NAVER_MAP_CLIENT_ID_IOS: ci-naver-ios-id
       NAVER_MAP_CLIENT_ID_ANDROID: ci-naver-android-id
       EXPO_PUBLIC_API_BASE_URL: https://api.invalid

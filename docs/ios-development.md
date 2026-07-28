@@ -84,7 +84,8 @@ APP_ENV=staging
 EXPO_PUBLIC_API_BASE_URL=https://staging.chimap.madcamp-kaist.org
 NAVER_MAP_CLIENT_ID_IOS=
 NAVER_MAP_CLIENT_ID_ANDROID=
-KAKAO_NATIVE_APP_KEY=
+KAKAO_NATIVE_IOS_APP_KEY=
+KAKAO_NATIVE_ANDROID_APP_KEY=
 ```
 
 현재 Expo config가 두 native ID를 함께 검증하므로 iOS만 작업해도 Android ID가

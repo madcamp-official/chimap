@@ -29,7 +29,8 @@ Web DOM component, CSS, browser storage와 backend 내부 파일을 직접 impor
 
 `NAVER_MAP_CLIENT_ID_IOS`, `NAVER_MAP_CLIENT_ID_ANDROID`는 서로 다른 NAVER
 Maps Application의 Client ID여야 합니다. production에서는 Web Client ID도
-재사용할 수 없습니다. Kakao SDK는 `KAKAO_NATIVE_APP_KEY`를 사용합니다. Apple
+재사용할 수 없습니다. Kakao SDK는 `KAKAO_NATIVE_IOS_APP_KEY`와
+`KAKAO_NATIVE_ANDROID_APP_KEY`를 플랫폼별로 사용합니다. Apple
 server credential은 앱에 넣지 않고 API의 `APPLE_*` secret으로만 관리합니다.
 
 ## 실행

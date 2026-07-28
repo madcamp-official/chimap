@@ -21,7 +21,8 @@ const identifiers = {
 const expectedIdentifier = identifiers[appEnvironment];
 const iosClientId = process.env.NAVER_MAP_CLIENT_ID_IOS;
 const androidClientId = process.env.NAVER_MAP_CLIENT_ID_ANDROID;
-const kakaoNativeAppKey = process.env.KAKAO_NATIVE_APP_KEY;
+const kakaoIosAppKey = process.env.KAKAO_NATIVE_IOS_APP_KEY;
+const kakaoAndroidAppKey = process.env.KAKAO_NATIVE_ANDROID_APP_KEY;
 const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
 const appleSignInCapabilityValue =
   process.env.IOS_APPLE_SIGN_IN_CAPABILITY_ENABLED ?? "true";
@@ -48,7 +49,8 @@ if (
   expectedIdentifier === undefined ||
   iosClientId === undefined ||
   androidClientId === undefined ||
-  kakaoNativeAppKey === undefined ||
+  kakaoIosAppKey === undefined ||
+  kakaoAndroidAppKey === undefined ||
   apiBaseUrl === undefined
 ) {
   throw new Error("Native config verification environment is incomplete.");
@@ -205,6 +207,18 @@ if (verifyAndroid) {
     join(androidRoot, "gradle.properties"),
     "utf8",
   );
+  const androidStrings = await readFile(
+    join(
+      androidRoot,
+      "app",
+      "src",
+      "main",
+      "res",
+      "values",
+      "strings.xml",
+    ),
+    "utf8",
+  );
   const gradleWrapperProperties = await readFile(
     join(androidRoot, "gradle", "wrapper", "gradle-wrapper.properties"),
     "utf8",
@@ -270,7 +284,17 @@ if (verifyAndroid) {
   );
   checks.set(
     "Android Kakao scheme",
-    androidManifest.includes(`kakao${kakaoNativeAppKey}`),
+    androidManifest.includes(`kakao${kakaoAndroidAppKey}`),
+  );
+  checks.set(
+    "Android Kakao native key",
+    androidStrings.includes(
+      `<string name="kakao_app_key">${kakaoAndroidAppKey}</string>`,
+    ),
+  );
+  checks.set(
+    "Android excludes iOS Kakao key",
+    !generatedAndroidConfiguration.includes(kakaoIosAppKey),
   );
   checks.set(
     "Android excludes background location",
@@ -505,7 +529,12 @@ if (verifyIos) {
     "iOS excludes Android NAVER ID",
     plistStringValue(iosInfo, "NMFNcpKeyId") !== androidClientId,
   );
-  checks.set("iOS Kakao scheme", urlSchemes.includes(`kakao${kakaoNativeAppKey}`));
+  checks.set("iOS Kakao native key", plistStringValue(iosInfo, "KAKAO_APP_KEY") === kakaoIosAppKey);
+  checks.set("iOS Kakao scheme", urlSchemes.includes(`kakao${kakaoIosAppKey}`));
+  checks.set(
+    "iOS excludes Android Kakao key",
+    !generatedIosConfiguration.includes(kakaoAndroidAppKey),
+  );
   checks.set(
     "iOS Kakao query scheme",
     kakaoQuerySchemes.includes("kakaokompassauth"),

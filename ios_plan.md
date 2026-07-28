@@ -254,7 +254,8 @@ APP_ENV=staging
 EXPO_PUBLIC_API_BASE_URL=https://staging.chimap.madcamp-kaist.org
 NAVER_MAP_CLIENT_ID_IOS=<staging iOS Client ID>
 NAVER_MAP_CLIENT_ID_ANDROID=<staging Android Client ID>
-KAKAO_NATIVE_APP_KEY=<staging Kakao Native App Key>
+KAKAO_NATIVE_IOS_APP_KEY=<staging Kakao iOS Native App Key>
+KAKAO_NATIVE_ANDROID_APP_KEY=<staging Kakao Android Native App Key>
 ```
 
 iOS만 생성하더라도 현재 `app.config.ts`가 두 native NAVER ID를 모두 검증하므로
@@ -317,7 +318,8 @@ TestFlight가 아니라 Ad Hoc 배포다. 내부 TestFlight용 staging profile�
   - `EXPO_PUBLIC_API_BASE_URL=https://staging.chimap.madcamp-kaist.org`
   - `NAVER_MAP_CLIENT_ID_IOS`
   - `NAVER_MAP_CLIENT_ID_ANDROID`
-  - `KAKAO_NATIVE_APP_KEY`
+  - `KAKAO_NATIVE_IOS_APP_KEY`
+  - `KAKAO_NATIVE_ANDROID_APP_KEY`
 - 위 값은 client binary에 포함되는 URL/식별자다. `AUTH_SESSION_SECRET`, DB
   password, Kakao REST secret/client secret, Apple private key, refresh encryption
   key 같은 server secret은 mobile EAS environment에 넣지 않는다.

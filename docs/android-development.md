@@ -83,7 +83,8 @@ EAS CLI는 전역 설치하지 않습니다. 모든 EAS 명령은 `pnpm dlx eas-
 ```dotenv
 APP_ENV=staging
 EXPO_PUBLIC_API_BASE_URL=https://staging.chimap.madcamp-kaist.org
-KAKAO_NATIVE_APP_KEY=
+KAKAO_NATIVE_IOS_APP_KEY=
+KAKAO_NATIVE_ANDROID_APP_KEY=
 NAVER_MAP_CLIENT_ID_IOS=
 NAVER_MAP_CLIENT_ID_ANDROID=
 ```
@@ -97,7 +98,7 @@ NAVER_MAP_CLIENT_ID_ANDROID=
 - NAVER server secret
 - DB, session, refresh-token 암호화 secret
 
-EAS `preview` environment에는 staging의 네 공개 build 값(API URL과 세 native
+EAS `preview` environment에는 staging의 다섯 공개 build 값(API URL과 네 native
 client key)을, `production` environment에는 production 값을 별도로 등록합니다.
 `APP_ENV`는 `eas.json` profile이 고정합니다. production API URL은
 `https://chimap.madcamp-kaist.org`만 허용됩니다.

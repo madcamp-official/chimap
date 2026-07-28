@@ -35,9 +35,13 @@ function appEnvironment(value: string | undefined): AppEnvironment {
   throw new Error(`APP_ENV 값이 올바르지 않습니다: ${value ?? "(missing)"}`);
 }
 
-function requiredClientId(
+function requiredEnvironmentValue(
   value: string | undefined,
-  variable: "NAVER_MAP_CLIENT_ID_IOS" | "NAVER_MAP_CLIENT_ID_ANDROID",
+  variable:
+    | "NAVER_MAP_CLIENT_ID_IOS"
+    | "NAVER_MAP_CLIENT_ID_ANDROID"
+    | "KAKAO_NATIVE_IOS_APP_KEY"
+    | "KAKAO_NATIVE_ANDROID_APP_KEY",
 ): string {
   const normalized = value?.trim();
   if (normalized === undefined || normalized.length === 0) {
@@ -67,17 +71,24 @@ export function createExpoConfig(
   const usesAppleSignIn = appleSignInCapabilityEnabled(
     environment.IOS_APPLE_SIGN_IN_CAPABILITY_ENABLED,
   );
-  const iosClientId = requiredClientId(
+  const iosClientId = requiredEnvironmentValue(
     environment.NAVER_MAP_CLIENT_ID_IOS,
     "NAVER_MAP_CLIENT_ID_IOS",
   );
-  const androidClientId = requiredClientId(
+  const androidClientId = requiredEnvironmentValue(
     environment.NAVER_MAP_CLIENT_ID_ANDROID,
     "NAVER_MAP_CLIENT_ID_ANDROID",
   );
-  const kakaoNativeAppKey = environment.KAKAO_NATIVE_APP_KEY?.trim();
-  if (kakaoNativeAppKey === undefined || kakaoNativeAppKey.length === 0) {
-    throw new Error("KAKAO_NATIVE_APP_KEY 환경 변수가 필요합니다.");
+  const kakaoIosAppKey = requiredEnvironmentValue(
+    environment.KAKAO_NATIVE_IOS_APP_KEY,
+    "KAKAO_NATIVE_IOS_APP_KEY",
+  );
+  const kakaoAndroidAppKey = requiredEnvironmentValue(
+    environment.KAKAO_NATIVE_ANDROID_APP_KEY,
+    "KAKAO_NATIVE_ANDROID_APP_KEY",
+  );
+  if (kakaoIosAppKey === kakaoAndroidAppKey) {
+    throw new Error("iOS와 Android Kakao Native App Key는 분리해야 합니다.");
   }
   if (iosClientId === androidClientId) {
     throw new Error("iOS와 Android NAVER Map Client ID는 분리해야 합니다.");
@@ -204,8 +215,12 @@ export function createExpoConfig(
         { iosClientId, androidClientId },
       ],
       [
-        "@react-native-seoul/kakao-login",
-        { kakaoAppKey: kakaoNativeAppKey, kotlinVersion: androidKotlinVersion },
+        "./plugins/with-platform-kakao-login.cjs",
+        {
+          iosAppKey: kakaoIosAppKey,
+          androidAppKey: kakaoAndroidAppKey,
+          kotlinVersion: androidKotlinVersion,
+        },
       ],
       ...(!usesAppleSignIn
         ? (["./plugins/with-personal-team-apple-sign-in.cjs"] as const)

@@ -57,7 +57,8 @@ Client Secret은 `VITE_` 변수에 들어가면 안 됩니다. 현재 API 설정
 ```dotenv
 NAVER_MAP_CLIENT_ID_IOS=
 NAVER_MAP_CLIENT_ID_ANDROID=
-KAKAO_NATIVE_APP_KEY=
+KAKAO_NATIVE_IOS_APP_KEY=
+KAKAO_NATIVE_ANDROID_APP_KEY=
 APP_ENV=development|staging|production
 EXPO_PUBLIC_API_BASE_URL=https://<해당 환경의 API host>
 ```
@@ -93,7 +94,7 @@ production과 합산됩니다. mobile native Client ID는 CHIMap release 정책�
 분리하고 iOS/Android도 서로 다른 Application을 사용합니다.
 
 Kakao는 CHIMap 서비스 앱 하나를 유지하고 `staging-server` REST key와
-`staging-mobile` Native key를 추가합니다. 두 환경의 key·허용 IP·callback·Bundle
+staging iOS/Android Native key를 각각 추가합니다. 두 환경의 key·허용 IP·callback·Bundle
 ID는 나누되 App ID와 앱 단위 동의·quota는 공유합니다. 완전히 다른 Kakao App
 ID가 필요한 경우에는 test app과 서비스 정책을 먼저 확인합니다.
 

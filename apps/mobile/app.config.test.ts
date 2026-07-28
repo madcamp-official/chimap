@@ -15,7 +15,8 @@ function environment(
         : appEnv === "production"
           ? "https://chimap.madcamp-kaist.org"
           : "http://localhost:8080",
-    KAKAO_NATIVE_APP_KEY: "ci-kakao-native-key",
+    KAKAO_NATIVE_IOS_APP_KEY: "ci-kakao-ios-native-key",
+    KAKAO_NATIVE_ANDROID_APP_KEY: "ci-kakao-android-native-key",
     NAVER_MAP_CLIENT_ID_IOS: "ci-naver-ios-id",
     NAVER_MAP_CLIENT_ID_ANDROID: "ci-naver-android-id",
   };
@@ -219,8 +220,12 @@ describe("Expo platform identity", () => {
       },
     ]);
     expect(config.plugins).toContainEqual([
-      "@react-native-seoul/kakao-login",
-      { kakaoAppKey: "ci-kakao-native-key", kotlinVersion: "2.1.20" },
+      "./plugins/with-platform-kakao-login.cjs",
+      {
+        iosAppKey: "ci-kakao-ios-native-key",
+        androidAppKey: "ci-kakao-android-native-key",
+        kotlinVersion: "2.1.20",
+      },
     ]);
   });
 
@@ -232,6 +237,16 @@ describe("Expo platform identity", () => {
         NAVER_MAP_CLIENT_ID_ANDROID: "same-native-id",
       }),
     ).toThrow(/분리/u);
+  });
+
+  it("같은 Kakao Native App Key를 두 native platform에 재사용하지 못하게 한다", () => {
+    expect(() =>
+      createExpoConfig(context, {
+        ...environment("staging"),
+        KAKAO_NATIVE_IOS_APP_KEY: "same-native-key",
+        KAKAO_NATIVE_ANDROID_APP_KEY: "same-native-key",
+      }),
+    ).toThrow(/Kakao Native App Key.*분리/u);
   });
 
   it.each([
@@ -257,12 +272,15 @@ describe("Expo platform identity", () => {
     );
   });
 
-  it("Kakao Native App Key가 없으면 명확하게 실패한다", () => {
+  it.each([
+    "KAKAO_NATIVE_IOS_APP_KEY",
+    "KAKAO_NATIVE_ANDROID_APP_KEY",
+  ] as const)("필수 %s가 없으면 명확하게 실패한다", (variable) => {
     const input = environment();
-    delete input.KAKAO_NATIVE_APP_KEY;
+    delete input[variable];
 
     expect(() => createExpoConfig(context, input)).toThrow(
-      /KAKAO_NATIVE_APP_KEY/u,
+      new RegExp(variable, "u"),
     );
   });
 
