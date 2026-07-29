@@ -108,6 +108,36 @@ describe("환경변수 보안 경계", () => {
     }).transit.geometryV2Enabled).toBe(true);
   });
 
+  it("공원 Import token과 추천 조회 범위를 검증한다", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        PARK_ROUTE_IMPORT_ENABLED: "1",
+        PARK_ROUTE_IMPORT_TOKEN: "short",
+      }),
+    ).toThrow(/32자/u);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      PARK_ROUTE_IMPORT_ENABLED: "1",
+      PARK_ROUTE_IMPORT_TOKEN: "p".repeat(32),
+      PARK_ROUTE_INTEGRATION_ENABLED: "1",
+      PARK_ROUTE_SEARCH_RADIUS_METERS: "1000",
+      PARK_ROUTE_MAX_CANDIDATES: "5",
+    });
+    expect(config.parkRoutes).toMatchObject({
+      importEnabled: true,
+      integrationEnabled: true,
+      searchRadiusMeters: 1000,
+      maxCandidates: 5,
+    });
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        PARK_ROUTE_SEARCH_RADIUS_METERS: "99",
+      }),
+    ).toThrow();
+  });
+
   it("추천 경로 탐색 상한이 기본 반경보다 작으면 거절한다", () => {
     expect(() =>
       loadConfig({

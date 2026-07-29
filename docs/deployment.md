@@ -988,3 +988,35 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
   반환했습니다. local·public health/readiness/mobile-config도 HTTP 200입니다.
 - Prometheus target 3개가 모두 `up`, rule 22개 중 firing 0건이며 API·alert relay
   배포 후 오류 로그 0건을 확인했습니다.
+# Park route import rollout
+
+The review VM sends snapshots over the existing Cloudflare Tunnel HTTPS
+origin. Do not expose VM ports 3000/3001, PostgreSQL, or add another public
+port. The review VM is used only when publishing data and is never a runtime
+recommendation dependency.
+
+1. Deploy code and migration 12.
+2. Set `PARK_ROUTE_IMPORT_ENABLED=1` and a random
+   `PARK_ROUTE_IMPORT_TOKEN` of at least 32 characters; restart staging.
+3. Import and check `/api/v1/internal/park-routes/status` and the route count.
+4. Run recommendation regression checks.
+5. Set `PARK_ROUTE_INTEGRATION_ENABLED=1` and restart staging.
+6. Repeat for production after staging validation.
+
+Staging import:
+
+```bash
+curl --fail-with-body --retry 3 --retry-all-errors \
+  --connect-timeout 5 --max-time 60 -X POST \
+  "https://staging.chimap.madcamp-kaist.org/api/v1/internal/park-routes/import" \
+  -H "Authorization: Bearer ${PARK_ROUTE_IMPORT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: ${DATASET_ID}" \
+  --data-binary "@park_routes_snapshot_v1.json"
+```
+
+For production, change only the host to `chimap.madcamp-kaist.org`. Import and
+integration flags are intentionally separate so data can be validated before
+recommendations use it. Re-sending identical data is a no-op. To roll back,
+disable integration immediately or import the previously validated content
+under a new dataset ID, then verify status; do not delete the active dataset.

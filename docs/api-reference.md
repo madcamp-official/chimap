@@ -626,3 +626,25 @@ Web은 추천 응답을 받은 뒤 출발지와 도착지마다 `nearby`를 반�
 | `INTERNAL_ERROR` | 500 | 내부 처리 오류 |
 
 브라우저에는 외부 공급자 원문, 키와 내부 stack을 노출하지 않습니다.
+# Reviewed park routes
+
+`POST /api/v1/internal/park-routes/import` receives a reviewed
+`park-route-snapshot-v1` full snapshot. It is a server-to-server endpoint:
+
+```http
+Authorization: Bearer <PARK_ROUTE_IMPORT_TOKEN>
+Content-Type: application/json
+Idempotency-Key: <datasetId>
+```
+
+The idempotency key must equal the body `datasetId`. The checksum is SHA-256
+over canonical JSON (object keys sorted recursively, array order preserved)
+of the complete snapshot with `datasetChecksum` omitted. A newly activated
+snapshot returns `201 ACTIVATED`; the same dataset ID and checksum returns
+`200 UNCHANGED`; reusing an ID with a different checksum returns `409`.
+Schema errors return `400`, non-deployable/checksum data `422`, and the
+import-only 25MB limit returns `413`. The normal API body limit remains 32KB.
+
+`GET /api/v1/internal/park-routes/status` uses the same bearer token and
+returns the two feature flags plus active dataset metadata. Neither endpoint
+returns or logs the token.

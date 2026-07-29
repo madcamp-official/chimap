@@ -68,6 +68,9 @@ import { CachedMobilityProvider } from "./providers/cached-provider.js";
 import { KakaoMobilityProvider } from "./providers/kakao-provider.js";
 import { NaverGeocodingClient } from "./providers/naver-geocoding-client.js";
 import { TagoTransitMobilityProvider } from "./providers/tago-transit-provider.js";
+import { ParkRouteCandidateService } from "./parks/park-route-candidate-service.js";
+import { ParkRouteImportService } from "./parks/park-route-import-service.js";
+import { ParkRouteRepository } from "./parks/park-route-repository.js";
 import { CandidateGenerator } from "./services/candidate-generator.js";
 import { PlaceLookupService } from "./services/place-lookup-service.js";
 import type { Clock } from "./services/recommendation-service.js";
@@ -145,6 +148,13 @@ function bearerToken(request: Request): string | undefined {
   return match?.[1];
 }
 
+function importBearerToken(request: Request): string | undefined {
+  const authorization = request.get("authorization");
+  return authorization?.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length)
+    : undefined;
+}
+
 function requestId(response: Response): string {
   return response.locals.requestId as string;
 }
@@ -218,9 +228,16 @@ function bodyParserError(error: unknown): AppError | undefined {
   }
   const type = "type" in error ? error.type : undefined;
   if (type === "entity.too.large") {
+    const limit =
+      "limit" in error && typeof error.limit === "number"
+        ? error.limit
+        : 32 * 1024;
     return new AppError({
       code: "VALIDATION_ERROR",
-      message: "요청 본문은 32KB를 넘을 수 없어요.",
+      message:
+        limit > 32 * 1024
+          ? "공원 경로 Import 요청 본문은 25MB를 넘을 수 없습니다."
+          : "요청 본문은 32KB를 넘을 수 없어요.",
       status: 413,
       cause: error,
     });
@@ -377,8 +394,23 @@ export function createApp(options: CreateAppOptions): Express {
   const providers = createProviders(options.config, transitService);
   const provider = providers.mobility;
   const placeLookup = providers.places;
+  const parkRouteRepository = new ParkRouteRepository(
+    transitService.repository.pool,
+  );
+  const parkRouteImportService = new ParkRouteImportService(
+    options.config.parkRoutes,
+    parkRouteRepository,
+  );
   const recommendationService = new RecommendationService({
     candidateGenerator: new CandidateGenerator(provider),
+    parkRoutes: new ParkRouteCandidateService({
+      enabled: options.config.parkRoutes.integrationEnabled,
+      radiusMeters: options.config.parkRoutes.searchRadiusMeters,
+      maxCandidates: options.config.parkRoutes.maxCandidates,
+      repository: parkRouteRepository,
+      provider,
+      logger,
+    }),
     logger,
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
@@ -438,11 +470,67 @@ export function createApp(options: CreateAppOptions): Express {
         "X-Client-Platform",
         "X-Contract-Version",
         "X-Route-Geometry",
+        "Idempotency-Key",
       ],
       credentials: true,
     }),
   );
   app.use(compression());
+  const parkImportRouter = express.Router();
+  parkImportRouter.use((request, _response, next) => {
+    parkRouteImportService.authenticate(importBearerToken(request));
+    next();
+  });
+  parkImportRouter.post(
+    "/import",
+    express.json({ limit: "25mb", strict: true }),
+    async (request, response) => {
+      const startedAt = performance.now();
+      const { snapshot, result } = await parkRouteImportService.import({
+        body: request.body,
+        idempotencyKey: request.get("idempotency-key"),
+      });
+      const activated = result.status === "ACTIVATED";
+      const payload = {
+        requestId: requestId(response),
+        datasetId: snapshot.datasetId,
+        status: result.status,
+        receivedRouteCount: snapshot.routes.length,
+        insertedRouteCount: activated ? snapshot.routes.length : 0,
+        unchangedRouteCount: activated ? 0 : snapshot.routes.length,
+        rejectedRouteCount: 0,
+        ...(activated
+          ? {
+              previousDatasetId: result.previousDatasetId,
+              activatedAt: result.activatedAt,
+            }
+          : {}),
+        datasetChecksum: snapshot.datasetChecksum,
+      };
+      logger.info({
+        event: "park-route.import",
+        requestId: requestId(response),
+        datasetId: snapshot.datasetId,
+        datasetChecksum: snapshot.datasetChecksum,
+        routeCount: snapshot.routes.length,
+        insertedCount: payload.insertedRouteCount,
+        status: result.status,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      response.status(activated ? 201 : 200).json(payload);
+    },
+  );
+  parkImportRouter.get("/status", async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      requestId: requestId(response),
+      importEnabled: options.config.parkRoutes.importEnabled,
+      integrationEnabled:
+        options.config.parkRoutes.integrationEnabled,
+      activeDataset: await parkRouteRepository.activeDataset(),
+    });
+  });
+  app.use("/api/v1/internal/park-routes", parkImportRouter);
   app.use(express.json({ limit: "32kb", strict: true }));
 
   app.use("/api/v1", (request, _response, next) => {

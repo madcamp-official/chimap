@@ -669,3 +669,17 @@ systemd timer가 매일 다음 스크립트로 custom-format 백업을 생성합
   30분 유지
 - 동의 기반 UI 이벤트: 허용 enum별 Prometheus counter만 기록하고 요청
   본문·IP·개별 사용자 이력은 저장하지 않음
+# Reviewed park route snapshots
+
+Migration 12 adds `park_route_datasets`, `reviewed_park_routes`, and the
+single-row `active_park_route_dataset` pointer. Dataset states are `STAGING`,
+`ACTIVE`, and `SUPERSEDED`. Individual routes keep entry/exit as PostGIS
+geography points, reviewed geometry as a 4326 LineString, and waypoint arrays
+as JSONB so reviewed order and repeated path waypoint IDs remain unchanged.
+
+Import runs in one transaction: insert the staging dataset and every route,
+verify the inserted count, supersede the old active dataset, activate the new
+one, then atomically upsert the pointer. A rollback therefore leaves the
+previous active pointer and routes untouched. Rollback after a successful
+deployment means re-importing the desired snapshot under a new dataset ID;
+active data must never be deleted first.

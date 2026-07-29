@@ -20,6 +20,7 @@ import type {
   SubwayGeometryObservation,
 } from "../providers/subway-track-geometry.js";
 import type { RouteGeometryObservation } from "../providers/route-geometry.js";
+import type { ParkRouteCandidateService } from "../parks/park-route-candidate-service.js";
 
 export type Clock = () => Date;
 
@@ -27,15 +28,18 @@ export class RecommendationService {
   readonly #candidateGenerator: CandidateGenerator;
   readonly #clock: Clock;
   readonly #logger: Logger;
+  readonly #parkRoutes: ParkRouteCandidateService | undefined;
 
   public constructor(options: {
     candidateGenerator: CandidateGenerator;
     clock?: Clock;
     logger: Logger;
+    parkRoutes?: ParkRouteCandidateService;
   }) {
     this.#candidateGenerator = options.candidateGenerator;
     this.#clock = options.clock ?? (() => new Date());
     this.#logger = options.logger;
+    this.#parkRoutes = options.parkRoutes;
   }
 
   public async createRecommendations(input: {
@@ -105,7 +109,7 @@ export class RecommendationService {
           status: 404,
         });
       }
-      const primaryRecommendationId = selection.primaryRecommendationId;
+      let primaryRecommendationId = selection.primaryRecommendationId;
       if (primaryRecommendationId === undefined) {
         throw new AppError({
           code: "INTERNAL_ERROR",
@@ -135,6 +139,30 @@ export class RecommendationService {
           (recommendation) =>
             enrichedById.get(recommendation.id) ?? recommendation,
         );
+      }
+      if (this.#parkRoutes !== undefined) {
+        const priorGoalId = recommendations.find(
+          (recommendation) => recommendation.type === "GOAL",
+        )?.id;
+        recommendations = await this.#parkRoutes.improveGoal({
+          recommendations,
+          request: input.request,
+          requestId: input.requestId,
+          baselineDurationSeconds: generated.baseline.durationSeconds,
+          policy,
+          departureAt,
+          remainingRouteApiCalls: 9 - generated.routeApiCallCount,
+          signal,
+        });
+        const newGoalId = recommendations.find(
+          (recommendation) => recommendation.type === "GOAL",
+        )?.id;
+        if (
+          primaryRecommendationId === priorGoalId &&
+          newGoalId !== undefined
+        ) {
+          primaryRecommendationId = newGoalId;
+        }
       }
 
       const baselineMetrics = calculateStepMetrics(

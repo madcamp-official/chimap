@@ -9,6 +9,124 @@ export const coordinateSchema = z
 
 export type Coordinate = z.infer<typeof coordinateSchema>;
 
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/u);
+
+export const parkRouteWaypointSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    kind: z.enum(["ENTRANCE", "INTERNAL"]),
+    location: coordinateSchema,
+  })
+  .strict();
+
+export const reviewedParkRouteSchema = z
+  .object({
+    routeId: z.string().min(1).max(200),
+    officialParkId: z.string().min(1).max(200),
+    parkName: z.string().min(1).max(200),
+    routeType: z.enum(["THROUGH", "LOOP", "OUT_AND_BACK"]),
+    directionPolicy: z.enum(["FORWARD_ONLY", "BOTH"]),
+    entry: z
+      .object({
+        waypointId: z.string().min(1).max(100),
+        location: coordinateSchema,
+      })
+      .strict(),
+    exit: z
+      .object({
+        waypointId: z.string().min(1).max(100),
+        location: coordinateSchema,
+      })
+      .strict(),
+    waypoints: z.array(parkRouteWaypointSchema).min(2),
+    pathWaypointIds: z.array(z.string().min(1).max(100)).min(2),
+    excludedWaypointIds: z.array(z.string().min(1).max(100)),
+    coordinates: z.array(coordinateSchema).min(2),
+    distanceMeters: z.number().int().positive(),
+    durationSeconds: z.number().int().positive(),
+    routing: z
+      .object({
+        engine: z.literal("VALHALLA"),
+        costing: z.literal("pedestrian"),
+      })
+      .strict(),
+    review: z
+      .object({
+        completed: z.literal(true),
+        outcome: z.literal("APPROVED_FOR_PRODUCTION"),
+        reviewer: z.string().trim().min(1).max(200),
+        reviewedAt: z.iso.datetime({ offset: true }),
+      })
+      .strict(),
+    sourceHash: sha256Schema,
+  })
+  .strict()
+  .superRefine((route, context) => {
+    const ids = new Set<string>();
+    route.waypoints.forEach((waypoint, index) => {
+      if (ids.has(waypoint.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["waypoints", index, "id"],
+          message: "waypoint ID는 경로 안에서 중복될 수 없습니다.",
+        });
+      }
+      ids.add(waypoint.id);
+    });
+    const checkReference = (id: string, path: (string | number)[]) => {
+      if (!ids.has(id)) {
+        context.addIssue({
+          code: "custom",
+          path,
+          message: "정의되지 않은 waypoint ID입니다.",
+        });
+      }
+    };
+    checkReference(route.entry.waypointId, ["entry", "waypointId"]);
+    checkReference(route.exit.waypointId, ["exit", "waypointId"]);
+    route.pathWaypointIds.forEach((id, index) =>
+      checkReference(id, ["pathWaypointIds", index]),
+    );
+    route.excludedWaypointIds.forEach((id, index) =>
+      checkReference(id, ["excludedWaypointIds", index]),
+    );
+  });
+
+export type ReviewedParkRoute = z.infer<typeof reviewedParkRouteSchema>;
+
+export const parkRouteSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal("park-route-snapshot-v1"),
+    datasetId: z.string().min(1).max(200),
+    generatedAt: z.iso.datetime({ offset: true }),
+    regionCode: z.literal("KR-30"),
+    mode: z.literal("FULL_SNAPSHOT"),
+    source: z
+      .object({
+        system: z.literal("chimap-park-etl"),
+        reviewSchemaVersion: z.string().min(1).max(100),
+      })
+      .strict(),
+    datasetChecksum: sha256Schema,
+    routes: z.array(reviewedParkRouteSchema).min(1),
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    const routeIds = new Set<string>();
+    snapshot.routes.forEach((route, index) => {
+      if (routeIds.has(route.routeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["routes", index, "routeId"],
+          message: "routeId는 dataset 안에서 중복될 수 없습니다.",
+        });
+      }
+      routeIds.add(route.routeId);
+    });
+  });
+
+export type ParkRouteSnapshot = z.infer<typeof parkRouteSnapshotSchema>;
+
 export const placeSchema = z
   .object({
     id: z.string().min(1).max(200),
@@ -284,9 +402,23 @@ export const walkingRoleSchema = z.enum([
   "TRANSFER",
   "GOAL_LATE_BOARDING",
   "GOAL_EARLY_ALIGHTING",
+  "PARK_DETOUR",
 ]);
 
 export type WalkingRole = z.infer<typeof walkingRoleSchema>;
+
+export const parkRouteReferenceSchema = z
+  .object({
+    routeId: z.string().min(1).max(200),
+    officialParkId: z.string().min(1).max(200),
+    parkName: z.string().min(1).max(200),
+    datasetId: z.string().min(1).max(200),
+  })
+  .strict();
+
+export type ParkRouteReference = z.infer<
+  typeof parkRouteReferenceSchema
+>;
 
 export const routeLegSchema = z
   .object({
@@ -301,6 +433,7 @@ export const routeLegSchema = z
     geometryQuality: routeGeometryQualitySchema.optional(),
     isExerciseSegment: z.boolean(),
     walkingRole: walkingRoleSchema.optional(),
+    parkRoute: parkRouteReferenceSchema.optional(),
     bus: transitBusLegSchema.optional(),
     subway: transitSubwayLegSchema.optional(),
     timing: transitTimingSchema.optional(),
@@ -330,6 +463,19 @@ export const routeLegSchema = z
         code: "custom",
         path: ["isExerciseSegment"],
         message: "목표 도보 구간은 운동 구간으로 표시해야 합니다.",
+      });
+    }
+    if (
+      leg.parkRoute !== undefined &&
+      (leg.mode !== "WALK" ||
+        leg.walkingRole !== "PARK_DETOUR" ||
+        !leg.isExerciseSegment)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["parkRoute"],
+        message:
+          "공원 경로 정보는 운동 구간인 PARK_DETOUR 도보 구간에만 지정할 수 있습니다.",
       });
     }
     if (leg.mode !== "BUS" && leg.bus !== undefined) {
@@ -1023,6 +1169,9 @@ export const errorCodeSchema = z.enum([
   "CLIENT_UPDATE_REQUIRED",
   "SERVICE_MAINTENANCE",
   "RATE_LIMITED",
+  "PARK_IMPORT_UNAUTHORIZED",
+  "PARK_DATASET_CONFLICT",
+  "PARK_ROUTE_NOT_DEPLOYABLE",
   "INTERNAL_ERROR",
 ]);
 

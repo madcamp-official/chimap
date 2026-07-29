@@ -226,6 +226,21 @@ const environmentSchema = z
       .int()
       .nonnegative()
       .default(25),
+    PARK_ROUTE_IMPORT_ENABLED: z.enum(["0", "1"]).default("0"),
+    PARK_ROUTE_IMPORT_TOKEN: optionalSecret,
+    PARK_ROUTE_INTEGRATION_ENABLED: z.enum(["0", "1"]).default("0"),
+    PARK_ROUTE_SEARCH_RADIUS_METERS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(2000)
+      .default(800),
+    PARK_ROUTE_MAX_CANDIDATES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .default(3),
     PORT: z.coerce.number().int().min(1).max(65_535).default(8080),
     WEB_ORIGIN: z.url().default("http://localhost:5173"),
     WEB_DIST_PATH: optionalSecret,
@@ -361,6 +376,18 @@ const environmentSchema = z
         path: ["TRANSIT_ROUTE_SEARCH_MAX_DISTANCE_METERS"],
         message:
           "추천 경로 정류장 탐색 상한은 기본 주변 정류장 반경보다 작을 수 없습니다.",
+      });
+    }
+    if (
+      environment.PARK_ROUTE_IMPORT_ENABLED === "1" &&
+      (environment.PARK_ROUTE_IMPORT_TOKEN === undefined ||
+        environment.PARK_ROUTE_IMPORT_TOKEN.length < 32)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["PARK_ROUTE_IMPORT_TOKEN"],
+        message:
+          "공원 경로 Import API를 활성화하려면 32자 이상의 서버 전용 token이 필요합니다.",
       });
     }
     if (
@@ -513,6 +540,13 @@ export type AppConfig = {
     walkSpeedKmh: number;
     busAverageSpeedKmh: number;
     stopDwellSeconds: number;
+  };
+  parkRoutes: {
+    importEnabled: boolean;
+    importToken?: string;
+    integrationEnabled: boolean;
+    searchRadiusMeters: number;
+    maxCandidates: number;
   };
 };
 
@@ -686,6 +720,16 @@ export function loadConfig(
       walkSpeedKmh: parsed.TRANSIT_WALK_SPEED_KMH,
       busAverageSpeedKmh: parsed.TRANSIT_BUS_AVERAGE_SPEED_KMH,
       stopDwellSeconds: parsed.TRANSIT_STOP_DWELL_SECONDS,
+    },
+    parkRoutes: {
+      importEnabled: parsed.PARK_ROUTE_IMPORT_ENABLED === "1",
+      ...(parsed.PARK_ROUTE_IMPORT_TOKEN === undefined
+        ? {}
+        : { importToken: parsed.PARK_ROUTE_IMPORT_TOKEN }),
+      integrationEnabled:
+        parsed.PARK_ROUTE_INTEGRATION_ENABLED === "1",
+      searchRadiusMeters: parsed.PARK_ROUTE_SEARCH_RADIUS_METERS,
+      maxCandidates: parsed.PARK_ROUTE_MAX_CANDIDATES,
     },
   };
 }
