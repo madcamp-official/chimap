@@ -361,7 +361,12 @@ function AccountSheet({
               <Text style={styles.detailTitle}>{displayName}</Text>
               <Text style={styles.muted}>카카오 계정으로 로그인 중</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}>
+            <Pressable
+              accessibilityLabel="내 정보 닫기"
+              accessibilityRole="button"
+              onPress={onClose}
+              style={styles.closeButton}
+            >
               <Text style={styles.closeButtonText}>닫기</Text>
             </Pressable>
           </View>
@@ -603,6 +608,7 @@ function RouteDetailSheet({
                 <Text style={styles.muted}>{route.reason}</Text>
               </View>
               <Pressable
+                accessibilityLabel="건강 경로 상세 닫기"
                 accessibilityRole="button"
                 onPress={onClose}
                 style={styles.closeButton}

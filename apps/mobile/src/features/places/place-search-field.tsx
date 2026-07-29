@@ -205,7 +205,14 @@ const styles = StyleSheet.create({
     backgroundColor: chimapTheme.white,
   },
   inputWrapFocused: { borderWidth: 2, borderColor: chimapTheme.teal },
-  input: { minWidth: 0, flex: 1, color: chimapTheme.ink, fontSize: 15, fontWeight: "700" },
+  input: {
+    minWidth: 0,
+    minHeight: 48,
+    flex: 1,
+    color: chimapTheme.ink,
+    fontSize: 15,
+    fontWeight: "700",
+  },
   clearButton: { width: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
   message: { marginHorizontal: 3, color: chimapTheme.danger, fontSize: 12, lineHeight: 17 },
   results: {
