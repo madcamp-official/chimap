@@ -74,7 +74,7 @@ React Web
   │    숙련도·안내 밀도·모션·지표 동의(localStorage)
   ├─ ExperienceSettingsDialog
   ├─ WalkingProfileDialog
-  │    필수 만 나이/신장/체중/생물학적 성별/하루 목표
+  │    필수 만 나이/신장/체중/생물학적 성별 + 연령별 첫 목표 추천
   ├─ HeaderStepSummary
   │    현재 걸음 수정/목표/개인화 한 걸음
   ├─ AuthControl

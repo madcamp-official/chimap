@@ -36,6 +36,7 @@ import {
 } from "react-native-safe-area-context";
 
 import { AppIcon } from "../../components/app-icon";
+import { BrandLogo } from "../../components/brand-logo";
 import { requestCurrentLocation } from "../../platform/location/current-location";
 import { NativeRouteMap } from "../../platform/maps/native-route-map";
 import { stepsSource } from "../../platform/steps/steps-source";
@@ -1035,7 +1036,7 @@ export function PlannerScreen({
         <View style={styles.headerCompactRow}>
           <View style={styles.brandLockup}>
             <View style={styles.brandMark}>
-              <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={18} />
+              <BrandLogo size={32} />
             </View>
             <Text adjustsFontSizeToFit numberOfLines={1} style={styles.brand}>CHIMap</Text>
           </View>
@@ -1380,7 +1381,7 @@ const styles = StyleSheet.create({
   appHeader: { paddingHorizontal: 7, paddingVertical: 4, backgroundColor: chimapTheme.navy },
   headerCompactRow: { minHeight: 46, flexDirection: "row", alignItems: "center", gap: 5 },
   brandLockup: { minWidth: 104, flexDirection: "row", alignItems: "center", gap: 5 },
-  brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: chimapTheme.orange },
+  brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 10 },
   brand: { minWidth: 0, flexShrink: 1, color: chimapTheme.white, fontSize: 18, fontWeight: "900" },
   compactMetric: { minWidth: 0, minHeight: 40, flex: 1, justifyContent: "center", paddingLeft: 7, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: chimapTheme.dividerOnNavy },
   compactMetricLabel: { color: chimapTheme.textOnNavyMuted, fontSize: 8, fontWeight: "800" },

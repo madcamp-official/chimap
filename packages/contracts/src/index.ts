@@ -492,6 +492,18 @@ export const walkingMetricSchema = z
 export type WalkingMetric = z.infer<typeof walkingMetricSchema>;
 
 export const HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND = 128.35;
+export const DAILY_STEP_GOAL_MODEL_VERSION = "DING_PALUCH_2025_V1" as const;
+
+export type DailyStepGoalRecommendation = {
+  age: number;
+  dailyGoalSteps: number;
+  evidenceRange: {
+    minSteps: number;
+    maxSteps: number;
+  };
+  estimatedDistanceMeters: number;
+  modelVersion: typeof DAILY_STEP_GOAL_MODEL_VERSION;
+};
 
 export function estimatePersonalizedStepLengthMeters(
   profile: WalkingProfile,
@@ -511,6 +523,44 @@ export function estimatePersonalizedStepLengthMeters(
     0.02 * sexCode +
     0.3 * HEALTHY_STEP_LENGTH_STUDY_SPEED_CM_PER_SECOND;
   return Math.round((stepLengthCentimeters / 100) * 10_000) / 10_000;
+}
+
+/**
+ * Returns an evidence-aligned first goal, not a medical prescription.
+ *
+ * Age selects the step-count range supported by prospective cohort
+ * meta-analyses. Height, weight and biological sex are intentionally not used
+ * as step-count multipliers because no validated demographic equation supports
+ * that distinction; they calibrate the estimated walking distance through the
+ * shared step-length model instead.
+ */
+export function recommendPersonalizedDailyGoal(
+  profile: WalkingProfile,
+  currentYear = new Date().getFullYear(),
+): DailyStepGoalRecommendation {
+  const parsed = walkingProfileSchema.parse(profile);
+  const age = currentYear - parsed.birthYear;
+  if (age < 18 || age > 90) {
+    throw new RangeError("하루 걸음 추천은 만 18~90세에 적용할 수 있습니다.");
+  }
+
+  const evidenceRange =
+    age < 60
+      ? { minSteps: 8_000, maxSteps: 10_000 }
+      : { minSteps: 6_000, maxSteps: 8_000 };
+  const dailyGoalSteps = age < 60 ? 8_000 : 7_000;
+  const stepLengthMeters = estimatePersonalizedStepLengthMeters(
+    parsed,
+    currentYear,
+  );
+
+  return {
+    age,
+    dailyGoalSteps,
+    evidenceRange,
+    estimatedDistanceMeters: Math.round(dailyGoalSteps * stepLengthMeters),
+    modelVersion: DAILY_STEP_GOAL_MODEL_VERSION,
+  };
 }
 
 const recommendationRequestBaseShape = {
