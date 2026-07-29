@@ -1,10 +1,11 @@
 import {
   estimatePersonalizedStepLengthMeters,
+  recommendPersonalizedDailyGoal,
   walkingProfileSchema,
   type BiologicalSex,
   type WalkingProfile,
 } from "@chimap/contracts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   InputAccessoryView,
@@ -22,6 +23,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppIcon } from "../../components/app-icon";
+import { BrandLogo } from "../../components/brand-logo";
 import { chimapTheme } from "../../theme/chimap-theme";
 
 const numberInputAccessoryId = "chimap-profile-number-inputs";
@@ -93,6 +95,9 @@ export function WalkingProfileScreen({
   const [dailyGoalSteps, setDailyGoalSteps] = useState(
     String(initialDailyGoalSteps),
   );
+  const [goalManuallyEdited, setGoalManuallyEdited] = useState(
+    initialProfile !== undefined,
+  );
   const [biologicalSex, setBiologicalSex] = useState<
     BiologicalSex | undefined
   >(initialProfile?.biologicalSex);
@@ -118,10 +123,23 @@ export function WalkingProfileScreen({
     profile === null
       ? null
       : estimatePersonalizedStepLengthMeters(profile, currentYear);
+  const goalRecommendation = useMemo(
+    () =>
+      profile === null
+        ? null
+        : recommendPersonalizedDailyGoal(profile, currentYear),
+    [currentYear, profile],
+  );
   const bodyMassIndex =
     profile === null
       ? null
       : profile.weightKg / Math.pow(profile.heightCm / 100, 2);
+
+  useEffect(() => {
+    if (goalRecommendation !== null && !goalManuallyEdited) {
+      setDailyGoalSteps(String(goalRecommendation.dailyGoalSteps));
+    }
+  }, [goalManuallyEdited, goalRecommendation]);
 
   const save = async () => {
     if (profile === null || !goalValid) {
@@ -152,7 +170,7 @@ export function WalkingProfileScreen({
         >
           <View style={styles.brandRow}>
             <View style={styles.brandMark}>
-              <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={25} />
+              <BrandLogo size={42} />
             </View>
             <View>
               <Text style={styles.brand}>CHIMap</Text>
@@ -195,7 +213,10 @@ export function WalkingProfileScreen({
               />
               <ProfileNumberField
                 label="하루 목표"
-                onChange={setDailyGoalSteps}
+                onChange={(value) => {
+                  setGoalManuallyEdited(true);
+                  setDailyGoalSteps(value);
+                }}
                 unit="걸음"
                 value={dailyGoalSteps}
               />
@@ -230,6 +251,54 @@ export function WalkingProfileScreen({
                 })}
               </View>
             </View>
+
+            {goalRecommendation === null ? null : (
+              <View
+                accessibilityLiveRegion="polite"
+                style={styles.goalRecommendation}
+              >
+                <View style={styles.goalRecommendationHeading}>
+                  <Text style={styles.goalRecommendationLabel}>
+                    논문 근거 기반 첫 목표
+                  </Text>
+                  <Text style={styles.goalRecommendationValue}>
+                    {goalRecommendation.dailyGoalSteps.toLocaleString()}걸음
+                  </Text>
+                </View>
+                <Text style={styles.goalRecommendationBody}>
+                  만 {goalRecommendation.age}세 연구 범위는 {" "}
+                  {goalRecommendation.evidenceRange.minSteps.toLocaleString()}~
+                  {goalRecommendation.evidenceRange.maxSteps.toLocaleString()}
+                  걸음이며, 현재 신체정보로 환산하면 약 {" "}
+                  {(goalRecommendation.estimatedDistanceMeters / 1_000).toFixed(1)}
+                  km입니다.
+                </Text>
+                <Text style={styles.goalRecommendationNote}>
+                  나이는 걸음 목표 범위를 정하고 신장·체중·성별은 예상 보폭과
+                  거리 환산에만 사용합니다.
+                </Text>
+                {parsedGoal === goalRecommendation.dailyGoalSteps ? (
+                  <Text style={styles.goalRecommendationApplied}>
+                    추천값 적용 중
+                  </Text>
+                ) : (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setGoalManuallyEdited(true);
+                      setDailyGoalSteps(
+                        String(goalRecommendation.dailyGoalSteps),
+                      );
+                    }}
+                    style={styles.goalRecommendationButton}
+                  >
+                    <Text style={styles.goalRecommendationButtonText}>
+                      추천값 적용
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
 
             <View style={styles.estimate}>
               <Text style={styles.estimateLabel}>연구 기반 예상 한 걸음 길이</Text>
@@ -311,7 +380,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 13,
-    backgroundColor: chimapTheme.orange,
+    overflow: "hidden",
   },
   brand: { color: chimapTheme.navyStrong, fontSize: 22, fontWeight: "900" },
   brandTagline: { color: chimapTheme.muted, fontSize: 12 },
@@ -373,6 +442,61 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     backgroundColor: chimapTheme.personalizationSurface,
+  },
+  goalRecommendation: {
+    gap: 7,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(99, 183, 70, 0.34)",
+    borderRadius: 16,
+    backgroundColor: "#F2F8E9",
+  },
+  goalRecommendationHeading: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  goalRecommendationLabel: {
+    flex: 1,
+    color: "#58705D",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  goalRecommendationValue: {
+    color: "#377B2E",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  goalRecommendationBody: {
+    color: "#405A4A",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  goalRecommendationNote: {
+    color: "#58705D",
+    fontSize: 11,
+    lineHeight: 17,
+  },
+  goalRecommendationApplied: {
+    color: "#377B2E",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  goalRecommendationButton: {
+    minHeight: 44,
+    alignSelf: "flex-start",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "rgba(55, 123, 46, 0.35)",
+    borderRadius: 11,
+    backgroundColor: chimapTheme.white,
+  },
+  goalRecommendationButtonText: {
+    color: "#2F6D28",
+    fontSize: 12,
+    fontWeight: "800",
   },
   estimateLabel: { color: chimapTheme.teal, fontSize: 12, fontWeight: "800" },
   estimateValue: { color: chimapTheme.navyStrong, fontSize: 26, fontWeight: "900" },
