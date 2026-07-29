@@ -227,12 +227,13 @@ jobs:
           java-version: "17"
 
       - name: Install Android SDK 36 and NDK 27.1
-        run: >-
-          sdkmanager
-          "platform-tools"
-          "platforms;android-36"
-          "build-tools;36.0.0"
-          "ndk;27.1.12297006"
+        run: |
+          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.1.12297006"
 
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@10.15.1 --activate
