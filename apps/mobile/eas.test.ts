@@ -18,6 +18,12 @@ const mobilePackage = JSON.parse(
     "utf8",
   ),
 ) as { scripts?: Record<string, string> };
+const workspacePackage = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("../../package.json", import.meta.url)),
+    "utf8",
+  ),
+) as { packageManager?: string };
 
 describe("EAS Android release interface", () => {
   it("remote version source와 세 build profile만 노출한다", () => {
@@ -31,7 +37,6 @@ describe("EAS Android release interface", () => {
       development: {
         node: "24.18.0",
         pnpm: "10.15.1",
-        corepack: true,
         developmentClient: true,
         distribution: "internal",
         environment: "development",
@@ -41,7 +46,6 @@ describe("EAS Android release interface", () => {
       "staging-device": {
         node: "24.18.0",
         pnpm: "10.15.1",
-        corepack: true,
         distribution: "internal",
         environment: "preview",
         env: { APP_ENV: "staging" },
@@ -50,7 +54,6 @@ describe("EAS Android release interface", () => {
       "play-internal": {
         node: "24.18.0",
         pnpm: "10.15.1",
-        corepack: true,
         distribution: "store",
         autoIncrement: true,
         environment: "production",
@@ -58,6 +61,10 @@ describe("EAS Android release interface", () => {
         android: { buildType: "app-bundle" },
       },
     });
+    expect(workspacePackage.packageManager).toBe("pnpm@10.15.1");
+    for (const profile of Object.values(eas.build)) {
+      expect(profile).not.toHaveProperty("corepack");
+    }
   });
 
   it("internal draft submit만 허용하고 production track은 노출하지 않는다", () => {

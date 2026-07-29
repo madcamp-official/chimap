@@ -95,6 +95,12 @@ sdkmanager --list_installed
 EAS CLI는 전역 설치하지 않습니다. 모든 EAS 명령은 `pnpm dlx eas-cli`로
 실행합니다.
 
+EAS profile은 Node 24와 pnpm 10.15.1을 명시하고 `corepack` 옵션은 사용하지
+않습니다. EAS worker는 profile의 pnpm을 global로 설치하므로, Node 24에서 먼저
+Corepack shim을 활성화하면 같은 실행 파일 경로가 충돌해 `EEXIST`로 builder가
+중단됩니다. 로컬과 CI는 workspace root의 `packageManager`를 통해 같은 pnpm 버전을
+사용합니다.
+
 ## 3. 환경 변수와 secret 경계
 
 `apps/mobile/.env`에는 client binary에 포함될 수 있는 다음 값만 둡니다.
