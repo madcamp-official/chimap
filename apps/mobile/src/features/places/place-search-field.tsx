@@ -12,6 +12,11 @@ import {
 
 import { chimapTheme } from "../../theme/chimap-theme";
 import { AppIcon } from "../../components/app-icon";
+import {
+  androidCardSurface,
+  androidRipple,
+  platformText,
+} from "../../theme/platform-ui";
 import { searchPlaces } from "./place-api";
 
 function providerLabel(place: Place): string {
@@ -134,6 +139,7 @@ export function PlaceSearchField({
             accessibilityHint="입력 내용과 검색 결과를 지우고 키보드를 닫습니다."
             accessibilityLabel={`${label} 입력 취소`}
             accessibilityRole="button"
+            android_ripple={androidRipple}
             hitSlop={10}
             onPress={() => {
               requestSequence.current += 1;
@@ -158,6 +164,7 @@ export function PlaceSearchField({
           {results.map((place) => (
             <Pressable
               accessibilityRole="button"
+              android_ripple={androidRipple}
               key={place.id}
               onPress={() => {
                 onSelect(place);
@@ -192,7 +199,7 @@ export function PlaceSearchField({
 
 const styles = StyleSheet.create({
   container: { gap: 6 },
-  label: { marginLeft: 3, color: chimapTheme.muted, fontSize: 11, fontWeight: "800" },
+  label: { ...platformText, marginLeft: 3, color: chimapTheme.muted, fontSize: 11, fontWeight: "800" },
   inputWrap: {
     minHeight: 48,
     flexDirection: "row",
@@ -206,6 +213,7 @@ const styles = StyleSheet.create({
   },
   inputWrapFocused: { borderWidth: 2, borderColor: chimapTheme.teal },
   input: {
+    ...platformText,
     minWidth: 0,
     minHeight: 48,
     flex: 1,
@@ -213,9 +221,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
-  clearButton: { width: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
-  message: { marginHorizontal: 3, color: chimapTheme.danger, fontSize: 12, lineHeight: 17 },
+  clearButton: { width: 48, minHeight: 48, overflow: "hidden", alignItems: "center", justifyContent: "center", borderRadius: 24 },
+  message: { ...platformText, marginHorizontal: 3, color: chimapTheme.danger, fontSize: 12, lineHeight: 17 },
   results: {
+    ...androidCardSurface,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: chimapTheme.line,
@@ -233,10 +242,11 @@ const styles = StyleSheet.create({
     borderBottomColor: chimapTheme.line,
   },
   resultCopy: { minWidth: 0, flex: 1, gap: 3 },
-  resultTitle: { color: chimapTheme.ink, fontSize: 14, fontWeight: "800" },
-  resultAddress: { color: chimapTheme.muted, fontSize: 11 },
+  resultTitle: { ...platformText, color: chimapTheme.ink, fontSize: 14, fontWeight: "800" },
+  resultAddress: { ...platformText, color: chimapTheme.muted, fontSize: 11 },
   resultTags: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: 5 },
   categoryTag: {
+    ...platformText,
     maxWidth: "68%",
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -247,6 +257,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   providerTag: {
+    ...platformText,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,

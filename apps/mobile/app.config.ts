@@ -182,6 +182,7 @@ export function createExpoConfig(
       ],
       "react-native-health-connect",
       "./plugins/with-health-connect-main-activity.cjs",
+      "./plugins/with-light-android-modal-status-bar.cjs",
       "./plugins/with-gradle-wrapper-timeout.cjs",
       [
         "expo-location",

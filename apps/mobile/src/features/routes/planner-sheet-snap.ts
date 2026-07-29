@@ -7,8 +7,10 @@ const snaps: PlannerSheetSnap[] = ["expanded", "middle", "collapsed"];
 export function plannerSheetOffsets(
   stageHeight: number,
   bottomInset: number,
+  collapsedContentHeight = 72,
 ): PlannerSheetOffsets {
-  const collapsedVisibleHeight = 72 + Math.max(0, bottomInset);
+  const collapsedVisibleHeight =
+    collapsedContentHeight + Math.max(0, bottomInset);
   const collapsed = Math.max(0, stageHeight - collapsedVisibleHeight);
   const middle = Math.max(
     0,

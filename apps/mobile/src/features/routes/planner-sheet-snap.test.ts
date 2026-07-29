@@ -13,6 +13,14 @@ describe("planner bottom sheet snap", () => {
     expect(offsets).toEqual({ expanded: 0, middle: 310, collapsed: 614 });
   });
 
+  it("큰 글자에서는 최소화된 요약 영역도 잘리지 않게 높이를 늘린다", () => {
+    expect(plannerSheetOffsets(720, 34, 112)).toEqual({
+      expanded: 0,
+      middle: 310,
+      collapsed: 574,
+    });
+  });
+
   it("놓은 위치와 진행 속도에 가장 가까운 단계로 자석처럼 붙는다", () => {
     expect(nearestPlannerSheetSnap(offsets, 300, 0)).toBe("middle");
     expect(nearestPlannerSheetSnap(offsets, 520, -1.4)).toBe("middle");

@@ -145,7 +145,9 @@ node scripts/verify-mobile-native-config.mjs all
 
 검증기는 package/bundle ID, SDK, versionCode, cleartext, NAVER provider ID 분리,
 Kakao scheme, adaptive/monochrome icon, foreground location와 READ_STEPS만 허용되는지,
-server secret이 generated project에 들어가지 않았는지를 검사합니다.
+server secret이 generated project에 들어가지 않았는지를 검사합니다. 향후 추가되는
+native Android Dialog에도 안전한 기본값이 적용되도록 CNG plugin이 흰 화면용 dark
+status icon theme을 생성하는지도 함께 검사합니다.
 
 작업 뒤 `git status --short`에서 generated `android/ios`가 나타나거나 tracked diff가
 생기면 안 됩니다.
@@ -307,6 +309,18 @@ request ID와 계정 식별자를 마스킹합니다.
 - [ ] background/foreground, force-stop, offline cache 복구
 
 ### Android UI와 접근성
+
+Android 아이콘은 `expo-symbols`의 Material Symbols source를 고정 크기 이미지로
+렌더링합니다. 장식 아이콘은 TalkBack 트리에서 제외하고 시스템 font scale에 의해
+아이콘 자체가 잘리지 않게 하며, 버튼의 의미는 부모 `accessibilityLabel`이
+전달합니다. font scale이 커지면 메인 header는 두 줄로 재배치되고 접힌 경로 sheet는
+높이를 확보합니다. 검색·추천 결과가 있는 sheet 본문은 화면 높이 안에서 스크롤해야
+합니다. RN 0.85의 Android Dialog는 흰 화면에서도 main screen의 light status icon을
+복사하므로 계정·상세 화면은 동일 Activity의 full-screen accessibility overlay로
+표시하고, iOS는 native page sheet를 유지합니다. 선택한 추천 경로는 재실행 후
+복원하지만 상세 modal의 열린 상태는 복원하지
+않습니다. cold start에서 메인 지도와 상세 지도를 동시에 생성하지 않기 위한 native
+map 생명주기 원칙입니다.
 
 - [ ] gesture back과 3-button back 모두 modal → sheet → screen 순서
 - [ ] keyboard resize와 sheet CTA bottom safe area

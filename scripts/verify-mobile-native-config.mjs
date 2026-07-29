@@ -219,6 +219,10 @@ if (verifyAndroid) {
     ),
     "utf8",
   );
+  const androidStyles = await readFile(
+    join(androidRoot, "app", "src", "main", "res", "values", "styles.xml"),
+    "utf8",
+  );
   const gradleWrapperProperties = await readFile(
     join(androidRoot, "gradle", "wrapper", "gradle-wrapper.properties"),
     "utf8",
@@ -405,6 +409,12 @@ if (verifyAndroid) {
   checks.set(
     "Android resize keyboard mode",
     androidManifest.includes('android:windowSoftInputMode="adjustResize"'),
+  );
+  checks.set(
+    "Android modal theme light status icons",
+    /<style name="Theme\.FullScreenDialog">[\s\S]*?<item name="android:windowLightStatusBar">true<\/item>[\s\S]*?<\/style>/u.test(
+      androidStyles,
+    ),
   );
   checks.set(
     "Android adaptive icon foreground",

@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 
 describe("RouteStore persistence", () => {
-  it("eviction 뒤 선택 route와 열린 상세 sheet를 같은 사용자 key에서 복원한다", async () => {
+  it("eviction 뒤 선택 route만 복원하고 상세 modal은 닫힌 상태로 시작한다", async () => {
     const first = createRouteStore("chimap:development:ios:user-a:route:v1");
     first.getState().openDetail("goal-route", "GOAL");
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -33,7 +33,7 @@ describe("RouteStore persistence", () => {
       hydrated: true,
       selectedRouteId: "goal-route",
       selectedRouteType: "GOAL",
-      detailSheet: { open: true, routeId: "goal-route" },
+      detailSheet: { open: false, routeId: null },
     });
   });
 

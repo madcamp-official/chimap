@@ -57,7 +57,9 @@ function persistedPart(state: RouteStoreState): PersistedRouteStateV1 {
     requestHash: state.requestHash,
     selectedRouteId: state.selectedRouteId,
     selectedRouteType: state.selectedRouteType,
-    detailSheet: state.detailSheet,
+    // A modal is ephemeral UI. Restoring it can mount two native maps during
+    // cold start before either surface is ready; preserve selection, not focus.
+    detailSheet: { open: false, routeId: null },
   };
 }
 
@@ -75,11 +77,6 @@ function migratePersistedState(value: unknown): PersistedRouteStateV1 {
     typeof candidate.selectedRouteId === "string" &&
     candidate.selectedRouteId.length > 0
       ? candidate.selectedRouteId
-      : null;
-  const detailRouteId =
-    typeof candidate.detailSheet?.routeId === "string" &&
-    candidate.detailSheet.routeId.length > 0
-      ? candidate.detailSheet.routeId
       : null;
   const requestHash =
     request.success &&
@@ -105,16 +102,7 @@ function migratePersistedState(value: unknown): PersistedRouteStateV1 {
     requestHash,
     selectedRouteId,
     selectedRouteType: routeType.success ? routeType.data : null,
-    detailSheet: {
-      open:
-        candidate.detailSheet?.open === true &&
-        detailRouteId !== null &&
-        selectedRouteId === detailRouteId,
-      routeId:
-        candidate.detailSheet?.open === true && selectedRouteId === detailRouteId
-          ? detailRouteId
-          : null,
-    },
+    detailSheet: { open: false, routeId: null },
   };
 }
 

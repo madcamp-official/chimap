@@ -13,7 +13,14 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   AccessibilityInfo,
@@ -28,8 +35,10 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StatusBar as NativeStatusBar,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import {
@@ -50,6 +59,13 @@ import {
   type StepSourceRecoveryAction,
 } from "../../platform/steps/steps-contract";
 import { chimapTheme } from "../../theme/chimap-theme";
+import {
+  androidCardSurface,
+  androidFloatingSurface,
+  androidRipple,
+  androidRippleOnDark,
+  platformText,
+} from "../../theme/platform-ui";
 import { useMobileConfig } from "../api/mobile-config";
 import { reverseGeocode } from "../places/place-api";
 import { PlaceSearchField } from "../places/place-search-field";
@@ -108,6 +124,70 @@ function healthErrorMessage(error: StepSourceError): string {
     return `${healthServiceName()}를 사용할 수 없습니다. 잠시 후 다시 시도하거나 걸음 수를 직접 입력해 주세요.`;
   }
   return `${healthServiceName()} 걸음 수를 읽지 못했습니다. 다시 시도하거나 걸음 수를 직접 입력해 주세요.`;
+}
+
+function useModalStatusBar(open: boolean) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const entry = NativeStatusBar.pushStackEntry({
+      animated: true,
+      barStyle: "dark-content",
+    });
+    if (Platform.OS === "android") {
+      NativeStatusBar.setBarStyle("dark-content", false);
+    }
+    return () => NativeStatusBar.popStackEntry(entry);
+  }, [open]);
+}
+
+function AppModal({
+  children,
+  onRequestClose,
+  visible,
+}: {
+  children: ReactNode;
+  onRequestClose(): void;
+  visible: boolean;
+}) {
+  useModalStatusBar(visible);
+  useEffect(() => {
+    if (Platform.OS !== "android" || !visible) {
+      return undefined;
+    }
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        onRequestClose();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [onRequestClose, visible]);
+
+  if (Platform.OS === "android") {
+    return visible ? (
+      <View
+        accessibilityViewIsModal
+        importantForAccessibility="yes"
+        style={styles.androidModalOverlay}
+      >
+        {children}
+      </View>
+    ) : null;
+  }
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onRequestClose}
+      presentationStyle="pageSheet"
+      visible={visible}
+    >
+      {children}
+    </Modal>
+  );
 }
 
 function RouteTracer() {
@@ -226,6 +306,7 @@ function RouteCard({
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ selected }}
+        android_ripple={androidRipple}
         onPress={onSelect}
         style={styles.routeSummary}
       >
@@ -306,6 +387,7 @@ function RouteCard({
         </Text>
         <Pressable
           accessibilityRole="button"
+          android_ripple={androidRipple}
           onPress={onOpenDetail}
           style={styles.detailButton}
         >
@@ -346,13 +428,7 @@ function AccountSheet({
 }) {
   const stride = estimatePersonalizedStepLengthMeters(profile.walkingProfile);
   return (
-    <Modal
-      animationType="slide"
-      onRequestClose={onClose}
-      presentationStyle="pageSheet"
-      visible={open}
-    >
-      <StatusBar style="dark" />
+    <AppModal onRequestClose={onClose} visible={open}>
       <SafeAreaView edges={["top", "bottom"]} style={styles.detailSafeArea}>
         <ScrollView contentContainerStyle={styles.accountContent}>
           <View style={styles.detailHeading}>
@@ -364,6 +440,7 @@ function AccountSheet({
             <Pressable
               accessibilityLabel="내 정보 닫기"
               accessibilityRole="button"
+              android_ripple={androidRipple}
               onPress={onClose}
               style={styles.closeButton}
             >
@@ -394,6 +471,7 @@ function AccountSheet({
             accessibilityLabel={`${healthServiceName()}에서 현재 걸음 새로고침`}
             accessibilityRole="button"
             accessibilityState={{ disabled: refreshingSteps }}
+            android_ripple={androidRipple}
             disabled={refreshingSteps}
             onPress={() => void onRefreshSteps()}
             style={styles.accountRefreshAction}
@@ -409,6 +487,7 @@ function AccountSheet({
           recoveryAction === "OPEN_SETTINGS" ? (
             <Pressable
               accessibilityRole="button"
+              android_ripple={androidRipple}
               onPress={() => void onRecoverSteps()}
               style={styles.accountRefreshAction}
             >
@@ -422,6 +501,7 @@ function AccountSheet({
           ) : null}
           <Pressable
             accessibilityRole="button"
+            android_ripple={androidRippleOnDark}
             onPress={() => {
               onClose();
               onEditProfile();
@@ -433,6 +513,7 @@ function AccountSheet({
           <View style={styles.accountDangerZone}>
             <Pressable
               accessibilityRole="button"
+              android_ripple={androidRipple}
               onPress={() => void onLogout()}
               style={styles.accountAction}
             >
@@ -440,6 +521,7 @@ function AccountSheet({
             </Pressable>
             <Pressable
               accessibilityRole="button"
+              android_ripple={androidRipple}
               onPress={() =>
                 Alert.alert(
                   "계정을 삭제할까요?",
@@ -461,7 +543,7 @@ function AccountSheet({
           </View>
         </ScrollView>
       </SafeAreaView>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -590,14 +672,10 @@ function RouteDetailSheet({
   vehiclePositions: ReturnType<typeof useRouteTransit>["vehiclePositions"];
   onClose(): void;
 }) {
+  const { width, fontScale } = useWindowDimensions();
+  const stackFacts = width < 340 || fontScale >= 1.6;
   return (
-    <Modal
-      animationType="slide"
-      onRequestClose={onClose}
-      presentationStyle="pageSheet"
-      visible={open && route !== null}
-    >
-      <StatusBar style="dark" />
+    <AppModal onRequestClose={onClose} visible={open && route !== null}>
       {route === null ? null : (
         <SafeAreaView edges={["top", "bottom"]} style={styles.detailSafeArea}>
           <ScrollView contentContainerStyle={styles.detailContent}>
@@ -610,6 +688,7 @@ function RouteDetailSheet({
               <Pressable
                 accessibilityLabel="건강 경로 상세 닫기"
                 accessibilityRole="button"
+                android_ripple={androidRipple}
                 onPress={onClose}
                 style={styles.closeButton}
               >
@@ -624,30 +703,30 @@ function RouteDetailSheet({
               viewportInsets={{ top: 16, right: 16, bottom: 16, left: 16 }}
               style={styles.detailMap}
             />
-            <View style={styles.detailFacts}>
-              <View style={styles.detailFact}>
+            <View style={[styles.detailFacts, stackFacts && styles.detailFactsStacked]}>
+              <View style={[styles.detailFact, stackFacts && styles.detailFactStacked]}>
                 <Text style={styles.detailFactLabel}>소요 시간</Text>
                 <Text style={styles.detailFactValue}>{minutes(route.durationSeconds)}</Text>
               </View>
-              <View style={styles.detailFact}>
+              <View style={[styles.detailFact, stackFacts && styles.detailFactStacked]}>
                 <Text style={styles.detailFactLabel}>예상 도착</Text>
                 <Text style={styles.detailFactValue}>{clockTime(route.arrivalAt)}</Text>
               </View>
-              <View style={styles.detailFact}>
+              <View style={[styles.detailFact, stackFacts && styles.detailFactStacked]}>
                 <Text style={styles.detailFactLabel}>예상 요금</Text>
                 <Text style={styles.detailFactValue}>{route.fareWon === undefined ? "정보 없음" : `${route.fareWon.toLocaleString()}원`}</Text>
               </View>
             </View>
-            <View style={styles.detailFacts}>
-              <View style={styles.detailFact}>
+            <View style={[styles.detailFacts, stackFacts && styles.detailFactsStacked]}>
+              <View style={[styles.detailFact, stackFacts && styles.detailFactStacked]}>
                 <Text style={styles.detailFactLabel}>걷는 거리</Text>
                 <Text style={styles.detailFactValue}>{meters(route.walkDistanceMeters)}</Text>
               </View>
-              <View style={styles.detailFact}>
+              <View style={[styles.detailFact, stackFacts && styles.detailFactStacked]}>
                 <Text style={styles.detailFactLabel}>예상 걸음</Text>
                 <Text style={styles.detailFactValue}>{route.estimatedSteps.toLocaleString()}</Text>
               </View>
-              <View style={styles.detailFact}>
+              <View style={[styles.detailFact, stackFacts && styles.detailFactStacked]}>
                 <Text style={styles.detailFactLabel}>목표 달성</Text>
                 <Text style={styles.detailFactValue}>{Math.round(route.dailyGoalCompletionRate * 100)}%</Text>
               </View>
@@ -714,7 +793,45 @@ function RouteDetailSheet({
           </ScrollView>
         </SafeAreaView>
       )}
-    </Modal>
+    </AppModal>
+  );
+}
+
+function HeaderMetrics({
+  accessible,
+  currentStepsLabel,
+  goalStepsLabel,
+  readingSteps,
+}: {
+  accessible: boolean;
+  currentStepsLabel: string;
+  goalStepsLabel: string;
+  readingSteps: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.headerMetrics,
+        accessible && styles.headerMetricsAccessible,
+      ]}
+    >
+      <View
+        accessibilityLabel={`현재 걸음 ${currentStepsLabel}걸음`}
+        style={styles.compactMetric}
+      >
+        <Text style={styles.compactMetricLabel}>현재걸음</Text>
+        <Text style={styles.compactMetricValue}>
+          {readingSteps ? "확인 중" : currentStepsLabel}
+        </Text>
+      </View>
+      <View
+        accessibilityLabel={`목표 걸음 ${goalStepsLabel}걸음`}
+        style={styles.compactMetric}
+      >
+        <Text style={styles.compactMetricLabel}>목표걸음</Text>
+        <Text style={styles.compactMetricValue}>{goalStepsLabel}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -736,6 +853,8 @@ export function PlannerScreen({
   onDeleteAccount(): Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
+  const accessibleHeader = fontScale >= 1.3;
   const mobileConfig = useMobileConfig();
   const hydrated = useRouteStore((state) => state.hydrated);
   const lastRequest = useRouteStore((state) => state.lastRequest);
@@ -783,13 +902,19 @@ export function PlannerScreen({
   const [mapStageWidth, setMapStageWidth] = useState(0);
   const [mapStageHeight, setMapStageHeight] = useState(0);
   const [sheetSnap, setSheetSnap] = useState<PlannerSheetSnap>("middle");
+  const collapsedSheetHeight = accessibleHeader ? 112 : 72;
   const sheetPosition = useRef(new Animated.Value(1_000)).current;
   const sheetCurrentPosition = useRef(1_000);
   const sheetDragStart = useRef(1_000);
   const sheetSnapRef = useRef<PlannerSheetSnap>("middle");
   const sheetOffsets = useMemo(
-    () => plannerSheetOffsets(mapStageHeight, insets.bottom),
-    [insets.bottom, mapStageHeight],
+    () =>
+      plannerSheetOffsets(
+        mapStageHeight,
+        insets.bottom,
+        collapsedSheetHeight,
+      ),
+    [collapsedSheetHeight, insets.bottom, mapStageHeight],
   );
   const sheetOffsetsRef = useRef(sheetOffsets);
   sheetOffsetsRef.current = sheetOffsets;
@@ -870,7 +995,7 @@ export function PlannerScreen({
     if (mapStageHeight > 0) {
       snapSheet(sheetSnapRef.current, false);
     }
-  }, [insets.bottom, mapStageHeight, snapSheet]);
+  }, [collapsedSheetHeight, insets.bottom, mapStageHeight, snapSheet]);
 
   const sheetPanResponder = useMemo(
     () =>
@@ -1133,7 +1258,11 @@ export function PlannerScreen({
     : "0";
 
   const toggleSheet = () => {
-    snapSheet(plannerSheetTransition(sheetSnap, { type: "TOGGLE" }));
+    snapSheet(
+      accessibleHeader && sheetSnap === "collapsed"
+        ? "expanded"
+        : plannerSheetTransition(sheetSnap, { type: "TOGGLE" }),
+    );
   };
 
   if (!hydrated) {
@@ -1146,35 +1275,55 @@ export function PlannerScreen({
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>
+      <StatusBar style="light" />
+      <View
+        importantForAccessibility={
+          accountOpen || detailSheet.open ? "no-hide-descendants" : "auto"
+        }
+        style={styles.flex}
+      >
       <View style={styles.appHeader}>
-        <View style={styles.headerCompactRow}>
+        <View
+          style={[
+            styles.headerCompactRow,
+            accessibleHeader && styles.headerAccessible,
+          ]}
+        >
           <View style={styles.brandLockup}>
             <View style={styles.brandMark}>
               <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={18} />
             </View>
             <Text style={styles.brand}>CHIMap</Text>
           </View>
-          <View accessibilityLabel={`현재 걸음 ${currentStepsLabel}걸음`} style={styles.compactMetric}>
-            <Text style={styles.compactMetricLabel}>현재걸음</Text>
-            <Text style={styles.compactMetricValue}>
-              {readingSteps ? "확인 중" : currentStepsLabel}
-            </Text>
-          </View>
-          <View accessibilityLabel={`목표 걸음 ${profile.dailyGoalSteps.toLocaleString()}걸음`} style={styles.compactMetric}>
-            <Text style={styles.compactMetricLabel}>목표걸음</Text>
-            <Text style={styles.compactMetricValue}>
-              {profile.dailyGoalSteps.toLocaleString()}
-            </Text>
-          </View>
+          {accessibleHeader ? null : (
+            <HeaderMetrics
+              accessible={false}
+              currentStepsLabel={currentStepsLabel}
+              goalStepsLabel={profile.dailyGoalSteps.toLocaleString()}
+              readingSteps={readingSteps}
+            />
+          )}
           <Pressable
             accessibilityLabel="내 정보 열기"
             accessibilityRole="button"
+            android_ripple={androidRippleOnDark}
             onPress={() => setAccountOpen(true)}
-            style={styles.accountButton}
+            style={[
+              styles.accountButton,
+              accessibleHeader && styles.accountButtonAccessible,
+            ]}
           >
             <AppIcon color={chimapTheme.white} name="person" size={17} />
             <Text style={styles.accountButtonText}>내 정보</Text>
           </Pressable>
+          {accessibleHeader ? (
+            <HeaderMetrics
+              accessible
+              currentStepsLabel={currentStepsLabel}
+              goalStepsLabel={profile.dailyGoalSteps.toLocaleString()}
+              readingSteps={readingSteps}
+            />
+          ) : null}
         </View>
       </View>
 
@@ -1218,6 +1367,7 @@ export function PlannerScreen({
             accessibilityLabel="지도에서 내 위치 보기"
             accessibilityRole="button"
             accessibilityState={{ disabled: locating }}
+            android_ripple={androidRipple}
             disabled={locating}
               onPress={() => void focusCurrentLocation()}
               style={[
@@ -1234,7 +1384,10 @@ export function PlannerScreen({
             {selectedRoute === null || sheetSnap !== "collapsed" ? null : (
               <View
                 pointerEvents="none"
-                style={[styles.mapLegend, { bottom: 84 + insets.bottom }]}
+                style={[
+                  styles.mapLegend,
+                  { bottom: collapsedSheetHeight + 12 + insets.bottom },
+                ]}
               >
                 <Text style={styles.legendWalk}>━ 도보</Text>
                 <Text style={styles.legendBus}>━ 버스</Text>
@@ -1253,6 +1406,7 @@ export function PlannerScreen({
               {...sheetPanResponder.panHandlers}
               style={[
                 styles.sheetDragArea,
+                accessibleHeader && styles.sheetDragAreaAccessible,
                 sheetSnap === "collapsed" && {
                   paddingBottom: insets.bottom,
                 },
@@ -1267,8 +1421,12 @@ export function PlannerScreen({
                     : "건강 경로 찾기 최소화"
                 }
                 accessibilityRole="button"
+                android_ripple={androidRipple}
                 onPress={toggleSheet}
-                style={styles.sheetTab}
+                style={[
+                  styles.sheetTab,
+                  accessibleHeader && styles.sheetTabAccessible,
+                ]}
               >
                 <View style={styles.sheetTabCopy}>
                   <Text style={styles.eyebrow}>건강 경로 찾기</Text>
@@ -1293,6 +1451,7 @@ export function PlannerScreen({
               keyboardShouldPersistTaps="handled"
               scrollEnabled={sheetSnap !== "collapsed"}
               showsVerticalScrollIndicator={sheetSnap === "expanded"}
+              style={styles.sheetScroll}
             >
             <View style={styles.searchFields}>
               <PlaceSearchField
@@ -1313,6 +1472,7 @@ export function PlannerScreen({
               <View style={styles.placeActions}>
                 <Pressable
                   accessibilityRole="button"
+                  android_ripple={androidRipple}
                   disabled={origin === null && destination === null}
                   onPress={() => {
                     setOrigin(destination);
@@ -1326,6 +1486,7 @@ export function PlannerScreen({
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
+                  android_ripple={androidRipple}
                   disabled={locating}
                   onPress={() => void useCurrentLocation()}
                   style={styles.placeAction}
@@ -1358,6 +1519,7 @@ export function PlannerScreen({
             )}
             <Pressable
               accessibilityRole="button"
+              android_ripple={androidRippleOnDark}
               disabled={
                 origin === null ||
                 destination === null ||
@@ -1407,6 +1569,7 @@ export function PlannerScreen({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityState={{ expanded: warningsOpen }}
+                      android_ripple={androidRipple}
                       onPress={() => setWarningsOpen((value) => !value)}
                       style={styles.noticeHeader}
                     >
@@ -1451,6 +1614,7 @@ export function PlannerScreen({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      </View>
       <RouteDetailSheet
         accessToken={accessToken}
         apiBaseUrl={apiBaseUrl}
@@ -1497,129 +1661,148 @@ export function PlannerScreen({
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  androidModalOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1000,
+    elevation: 30,
+    backgroundColor: chimapTheme.canvas,
+  },
   safeArea: { flex: 1, backgroundColor: chimapTheme.navy },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: chimapTheme.canvas },
-  appHeader: { paddingHorizontal: 7, paddingVertical: 4, backgroundColor: chimapTheme.navy },
-  headerCompactRow: { minHeight: 48, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 },
-  brandLockup: { minWidth: 104, flexDirection: "row", alignItems: "center", gap: 5 },
+  appHeader: { paddingHorizontal: 8, paddingVertical: 5, backgroundColor: chimapTheme.navy },
+  headerCompactRow: { minHeight: 48, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  headerAccessible: { rowGap: 4 },
+  brandLockup: { minWidth: 104, flexDirection: "row", alignItems: "center", gap: 6 },
   brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: chimapTheme.orange },
-  brand: { minWidth: 0, flexShrink: 1, color: chimapTheme.white, fontSize: 18, fontWeight: "900" },
-  compactMetric: { minWidth: 64, minHeight: 48, flex: 1, justifyContent: "center", paddingLeft: 7, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: chimapTheme.dividerOnNavy },
-  compactMetricLabel: { color: chimapTheme.textOnNavyMuted, fontSize: 8, fontWeight: "800" },
-  compactMetricValue: { color: chimapTheme.white, fontSize: 13, fontWeight: "900" },
-  accountButton: { width: 64, minHeight: 48, alignItems: "center", justifyContent: "center", gap: 1, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.1)" },
-  accountButtonText: { color: chimapTheme.white, fontSize: 8, fontWeight: "800" },
+  brand: { ...platformText, minWidth: 0, flexShrink: 1, color: chimapTheme.white, fontSize: 18, fontWeight: "900" },
+  headerMetrics: { minWidth: 128, flex: 1, flexDirection: "row" },
+  headerMetricsAccessible: { width: "100%", flexBasis: "100%", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chimapTheme.dividerOnNavy },
+  compactMetric: { minWidth: 64, minHeight: 48, flex: 1, justifyContent: "center", paddingHorizontal: 9, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: chimapTheme.dividerOnNavy },
+  compactMetricLabel: { ...platformText, color: chimapTheme.textOnNavyMuted, fontSize: 8, fontWeight: "800" },
+  compactMetricValue: { ...platformText, color: chimapTheme.white, fontSize: 13, fontWeight: "900" },
+  accountButton: { width: 64, minHeight: 48, overflow: "hidden", alignItems: "center", justifyContent: "center", gap: 1, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.1)" },
+  accountButtonAccessible: { marginLeft: "auto" },
+  accountButtonText: { ...platformText, color: chimapTheme.white, fontSize: 8, fontWeight: "800" },
   mapStage: { flex: 1, overflow: "hidden", backgroundColor: chimapTheme.mapCanvas },
   mapShell: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, overflow: "hidden", backgroundColor: chimapTheme.mapCanvas },
-  mapHint: { position: "absolute", top: 8, left: 8, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 999, backgroundColor: chimapTheme.mapOverlay },
-  mapHintTitle: { color: chimapTheme.navyStrong, fontSize: 11, fontWeight: "900" },
-  mapHintBody: { color: chimapTheme.muted, fontSize: 8, fontWeight: "700" },
-  mapLocationButton: { position: "absolute", right: 12, width: 48, height: 48, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: chimapTheme.line, borderRadius: 24, backgroundColor: chimapTheme.mapOverlay, shadowColor: chimapTheme.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 5, elevation: 4 },
+  mapHint: { ...androidFloatingSurface, position: "absolute", top: 8, left: 8, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 999, backgroundColor: chimapTheme.mapOverlay },
+  mapHintTitle: { ...platformText, color: chimapTheme.navyStrong, fontSize: 11, fontWeight: "900" },
+  mapHintBody: { ...platformText, color: chimapTheme.muted, fontSize: 8, fontWeight: "700" },
+  mapLocationButton: { ...androidFloatingSurface, position: "absolute", right: 12, width: 48, height: 48, overflow: "hidden", alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: chimapTheme.line, borderRadius: 24, backgroundColor: chimapTheme.mapOverlay, shadowColor: chimapTheme.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 5, elevation: 5 },
   mapLegend: { position: "absolute", right: 12, flexDirection: "row", gap: 9, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 11, backgroundColor: chimapTheme.mapOverlay },
-  legendWalk: { color: chimapTheme.orange, fontSize: 9, fontWeight: "900" },
-  legendBus: { color: chimapTheme.busBlue, fontSize: 9, fontWeight: "900" },
-  legendSubway: { color: chimapTheme.purple, fontSize: 9, fontWeight: "900" },
+  legendWalk: { ...platformText, color: chimapTheme.orange, fontSize: 9, fontWeight: "900" },
+  legendBus: { ...platformText, color: chimapTheme.busBlue, fontSize: 9, fontWeight: "900" },
+  legendSubway: { ...platformText, color: chimapTheme.purple, fontSize: 9, fontWeight: "900" },
   tripSheet: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, overflow: "hidden", borderTopLeftRadius: 27, borderTopRightRadius: 27, borderWidth: 1, borderBottomWidth: 0, borderColor: chimapTheme.sheetBorder, backgroundColor: chimapTheme.paper, shadowColor: chimapTheme.shadow, shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.14, shadowRadius: 14, elevation: 12 },
   sheetDragArea: { minHeight: 72, paddingHorizontal: 16, paddingTop: 8, backgroundColor: chimapTheme.paper },
+  sheetDragAreaAccessible: { minHeight: 112 },
   sheetHandle: { width: 42, height: 5, alignSelf: "center", borderRadius: 999, backgroundColor: chimapTheme.handle },
-  sheetTab: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10 },
+  sheetTab: { minHeight: 54, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14 },
+  sheetTabAccessible: { minHeight: 88 },
   sheetTabCopy: { minWidth: 0, flex: 1, gap: 3 },
-  sheetSummary: { color: chimapTheme.muted, fontSize: 11, fontWeight: "700" },
+  sheetSummary: { ...platformText, color: chimapTheme.muted, fontSize: 11, fontWeight: "700" },
   sheetChevron: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
+  sheetScroll: { flex: 1 },
   sheetContent: { gap: 14, paddingHorizontal: 16, paddingTop: 8 },
-  eyebrow: { color: chimapTheme.teal, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  eyebrow: { ...platformText, color: chimapTheme.teal, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   searchFields: { gap: 10 },
   placeActions: { flexDirection: "row", gap: 8 },
-  placeAction: { minHeight: 48, flex: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 8, borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 11, backgroundColor: chimapTheme.white },
-  placeActionText: { color: chimapTheme.muted, fontSize: 11, fontWeight: "800" },
-  message: { padding: 11, borderRadius: 10, color: chimapTheme.danger, backgroundColor: chimapTheme.dangerSurface, fontSize: 12, lineHeight: 18 },
-  primaryButton: { minHeight: 54, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: chimapTheme.navy },
+  placeAction: { minHeight: 48, flex: 1, overflow: "hidden", flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 8, borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 11, backgroundColor: chimapTheme.white },
+  placeActionText: { ...platformText, color: chimapTheme.muted, fontSize: 11, fontWeight: "800" },
+  message: { ...platformText, padding: 11, borderRadius: 10, color: chimapTheme.danger, backgroundColor: chimapTheme.dangerSurface, fontSize: 12, lineHeight: 18 },
+  primaryButton: { minHeight: 54, overflow: "hidden", alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: chimapTheme.navy },
   disabled: { opacity: 0.45 },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 9 },
   loadingColumn: { alignItems: "center", gap: 5 },
   routeTracer: { width: 94, height: 5, flexDirection: "row", overflow: "hidden", borderRadius: 999 },
   routeTracerSegment: { flex: 1 },
-  primaryButtonText: { color: chimapTheme.white, fontSize: 15, fontWeight: "900" },
+  primaryButtonText: { ...platformText, color: chimapTheme.white, fontSize: 15, fontWeight: "900" },
   results: { gap: 13, paddingTop: 7, borderTopWidth: 1, borderTopColor: chimapTheme.line },
   resultsHeading: { gap: 5 },
-  resultsTitle: { color: chimapTheme.ink, fontSize: 21, fontWeight: "900", lineHeight: 28 },
+  resultsTitle: { ...platformText, color: chimapTheme.ink, fontSize: 21, fontWeight: "900", lineHeight: 28 },
   resultsArrow: { color: chimapTheme.orange },
-  sectionTitle: { color: chimapTheme.ink, fontSize: 18, fontWeight: "900" },
-  muted: { color: chimapTheme.muted, fontSize: 12, lineHeight: 18 },
+  sectionTitle: { ...platformText, color: chimapTheme.ink, fontSize: 18, fontWeight: "900" },
+  muted: { ...platformText, color: chimapTheme.muted, fontSize: 12, lineHeight: 18 },
   noticeBox: { gap: 5, padding: 11, borderRadius: 12, backgroundColor: chimapTheme.warningSurface },
-  noticeHeader: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  noticeTitle: { color: chimapTheme.warningText, fontSize: 12, fontWeight: "900" },
-  noticeText: { color: chimapTheme.warningText, fontSize: 11, lineHeight: 16 },
-  supportingNotice: { padding: 10, borderRadius: 10, color: chimapTheme.muted, backgroundColor: chimapTheme.surfaceSubtle, fontSize: 11, lineHeight: 17 },
+  noticeHeader: { minHeight: 48, overflow: "hidden", flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 10 },
+  noticeTitle: { ...platformText, color: chimapTheme.warningText, fontSize: 12, fontWeight: "900" },
+  noticeText: { ...platformText, color: chimapTheme.warningText, fontSize: 11, lineHeight: 16 },
+  supportingNotice: { ...platformText, padding: 10, borderRadius: 10, color: chimapTheme.muted, backgroundColor: chimapTheme.surfaceSubtle, fontSize: 11, lineHeight: 17 },
   routeList: { gap: 9 },
-  routeCard: { overflow: "hidden", borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 16, backgroundColor: chimapTheme.white },
+  routeCard: { ...androidCardSurface, overflow: "hidden", borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 16, backgroundColor: chimapTheme.white },
   routeCardSelected: { borderWidth: 2, borderColor: chimapTheme.teal, backgroundColor: chimapTheme.selectedSurface },
   goalLine: { height: 3, backgroundColor: chimapTheme.orange },
   routeSummary: { gap: 8, padding: 13 },
-  routeTopline: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  routeTopline: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 6 },
   routeType: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999 },
-  routeTypeText: { color: chimapTheme.white, fontSize: 10, fontWeight: "900" },
-  realtimeBadge: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.realtimeText, backgroundColor: chimapTheme.realtimeSurface, fontSize: 10, fontWeight: "900" },
-  estimateBadge: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 10, fontWeight: "900" },
+  routeTypeText: { ...platformText, color: chimapTheme.white, fontSize: 10, fontWeight: "900" },
+  realtimeBadge: { ...platformText, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.realtimeText, backgroundColor: chimapTheme.realtimeSurface, fontSize: 10, fontWeight: "900" },
+  estimateBadge: { ...platformText, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 10, fontWeight: "900" },
   routeTimeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", gap: 8 },
-  routeTime: { color: chimapTheme.navyStrong, fontSize: 25, fontWeight: "900", letterSpacing: -1 },
-  routeArrival: { color: chimapTheme.teal, fontSize: 12, fontWeight: "900" },
-  routeExtra: { color: chimapTheme.muted, fontSize: 10, fontWeight: "700" },
+  routeTime: { ...platformText, color: chimapTheme.navyStrong, fontSize: 25, fontWeight: "900", letterSpacing: -1 },
+  routeArrival: { ...platformText, color: chimapTheme.teal, fontSize: 12, fontWeight: "900" },
+  routeExtra: { ...platformText, color: chimapTheme.muted, fontSize: 10, fontWeight: "700" },
   modeStrip: { height: 8, flexDirection: "row", overflow: "hidden", borderRadius: 999, backgroundColor: chimapTheme.track },
   modeStripSegment: { minWidth: 0, flexBasis: 0 },
-  routeSequence: { color: chimapTheme.navy, fontSize: 12, fontWeight: "900", lineHeight: 18 },
+  routeSequence: { ...platformText, color: chimapTheme.navy, fontSize: 12, fontWeight: "900", lineHeight: 18 },
   modeDistanceLegend: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
   modeDistanceItem: { flexDirection: "row", alignItems: "center", gap: 4 },
   modeDistanceDot: { width: 7, height: 7, borderRadius: 4 },
-  modeDistanceText: { color: chimapTheme.muted, fontSize: 10, fontWeight: "800" },
+  modeDistanceText: { ...platformText, color: chimapTheme.muted, fontSize: 10, fontWeight: "800" },
   routeMetrics: { flexDirection: "row", flexWrap: "wrap", gap: 11 },
-  routeMetric: { color: chimapTheme.muted, fontSize: 10, fontWeight: "700" },
-  routeMetricStrong: { color: chimapTheme.teal, fontSize: 10, fontWeight: "900" },
+  routeMetric: { ...platformText, color: chimapTheme.muted, fontSize: 10, fontWeight: "700" },
+  routeMetricStrong: { ...platformText, color: chimapTheme.teal, fontSize: 10, fontWeight: "900" },
   routeActions: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingLeft: 13, paddingRight: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chimapTheme.track, backgroundColor: chimapTheme.surface },
-  routeReason: { minWidth: 0, flex: 1, color: chimapTheme.muted, fontSize: 10 },
-  detailButton: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8 },
-  detailButtonText: { color: chimapTheme.teal, fontSize: 11, fontWeight: "900" },
-  dataSources: { marginTop: 4, color: chimapTheme.placeholder, fontSize: 9, lineHeight: 14, textAlign: "center" },
+  routeReason: { ...platformText, minWidth: 0, flex: 1, color: chimapTheme.muted, fontSize: 10 },
+  detailButton: { minHeight: 48, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, borderRadius: 12 },
+  detailButtonText: { ...platformText, color: chimapTheme.teal, fontSize: 11, fontWeight: "900" },
+  dataSources: { ...platformText, marginTop: 4, color: chimapTheme.placeholder, fontSize: 9, lineHeight: 14, textAlign: "center" },
   detailSafeArea: { flex: 1, backgroundColor: chimapTheme.canvas },
-  detailContent: { gap: 17, padding: 18, paddingBottom: 34 },
-  accountContent: { gap: 14, padding: 18, paddingBottom: 34 },
-  accountCard: { gap: 1, overflow: "hidden", borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 16, backgroundColor: chimapTheme.white },
+  detailContent: { width: "100%", maxWidth: 680, alignSelf: "center", gap: 17, padding: 18, paddingBottom: 34 },
+  accountContent: { width: "100%", maxWidth: 560, alignSelf: "center", gap: 14, padding: 18, paddingBottom: 34 },
+  accountCard: { ...androidCardSurface, gap: 1, overflow: "hidden", borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 16, backgroundColor: chimapTheme.white },
   accountFactRow: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: chimapTheme.line },
-  accountFactLabel: { color: chimapTheme.muted, fontSize: 12, fontWeight: "800" },
-  accountFactValue: { color: chimapTheme.navy, fontSize: 13, fontWeight: "900" },
-  accountRefreshAction: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 13, backgroundColor: chimapTheme.white },
-  accountRefreshText: { color: chimapTheme.teal, fontSize: 13, fontWeight: "900" },
-  accountPrimaryAction: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: chimapTheme.navy },
-  accountPrimaryText: { color: chimapTheme.white, fontSize: 15, fontWeight: "900" },
+  accountFactLabel: { ...platformText, minWidth: 0, flexShrink: 1, color: chimapTheme.muted, fontSize: 12, fontWeight: "800" },
+  accountFactValue: { ...platformText, minWidth: 0, flexShrink: 1, color: chimapTheme.navy, fontSize: 13, fontWeight: "900", textAlign: "right" },
+  accountRefreshAction: { minHeight: 48, overflow: "hidden", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: chimapTheme.line, borderRadius: 13, backgroundColor: chimapTheme.white },
+  accountRefreshText: { ...platformText, color: chimapTheme.teal, fontSize: 13, fontWeight: "900" },
+  accountPrimaryAction: { minHeight: 52, overflow: "hidden", alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: chimapTheme.navy },
+  accountPrimaryText: { ...platformText, color: chimapTheme.white, fontSize: 15, fontWeight: "900" },
   accountDangerZone: { gap: 1, overflow: "hidden", marginTop: 10, borderRadius: 14, backgroundColor: chimapTheme.white },
   accountAction: { minHeight: 52, alignItems: "center", justifyContent: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: chimapTheme.line },
-  accountActionText: { color: chimapTheme.navy, fontSize: 14, fontWeight: "800" },
-  accountDeleteText: { color: chimapTheme.danger, fontSize: 14, fontWeight: "900" },
+  accountActionText: { ...platformText, color: chimapTheme.navy, fontSize: 14, fontWeight: "800" },
+  accountDeleteText: { ...platformText, color: chimapTheme.danger, fontSize: 14, fontWeight: "900" },
   detailHeading: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   detailHeadingCopy: { minWidth: 0, flex: 1, gap: 5 },
-  detailTitle: { color: chimapTheme.ink, fontSize: 25, fontWeight: "900" },
-  closeButton: { minWidth: 54, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chimapTheme.white },
-  closeButtonText: { color: chimapTheme.teal, fontWeight: "900" },
+  detailTitle: { ...platformText, color: chimapTheme.ink, fontSize: 25, fontWeight: "900" },
+  closeButton: { minWidth: 54, minHeight: 48, overflow: "hidden", alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chimapTheme.white },
+  closeButtonText: { ...platformText, color: chimapTheme.teal, fontWeight: "900" },
   detailMap: { width: "100%", height: 300, overflow: "hidden", borderRadius: 20 },
   detailFacts: { flexDirection: "row", paddingVertical: 13, borderTopWidth: 1, borderBottomWidth: 1, borderColor: chimapTheme.line },
+  detailFactsStacked: { flexDirection: "column", paddingVertical: 0 },
   detailFact: { minWidth: 0, flex: 1, gap: 4, paddingHorizontal: 8, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: chimapTheme.line },
-  detailFactLabel: { color: chimapTheme.muted, fontSize: 9, fontWeight: "700" },
-  detailFactValue: { color: chimapTheme.navy, fontSize: 13, fontWeight: "900" },
-  geometryNotice: { padding: 11, borderRadius: 11, color: chimapTheme.muted, backgroundColor: chimapTheme.surfaceSubtle, fontSize: 12, lineHeight: 18 },
+  detailFactStacked: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 8, borderLeftWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: chimapTheme.line },
+  detailFactLabel: { ...platformText, color: chimapTheme.muted, fontSize: 9, fontWeight: "700" },
+  detailFactValue: { ...platformText, color: chimapTheme.navy, fontSize: 13, fontWeight: "900" },
+  geometryNotice: { ...platformText, padding: 11, borderRadius: 11, color: chimapTheme.muted, backgroundColor: chimapTheme.surfaceSubtle, fontSize: 12, lineHeight: 18 },
   legList: { gap: 9 },
-  legRow: { minHeight: 70, flexDirection: "row", gap: 12, padding: 13, borderRadius: 15, backgroundColor: chimapTheme.white },
+  legRow: { ...androidCardSurface, minHeight: 70, flexDirection: "row", gap: 12, padding: 13, borderRadius: 15, backgroundColor: chimapTheme.white },
   legIndex: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 15 },
-  legIndexText: { color: chimapTheme.white, fontWeight: "900" },
+  legIndexText: { ...platformText, color: chimapTheme.white, fontWeight: "900" },
   legCopy: { minWidth: 0, flex: 1, gap: 5 },
-  legTitle: { color: chimapTheme.ink, fontSize: 14, fontWeight: "900" },
-  legMeta: { color: chimapTheme.muted, fontSize: 11, lineHeight: 17 },
-  exerciseBadge: { alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 9, fontWeight: "900" },
-  lowFloorBadge: { alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.realtimeText, backgroundColor: chimapTheme.realtimeSurface, fontSize: 9, fontWeight: "900" },
-  realtimeText: { color: chimapTheme.realtimeText, fontSize: 10, fontWeight: "900" },
-  estimatedText: { color: chimapTheme.estimatedText, fontSize: 10, fontWeight: "900" },
+  legTitle: { ...platformText, color: chimapTheme.ink, fontSize: 14, fontWeight: "900" },
+  legMeta: { ...platformText, color: chimapTheme.muted, fontSize: 11, lineHeight: 17 },
+  exerciseBadge: { ...platformText, alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 9, fontWeight: "900" },
+  lowFloorBadge: { ...platformText, alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 4, borderRadius: 999, color: chimapTheme.realtimeText, backgroundColor: chimapTheme.realtimeSurface, fontSize: 9, fontWeight: "900" },
+  realtimeText: { ...platformText, color: chimapTheme.realtimeText, fontSize: 10, fontWeight: "900" },
+  estimatedText: { ...platformText, color: chimapTheme.estimatedText, fontSize: 10, fontWeight: "900" },
   estimationBox: { gap: 6, padding: 13, borderRadius: 14, backgroundColor: chimapTheme.surfaceSubtle },
   nearbySection: { gap: 9 },
-  nearbyCard: { gap: 4, padding: 13, borderRadius: 14, backgroundColor: chimapTheme.white },
-  nearbyLabel: { color: chimapTheme.teal, fontSize: 10, fontWeight: "900" },
-  nearbyStation: { color: chimapTheme.navy, fontSize: 14, fontWeight: "900" },
+  nearbyCard: { ...androidCardSurface, gap: 4, padding: 13, borderRadius: 14, backgroundColor: chimapTheme.white },
+  nearbyLabel: { ...platformText, color: chimapTheme.teal, fontSize: 10, fontWeight: "900" },
+  nearbyStation: { ...platformText, color: chimapTheme.navy, fontSize: 14, fontWeight: "900" },
 });

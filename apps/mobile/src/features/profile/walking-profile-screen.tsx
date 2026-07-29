@@ -19,10 +19,17 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppIcon } from "../../components/app-icon";
 import { chimapTheme } from "../../theme/chimap-theme";
+import {
+  androidCardSurface,
+  androidRipple,
+  androidRippleOnDark,
+  platformText,
+} from "../../theme/platform-ui";
 
 const numberInputAccessoryId = "chimap-profile-number-inputs";
 
@@ -54,6 +61,7 @@ function ProfileNumberField({
             : {})}
           keyboardType={decimal ? "decimal-pad" : "number-pad"}
           onChangeText={onChange}
+          selectTextOnFocus
           style={styles.numberInput}
           value={value}
         />
@@ -142,12 +150,14 @@ export function WalkingProfileScreen({
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+      <StatusBar style="dark" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.flex}
       >
         <ScrollView
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.brandRow}>
@@ -210,6 +220,7 @@ export function WalkingProfileScreen({
                     <Pressable
                       accessibilityRole="radio"
                       accessibilityState={{ checked: selected }}
+                      android_ripple={androidRipple}
                       key={sex}
                       onPress={() => setBiologicalSex(sex)}
                       style={[
@@ -266,6 +277,7 @@ export function WalkingProfileScreen({
           )}
           <Pressable
             accessibilityRole="button"
+            android_ripple={androidRippleOnDark}
             disabled={saving}
             onPress={() => void save()}
             style={[styles.primaryButton, saving && styles.disabled]}
@@ -279,6 +291,7 @@ export function WalkingProfileScreen({
           {onCancel === undefined ? null : (
             <Pressable
               accessibilityRole="button"
+              android_ripple={androidRipple}
               onPress={onCancel}
               style={styles.cancelButton}
             >
@@ -303,7 +316,7 @@ export function WalkingProfileScreen({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: chimapTheme.canvas },
-  content: { gap: 20, padding: 20, paddingBottom: 36 },
+  content: { width: "100%", maxWidth: 560, alignSelf: "center", gap: 20, padding: 20, paddingBottom: 36 },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   brandMark: {
     width: 42,
@@ -313,18 +326,20 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: chimapTheme.orange,
   },
-  brand: { color: chimapTheme.navyStrong, fontSize: 22, fontWeight: "900" },
-  brandTagline: { color: chimapTheme.muted, fontSize: 12 },
+  brand: { ...platformText, color: chimapTheme.navyStrong, fontSize: 22, fontWeight: "900" },
+  brandTagline: { ...platformText, color: chimapTheme.muted, fontSize: 12 },
   heading: { gap: 7, marginTop: 8 },
   eyebrow: {
+    ...platformText,
     color: chimapTheme.teal,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.2,
   },
-  title: { color: chimapTheme.ink, fontSize: 28, fontWeight: "900", lineHeight: 35 },
-  description: { color: chimapTheme.muted, fontSize: 15, lineHeight: 23 },
+  title: { ...platformText, color: chimapTheme.ink, fontSize: 28, fontWeight: "900", lineHeight: 35 },
+  description: { ...platformText, color: chimapTheme.muted, fontSize: 15, lineHeight: 23 },
   card: {
+    ...androidCardSurface,
     gap: 16,
     padding: 18,
     borderWidth: 1,
@@ -335,7 +350,7 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: "row", gap: 12 },
   fieldColumn: { flexDirection: "column" },
   field: { flex: 1, gap: 7 },
-  fieldLabel: { color: chimapTheme.muted, fontSize: 12, fontWeight: "800" },
+  fieldLabel: { ...platformText, color: chimapTheme.muted, fontSize: 12, fontWeight: "800" },
   numberInputWrap: {
     minHeight: 48,
     flexDirection: "row",
@@ -346,6 +361,7 @@ const styles = StyleSheet.create({
     backgroundColor: chimapTheme.white,
   },
   numberInput: {
+    ...platformText,
     minWidth: 0,
     flex: 1,
     paddingHorizontal: 12,
@@ -353,9 +369,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "800",
   },
-  unit: { paddingRight: 12, color: chimapTheme.muted, fontSize: 11, fontWeight: "700" },
+  unit: { ...platformText, paddingRight: 12, color: chimapTheme.muted, fontSize: 11, fontWeight: "700" },
   sexRow: { flexDirection: "row", gap: 8 },
   sexButton: {
+    overflow: "hidden",
     minHeight: 48,
     flex: 1,
     alignItems: "center",
@@ -366,7 +383,7 @@ const styles = StyleSheet.create({
     backgroundColor: chimapTheme.white,
   },
   sexButtonSelected: { borderColor: chimapTheme.teal, backgroundColor: chimapTheme.teal },
-  sexText: { color: chimapTheme.ink, fontWeight: "800" },
+  sexText: { ...platformText, color: chimapTheme.ink, fontWeight: "800" },
   sexTextSelected: { color: chimapTheme.white },
   estimate: {
     gap: 5,
@@ -374,14 +391,15 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: chimapTheme.personalizationSurface,
   },
-  estimateLabel: { color: chimapTheme.teal, fontSize: 12, fontWeight: "800" },
-  estimateValue: { color: chimapTheme.navyStrong, fontSize: 26, fontWeight: "900" },
-  estimateNote: { color: chimapTheme.muted, fontSize: 11, lineHeight: 16 },
-  scopeWarning: { padding: 12, borderRadius: 12, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 11, lineHeight: 17 },
+  estimateLabel: { ...platformText, color: chimapTheme.teal, fontSize: 12, fontWeight: "800" },
+  estimateValue: { ...platformText, color: chimapTheme.navyStrong, fontSize: 26, fontWeight: "900" },
+  estimateNote: { ...platformText, color: chimapTheme.muted, fontSize: 11, lineHeight: 16 },
+  scopeWarning: { ...platformText, padding: 12, borderRadius: 12, color: chimapTheme.estimatedText, backgroundColor: chimapTheme.estimatedSurface, fontSize: 11, lineHeight: 17 },
   privacyRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  privacy: { minWidth: 0, flex: 1, color: chimapTheme.muted, fontSize: 11, lineHeight: 17 },
-  error: { color: chimapTheme.danger, fontSize: 13, lineHeight: 19 },
+  privacy: { ...platformText, minWidth: 0, flex: 1, color: chimapTheme.muted, fontSize: 11, lineHeight: 17 },
+  error: { ...platformText, color: chimapTheme.danger, fontSize: 13, lineHeight: 19 },
   primaryButton: {
+    overflow: "hidden",
     minHeight: 54,
     alignItems: "center",
     justifyContent: "center",
@@ -389,9 +407,9 @@ const styles = StyleSheet.create({
     backgroundColor: chimapTheme.navy,
   },
   disabled: { opacity: 0.55 },
-  primaryButtonText: { color: chimapTheme.white, fontSize: 16, fontWeight: "900" },
-  cancelButton: { minHeight: 48, alignItems: "center", justifyContent: "center" },
-  cancelText: { color: chimapTheme.muted, fontWeight: "800" },
+  primaryButtonText: { ...platformText, color: chimapTheme.white, fontSize: 16, fontWeight: "900" },
+  cancelButton: { minHeight: 48, overflow: "hidden", alignItems: "center", justifyContent: "center", borderRadius: 14 },
+  cancelText: { ...platformText, color: chimapTheme.muted, fontWeight: "800" },
   inputAccessory: {
     minHeight: 48,
     alignItems: "flex-end",
@@ -401,5 +419,5 @@ const styles = StyleSheet.create({
     borderTopColor: chimapTheme.line,
     backgroundColor: chimapTheme.keyboardSurface,
   },
-  inputAccessoryDone: { color: chimapTheme.teal, fontSize: 16, fontWeight: "800" },
+  inputAccessoryDone: { ...platformText, color: chimapTheme.teal, fontSize: 16, fontWeight: "800" },
 });

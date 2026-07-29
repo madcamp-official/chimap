@@ -213,6 +213,9 @@ describe("Expo platform identity", () => {
     expect(config.plugins).toContain(
       "./plugins/with-health-connect-main-activity.cjs",
     );
+    expect(config.plugins).toContain(
+      "./plugins/with-light-android-modal-status-bar.cjs",
+    );
     expect(config.plugins).toContain("./plugins/with-gradle-wrapper-timeout.cjs");
     expect(config.plugins).toContain(
       "./plugins/with-scoped-android-maven-repositories.cjs",

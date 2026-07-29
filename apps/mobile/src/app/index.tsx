@@ -3,10 +3,13 @@ import {
   ActivityIndicator,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppIcon } from "../components/app-icon";
@@ -28,6 +31,10 @@ import { AuthenticatedDataBoundary } from "../features/routes/authenticated-data
 import { PlannerScreen } from "../features/routes/planner-screen";
 import { requestKakaoAccessToken } from "../platform/kakao/kakao-login";
 import { chimapTheme } from "../theme/chimap-theme";
+import {
+  androidRippleOnKakao,
+  platformText,
+} from "../theme/platform-ui";
 
 function FullScreenLoader({ label }: { label: string }) {
   return (
@@ -39,11 +46,13 @@ function FullScreenLoader({ label }: { label: string }) {
 }
 
 function KakaoLoginScreen({ message }: { message: string | null }) {
+  const { height, fontScale } = useWindowDimensions();
   const mobileConfig = useMobileConfig();
   const { completeKakaoLogin, prepareKakaoLogin } = useMobileSession();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const kakaoDisabled = mobileConfig?.authentication.kakaoEnabled === false;
+  const compactHero = height < 720 || fontScale >= 1.3;
 
   const login = async () => {
     setWorking(true);
@@ -89,49 +98,57 @@ function KakaoLoginScreen({ message }: { message: string | null }) {
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.loginSafeArea}>
-      <View style={styles.loginHero}>
-        <View style={styles.orbitLarge} />
-        <View style={styles.orbitSmall} />
-        <View style={styles.loginBrandMark}>
-          <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={34} />
+      <StatusBar style="dark" />
+      <ScrollView
+        bounces={false}
+        contentContainerStyle={styles.loginContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.loginHero, compactHero && styles.loginHeroCompact]}>
+          <View style={styles.orbitLarge} />
+          <View style={styles.orbitSmall} />
+          <View style={styles.loginBrandMark}>
+            <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={34} />
+          </View>
+          <Text style={styles.loginBrand}>CHIMap</Text>
+          <Text style={styles.loginTagline}>가는 길을 더 건강하게</Text>
         </View>
-        <Text style={styles.loginBrand}>CHIMap</Text>
-        <Text style={styles.loginTagline}>가는 길을 더 건강하게</Text>
-      </View>
 
-      <View style={styles.loginSheet}>
-        <Text style={styles.loginEyebrow}>지금 출발 기준 건강 경로</Text>
-        <Text style={styles.loginTitle}>카카오로 시작하세요</Text>
-        <Text style={styles.loginDescription}>
-          로그인하면 개인 보폭과 오늘의 걸음을 안전하게 구분해 나에게 맞는
-          경로를 추천합니다.
-        </Text>
-        {message === null ? null : <Text style={styles.loginError}>{message}</Text>}
-        {error === null ? null : <Text style={styles.loginError}>{error}</Text>}
-        {kakaoDisabled ? (
-          <Text style={styles.loginError}>
-            현재 카카오 로그인을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.
+        <View style={styles.loginSheet}>
+          <Text style={styles.loginEyebrow}>지금 출발 기준 건강 경로</Text>
+          <Text style={styles.loginTitle}>카카오로 시작하세요</Text>
+          <Text style={styles.loginDescription}>
+            로그인하면 개인 보폭과 오늘의 걸음을 안전하게 구분해 나에게 맞는
+            경로를 추천합니다.
           </Text>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          disabled={working || kakaoDisabled}
-          onPress={() => void login()}
-          style={[
-            styles.kakaoButton,
-            (working || kakaoDisabled) && styles.disabled,
-          ]}
-        >
-          {working ? (
-            <ActivityIndicator color="#191919" />
-          ) : (
-            <Text style={styles.kakaoText}>카카오로 계속하기</Text>
-          )}
-        </Pressable>
-        <Text style={styles.loginFootnote}>
-          CHIMap 앱은 카카오 로그인이 필요합니다.
-        </Text>
-      </View>
+          {message === null ? null : <Text style={styles.loginError}>{message}</Text>}
+          {error === null ? null : <Text style={styles.loginError}>{error}</Text>}
+          {kakaoDisabled ? (
+            <Text style={styles.loginError}>
+              현재 카카오 로그인을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.
+            </Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            android_ripple={androidRippleOnKakao}
+            disabled={working || kakaoDisabled}
+            onPress={() => void login()}
+            style={[
+              styles.kakaoButton,
+              (working || kakaoDisabled) && styles.disabled,
+            ]}
+          >
+            {working ? (
+              <ActivityIndicator color="#191919" />
+            ) : (
+              <Text style={styles.kakaoText}>카카오로 계속하기</Text>
+            )}
+          </Pressable>
+          <Text style={styles.loginFootnote}>
+            CHIMap 앱은 카카오 로그인이 필요합니다.
+          </Text>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -206,8 +223,9 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: chimapTheme.canvas,
   },
-  loadingText: { color: chimapTheme.muted, fontSize: 13, fontWeight: "700" },
+  loadingText: { ...platformText, color: chimapTheme.muted, fontSize: 13, fontWeight: "700" },
   loginSafeArea: { flex: 1, backgroundColor: chimapTheme.orange },
+  loginContent: { flexGrow: 1 },
   loginHero: {
     minHeight: 330,
     flex: 1,
@@ -215,6 +233,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
+  loginHeroCompact: { minHeight: 245 },
   orbitLarge: {
     position: "absolute",
     top: -100,
@@ -246,8 +265,8 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     backgroundColor: "rgba(255,255,255,0.14)",
   },
-  loginBrand: { color: chimapTheme.navyStrong, fontSize: 54, fontWeight: "900", letterSpacing: -2 },
-  loginTagline: { marginTop: 8, color: chimapTheme.navyStrong, fontSize: 14, fontWeight: "800" },
+  loginBrand: { ...platformText, color: chimapTheme.navyStrong, fontSize: 54, fontWeight: "900", letterSpacing: -2 },
+  loginTagline: { ...platformText, marginTop: 8, color: chimapTheme.navyStrong, fontSize: 14, fontWeight: "800" },
   loginSheet: {
     gap: 12,
     paddingHorizontal: 24,
@@ -257,11 +276,12 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     backgroundColor: chimapTheme.paper,
   },
-  loginEyebrow: { color: chimapTheme.teal, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
-  loginTitle: { color: chimapTheme.ink, fontSize: 27, fontWeight: "900" },
-  loginDescription: { color: chimapTheme.muted, fontSize: 14, lineHeight: 21 },
-  loginError: { color: chimapTheme.danger, fontSize: 12, lineHeight: 18 },
+  loginEyebrow: { ...platformText, color: chimapTheme.teal, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  loginTitle: { ...platformText, color: chimapTheme.ink, fontSize: 27, fontWeight: "900" },
+  loginDescription: { ...platformText, color: chimapTheme.muted, fontSize: 14, lineHeight: 21 },
+  loginError: { ...platformText, color: chimapTheme.danger, fontSize: 12, lineHeight: 18 },
   kakaoButton: {
+    overflow: "hidden",
     minHeight: 54,
     alignItems: "center",
     justifyContent: "center",
@@ -269,7 +289,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: "#FEE500",
   },
-  kakaoText: { color: "#191919", fontSize: 16, fontWeight: "900" },
+  kakaoText: { ...platformText, color: "#191919", fontSize: 16, fontWeight: "900" },
   disabled: { opacity: 0.5 },
-  loginFootnote: { color: chimapTheme.muted, fontSize: 11, textAlign: "center" },
+  loginFootnote: { ...platformText, color: chimapTheme.muted, fontSize: 11, textAlign: "center" },
 });
