@@ -235,7 +235,7 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
     expect(getWalkingRoute).not.toHaveBeenCalled();
   });
 
-  it("최종 선택된 중복 도보 구간만 한 번 상세화하고 ETA·거리는 유지한다", async () => {
+  it("최종 선택된 중복 도보 구간을 한 번 상세화하고 실제 거리·시간을 반영한다", async () => {
     const from = { lat: 36.35, lng: 127.37 };
     const middle = { lat: 36.351, lng: 127.3715 };
     const to = { lat: 36.352, lng: 127.373 };
@@ -301,11 +301,12 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
     expect(getWalkingRoute).toHaveBeenCalledTimes(1);
     expect(enriched).toHaveLength(2);
     for (const result of enriched) {
-      expect(result.durationSeconds).toBe(600);
-      expect(result.walkDistanceMeters).toBe(300);
+      expect(result.durationSeconds).toBe(999);
+      expect(result.walkDistanceMeters).toBe(999);
+      expect(result.arrivalAt).toBe("2026-07-28T03:16:39.000Z");
       expect(result.legs[0]).toMatchObject({
-        durationSeconds: 240,
-        distanceMeters: 300,
+        durationSeconds: 999,
+        distanceMeters: 999,
         coordinates: [from, middle, to],
         geometryQuality: "DETAILED",
       });

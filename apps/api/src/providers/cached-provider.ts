@@ -11,6 +11,7 @@ import type {
   PlaceSearchOptions,
   TransitRouteRequest,
   WalkRouteRequest,
+  WalkingRouteProvider,
 } from "./types.js";
 
 const PLACE_TTL_MS = 60 * 60 * 1000;
@@ -82,6 +83,31 @@ export class CachedMobilityProvider implements MobilityProvider {
 
     return this.#cache.getOrLoad(key, WALK_TTL_MS, () =>
       this.#provider.getWalkingRoute(request),
+    );
+  }
+}
+
+export class CachedWalkingProvider implements WalkingRouteProvider {
+  public readonly source: WalkingRouteProvider["source"];
+  public constructor(
+    private readonly provider: WalkingRouteProvider,
+    private readonly ttlMs: number,
+    private readonly cache = new MemoryCache(),
+  ) {
+    this.source = provider.source;
+  }
+
+  public getWalkingRoute(request: WalkRouteRequest): Promise<NormalizedRoute> {
+    const key = [
+      "walk-v2",
+      coordinateCacheKey(request.origin),
+      (request.vias ?? []).map(coordinateCacheKey).join(";"),
+      coordinateCacheKey(request.destination),
+      request.routeMode ?? "BROAD_FIRST",
+      this.source,
+    ].join(":");
+    return this.cache.getOrLoad(key, this.ttlMs, () =>
+      this.provider.getWalkingRoute(request),
     );
   }
 }

@@ -64,10 +64,13 @@ import {
 } from "./errors.js";
 import { createLogger } from "./logger.js";
 import { AppMetrics } from "./monitoring/metrics.js";
-import { CachedMobilityProvider } from "./providers/cached-provider.js";
+import { CachedMobilityProvider, CachedWalkingProvider } from "./providers/cached-provider.js";
 import { KakaoMobilityProvider } from "./providers/kakao-provider.js";
 import { NaverGeocodingClient } from "./providers/naver-geocoding-client.js";
 import { TagoTransitMobilityProvider } from "./providers/tago-transit-provider.js";
+import type { WalkingRouteProvider } from "./providers/types.js";
+import { ValhallaClient } from "./providers/valhalla/valhalla-client.js";
+import { ValhallaWalkingProvider } from "./providers/valhalla/valhalla-walking-provider.js";
 import { ParkRouteCandidateService } from "./parks/park-route-candidate-service.js";
 import { ParkRouteImportService } from "./parks/park-route-import-service.js";
 import { ParkRouteRepository } from "./parks/park-route-repository.js";
@@ -277,6 +280,7 @@ function createProviders(
   transitService: TransitService,
 ): {
   mobility: CachedMobilityProvider;
+  walking: WalkingRouteProvider;
   places: PlaceLookupService;
 } {
   if (config.kakaoRestApiKey === undefined) {
@@ -290,6 +294,23 @@ function createProviders(
     transitService,
     config,
   });
+  const walking: WalkingRouteProvider =
+    config.walking.router === "VALHALLA"
+      ? new CachedWalkingProvider(
+          new ValhallaWalkingProvider(
+            new ValhallaClient({
+              baseUrl: config.walking.valhallaBaseUrl!,
+              timeoutMs: config.walking.timeoutMs,
+              retryCount: config.walking.retryCount,
+            }),
+            {
+              maxSnapDistanceMeters: config.walking.maxSnapDistanceMeters,
+              maxDetourRatio: config.walking.maxDetourRatio,
+            },
+          ),
+          config.walking.cacheTtlSeconds * 1000,
+        )
+      : baseProvider;
   const naver =
     config.naverMapNcpKeyId === undefined ||
     config.naverMapNcpKey === undefined
@@ -300,6 +321,7 @@ function createProviders(
         );
   return {
     mobility: new CachedMobilityProvider(provider),
+    walking,
     places: new PlaceLookupService({
       kakao: baseProvider.local,
       ...(naver === undefined ? {} : { naver }),
@@ -393,6 +415,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.locals.mobileAuthService = mobileAuthService;
   const providers = createProviders(options.config, transitService);
   const provider = providers.mobility;
+  const walkingProvider = providers.walking;
   const placeLookup = providers.places;
   const parkRouteRepository = new ParkRouteRepository(
     transitService.repository.pool,
@@ -402,13 +425,13 @@ export function createApp(options: CreateAppOptions): Express {
     parkRouteRepository,
   );
   const recommendationService = new RecommendationService({
-    candidateGenerator: new CandidateGenerator(provider),
+    candidateGenerator: new CandidateGenerator(provider, walkingProvider),
     parkRoutes: new ParkRouteCandidateService({
       enabled: options.config.parkRoutes.integrationEnabled,
       radiusMeters: options.config.parkRoutes.searchRadiusMeters,
       maxCandidates: options.config.parkRoutes.maxCandidates,
       repository: parkRouteRepository,
-      provider,
+      provider: walkingProvider,
       logger,
     }),
     logger,

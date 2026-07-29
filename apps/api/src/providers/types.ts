@@ -54,6 +54,11 @@ export interface RoadGeometryProvider {
   ): Promise<RoadRouteSectionsResult>;
 }
 
+export interface WalkingRouteProvider {
+  readonly source: "KAKAO" | "VALHALLA";
+  getWalkingRoute(request: WalkRouteRequest): Promise<NormalizedRoute>;
+}
+
 export interface MobilityProvider {
   readonly source: "KAKAO" | "TAGO";
 

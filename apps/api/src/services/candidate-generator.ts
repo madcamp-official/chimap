@@ -14,7 +14,7 @@ import {
 import pLimit, { type LimitFunction } from "p-limit";
 
 import { ProviderError } from "../errors.js";
-import type { MobilityProvider } from "../providers/types.js";
+import type { MobilityProvider, WalkingRouteProvider } from "../providers/types.js";
 import type {
   RouteGeometryProfile,
   SubwayGeometryObservation,
@@ -101,6 +101,8 @@ function approximateWalkingRoute(
 
 type ResolvedWalkingGeometry = {
   coordinates: Coordinate[] | null;
+  distanceMeters?: number;
+  durationSeconds?: number;
   reason: ReturnType<typeof classifyGeometryError> | "NONE" | "EMPTY_PATH";
   durationMilliseconds: number;
 };
@@ -133,6 +135,7 @@ function joinedWalkingCoordinates(route: NormalizedRoute): Coordinate[] {
 
 class RouteCallBudget {
   readonly #provider: MobilityProvider;
+  readonly #walkingProvider: WalkingRouteProvider;
   readonly #limit: LimitFunction;
   #transitCalls = 0;
   #walkCalls = 0;
@@ -147,12 +150,14 @@ class RouteCallBudget {
 
   public constructor(
     provider: MobilityProvider,
+    walkingProvider: WalkingRouteProvider,
     concurrency = 3,
     geometryProfile?: RouteGeometryProfile,
     observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void,
     observeRouteGeometry?: (observation: RouteGeometryObservation) => void,
   ) {
     this.#provider = provider;
+    this.#walkingProvider = walkingProvider;
     this.#limit = pLimit(concurrency);
     this.#geometryProfile = geometryProfile;
     this.#observeSubwayGeometry = observeSubwayGeometry;
@@ -221,7 +226,7 @@ class RouteCallBudget {
       );
     }
     this.#walkCalls += 1;
-    return this.#limit(() => this.#provider.getWalkingRoute({
+    return this.#limit(() => this.#walkingProvider.getWalkingRoute({
       origin,
       destination,
       routeMode: "BROAD_FIRST",
@@ -747,9 +752,12 @@ function withinGoalTolerance(
 
 export class CandidateGenerator {
   readonly #provider: MobilityProvider;
+  readonly #walkingProvider: WalkingRouteProvider;
 
-  public constructor(provider: MobilityProvider) {
+  public constructor(provider: MobilityProvider, walkingProvider?: WalkingRouteProvider) {
     this.#provider = provider;
+    this.#walkingProvider =
+      walkingProvider ?? (provider as unknown as WalkingRouteProvider);
   }
 
   public async enrichWalkingGeometry(
@@ -805,7 +813,7 @@ export class CandidateGenerator {
       resolutions.set(
         key,
         withWalkingGeometryLimit(
-          () => this.#provider.getWalkingRoute({
+          () => this.#walkingProvider.getWalkingRoute({
             origin: target.from,
             destination: target.to,
             routeMode: "BROAD_FIRST",
@@ -817,6 +825,8 @@ export class CandidateGenerator {
           return coordinates.length >= 2
             ? {
                 coordinates,
+                distanceMeters: route.distanceMeters,
+                durationSeconds: route.durationSeconds,
                 reason: "NONE",
                 durationMilliseconds: performance.now() - startedAt,
               }
@@ -839,9 +849,8 @@ export class CandidateGenerator {
       }),
     );
 
-    return recommendations.map((recommendation) => ({
-      ...recommendation,
-      legs: recommendation.legs.map((leg) => {
+    return recommendations.map((recommendation) => {
+      const legs = recommendation.legs.map((leg) => {
         const from = leg.coordinates[0];
         const to = leg.coordinates.at(-1);
         if (
@@ -863,7 +872,11 @@ export class CandidateGenerator {
           mode: "WALK",
           outcome: detailed ? "DETAILED" : "APPROXIMATE",
           reason: detailed ? "NONE" : geometry.reason,
-          source: detailed ? "KAKAO_WALK" : "FALLBACK",
+          source: detailed
+            ? this.#walkingProvider.source === "VALHALLA"
+              ? "VALHALLA_WALK"
+              : "KAKAO_WALK"
+            : "FALLBACK",
           cacheState: "NONE",
           durationMilliseconds: geometry.durationMilliseconds,
           inputVertexCount: 2,
@@ -878,11 +891,33 @@ export class CandidateGenerator {
           ? {
               ...leg,
               coordinates: geometry.coordinates!,
+              distanceMeters: geometry.distanceMeters!,
+              durationSeconds: geometry.durationSeconds!,
               geometryQuality: "DETAILED" as const,
             }
           : leg;
-      }),
-    }));
+      });
+      const walkDistanceMeters = legs
+        .filter((leg) => leg.mode === "WALK")
+        .reduce((sum, leg) => sum + leg.distanceMeters, 0);
+      const durationSeconds = legs.reduce((sum, leg) => sum + leg.durationSeconds, 0);
+      return {
+        ...recommendation,
+        legs,
+        walkDistanceMeters,
+        durationSeconds,
+        extraMinutes: recommendation.extraMinutes +
+          Math.round((durationSeconds - recommendation.durationSeconds) / 60),
+        arrivalAt: new Date(
+          new Date(recommendation.arrivalAt).getTime() +
+            (durationSeconds - recommendation.durationSeconds) * 1000,
+        ).toISOString(),
+        estimatedSteps: Math.round(
+          recommendation.estimatedSteps *
+            (walkDistanceMeters / Math.max(1, recommendation.walkDistanceMeters)),
+        ),
+      };
+    });
   }
 
   public async generate(
@@ -900,6 +935,7 @@ export class CandidateGenerator {
   ): Promise<CandidateGenerationResult> {
     const budget = new RouteCallBudget(
       this.#provider,
+      this.#walkingProvider,
       3,
       options.geometryProfile,
       options.observeSubwayGeometry,

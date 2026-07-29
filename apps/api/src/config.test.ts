@@ -108,6 +108,29 @@ describe("환경변수 보안 경계", () => {
     }).transit.geometryV2Enabled).toBe(true);
   });
 
+  it("Valhalla walking 설정과 범위를 검증한다", () => {
+    expect(() => loadConfig({
+      NODE_ENV: "test",
+      WALKING_ROUTER: "VALHALLA",
+    })).toThrow(/VALHALLA_BASE_URL/u);
+    expect(loadConfig({
+      NODE_ENV: "test",
+      WALKING_ROUTER: "VALHALLA",
+      VALHALLA_BASE_URL: "http://10.0.0.8:8002",
+    }).walking).toMatchObject({
+      router: "VALHALLA",
+      timeoutMs: 3500,
+      retryCount: 1,
+      maxSnapDistanceMeters: 100,
+      maxDetourRatio: 5,
+      kakaoFallbackEnabled: false,
+    });
+    expect(() => loadConfig({
+      NODE_ENV: "test",
+      VALHALLA_HTTP_TIMEOUT_MS: "499",
+    })).toThrow();
+  });
+
   it("공원 Import token과 추천 조회 범위를 검증한다", () => {
     expect(() =>
       loadConfig({

@@ -1020,3 +1020,32 @@ integration flags are intentionally separate so data can be validated before
 recommendations use it. Re-sending identical data is a no-op. To roll back,
 disable integration immediately or import the previously validated content
 under a new dataset ID, then verify status; do not delete the active dataset.
+# Valhalla 도보 라우팅과 공원 경로 배포
+
+CHIMap API만 Valhalla 내부 upstream을 호출한다. 앱에서 Valhalla를 직접
+호출하거나 TCP 8002를 인터넷 전체에 공개하지 않는다. Azure NSG는 CHIMap
+VM private IP(또는 subnet)에서 Valhalla private IP의 TCP 8002로 향하는
+트래픽만 허용한다.
+
+배포 전 통신 확인:
+
+```bash
+curl -fsS -X POST http://VALHALLA_PRIVATE_IP:8002/route \
+  -H 'content-type: application/json' \
+  -d '{"locations":[{"lat":36.3501,"lon":127.3801},{"lat":36.3552,"lon":127.3845}],"costing":"pedestrian","units":"kilometers","directions_options":{"units":"kilometers"}}'
+
+pnpm valhalla:smoke-test \
+  --base-url http://VALHALLA_PRIVATE_IP:8002 \
+  --from 127.3801,36.3501 --to 127.3845,36.3552
+```
+
+안전한 순서는 migration 적용, `WALKING_ROUTER=KAKAO`, 152건 snapshot
+import 및 DB 검증, private Valhalla smoke test, `WALKING_ROUTER=VALHALLA`,
+기존 추천 회귀 테스트, `PARK_ROUTE_INTEGRATION_ENABLED=1` 순이다.
+실시간 도보 장애 시 `WALKING_ROUTER=KAKAO`, 공원 후보만 중지할 때는
+`PARK_ROUTE_INTEGRATION_ENABLED=0`으로 되돌린다. dataset rollback은 row를
+삭제하지 않고 이전 검증 snapshot에 새 datasetId를 부여해 다시 import한다.
+
+Valhalla의 `BROAD_FIRST`, `SHORTEST`, `ACCESSIBLE`은 현재 모두 검증된
+기본 `pedestrian` costing을 사용한다. 검증되지 않은 costing option으로
+접근성 효과를 주장하지 않는다.

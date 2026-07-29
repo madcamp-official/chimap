@@ -35,7 +35,12 @@ export type RouteGeometryObservation = {
   mode: "BUS" | "WALK";
   outcome: "DETAILED" | "APPROXIMATE";
   reason: RouteGeometryReason;
-  source: "KAKAO_ROAD" | "KAKAO_WALK" | "PRECOMPUTED" | "FALLBACK";
+  source:
+    | "KAKAO_ROAD"
+    | "KAKAO_WALK"
+    | "VALHALLA_WALK"
+    | "PRECOMPUTED"
+    | "FALLBACK";
   cacheState: "FRESH" | "STALE" | "MISS" | "NONE";
   durationMilliseconds: number;
   inputVertexCount: number;
