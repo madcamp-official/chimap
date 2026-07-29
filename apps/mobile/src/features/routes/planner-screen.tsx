@@ -87,6 +87,7 @@ import {
   summarizeOrderedModeDistances,
 } from "./recommendation-presentation";
 import {
+  androidKeyboardAvoidanceInset,
   clampPlannerSheetPosition,
   nearestPlannerSheetSnap,
   plannerSheetOffsets,
@@ -854,7 +855,7 @@ export function PlannerScreen({
   onDeleteAccount(): Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
-  const { fontScale } = useWindowDimensions();
+  const { fontScale, height: windowHeight } = useWindowDimensions();
   const accessibleHeader = fontScale >= 1.3;
   const mobileConfig = useMobileConfig();
   const hydrated = useRouteStore((state) => state.hydrated);
@@ -902,6 +903,7 @@ export function PlannerScreen({
   const [submitting, setSubmitting] = useState(false);
   const [mapStageWidth, setMapStageWidth] = useState(0);
   const [mapStageHeight, setMapStageHeight] = useState(0);
+  const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const [sheetSnap, setSheetSnap] = useState<PlannerSheetSnap>("middle");
   const collapsedSheetHeight = accessibleHeader ? 112 : 72;
   const sheetPosition = useRef(new Animated.Value(1_000)).current;
@@ -991,6 +993,29 @@ export function PlannerScreen({
     );
     return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return undefined;
+
+    const shown = Keyboard.addListener("keyboardDidShow", (event) => {
+      setAndroidKeyboardInset(
+        androidKeyboardAvoidanceInset(
+          windowHeight,
+          event.endCoordinates.screenY,
+          NativeStatusBar.currentHeight ?? 0,
+        ),
+      );
+      snapSheet("expanded", false);
+    });
+    const hidden = Keyboard.addListener("keyboardDidHide", () => {
+      setAndroidKeyboardInset(0);
+    });
+
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, [snapSheet, windowHeight]);
 
   useEffect(() => {
     if (mapStageHeight > 0) {
@@ -1400,6 +1425,7 @@ export function PlannerScreen({
           <Animated.View
             style={[
               styles.tripSheet,
+              Platform.OS === "android" && { bottom: androidKeyboardInset },
               { transform: [{ translateY: sheetPosition }] },
             ]}
           >
@@ -1518,35 +1544,6 @@ export function PlannerScreen({
                 {message}
               </Text>
             )}
-            <Pressable
-              accessibilityRole="button"
-              android_ripple={androidRippleOnDark}
-              disabled={
-                origin === null ||
-                destination === null ||
-                submitting ||
-                query.isFetching
-              }
-              onPress={() => void submit()}
-              style={[
-                styles.primaryButton,
-                (origin === null ||
-                  destination === null ||
-                  submitting ||
-                  query.isFetching) &&
-                  styles.disabled,
-              ]}
-            >
-              {submitting || query.isFetching ? (
-                <View style={styles.loadingColumn}>
-                  <RouteTracer />
-                  <Text style={styles.primaryButtonText}>도보와 대중교통을 비교하는 중…</Text>
-                </View>
-              ) : (
-                <Text style={styles.primaryButtonText}>건강 경로 찾기</Text>
-              )}
-            </Pressable>
-
             {query.isError ? (
               <Text accessibilityRole="alert" style={styles.message}>
                 추천 경로를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.
@@ -1612,6 +1609,45 @@ export function PlannerScreen({
               데이터 제공: NAVER 지도 · KAKAO 장소/도보 · 국토교통부 TAGO
             </Text>
             </ScrollView>
+            {sheetSnap === "collapsed" ? null : (
+              <View
+                style={[
+                  styles.sheetFooter,
+                  { paddingBottom: Math.max(12, insets.bottom + 8) },
+                ]}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  android_ripple={androidRippleOnDark}
+                  disabled={
+                    origin === null ||
+                    destination === null ||
+                    submitting ||
+                    query.isFetching
+                  }
+                  onPress={() => void submit()}
+                  style={[
+                    styles.primaryButton,
+                    (origin === null ||
+                      destination === null ||
+                      submitting ||
+                      query.isFetching) &&
+                      styles.disabled,
+                  ]}
+                >
+                  {submitting || query.isFetching ? (
+                    <View style={styles.loadingColumn}>
+                      <RouteTracer />
+                      <Text style={styles.primaryButtonText}>
+                        도보와 대중교통을 비교하는 중…
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.primaryButtonText}>건강 경로 찾기</Text>
+                  )}
+                </Pressable>
+              </View>
+            )}
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
@@ -1709,6 +1745,7 @@ const styles = StyleSheet.create({
   sheetChevron: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
   sheetScroll: { flex: 1 },
   sheetContent: { gap: 14, paddingHorizontal: 16, paddingTop: 8 },
+  sheetFooter: { paddingHorizontal: 16, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chimapTheme.line, backgroundColor: chimapTheme.paper },
   eyebrow: { ...platformText, color: chimapTheme.teal, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   searchFields: { gap: 10 },
   placeActions: { flexDirection: "row", gap: 8 },

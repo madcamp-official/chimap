@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  androidKeyboardAvoidanceInset,
   clampPlannerSheetPosition,
   nearestPlannerSheetSnap,
   plannerSheetOffsets,
@@ -30,5 +31,11 @@ describe("planner bottom sheet snap", () => {
   it("드래그가 펼침과 최소화 범위를 벗어나지 않는다", () => {
     expect(clampPlannerSheetPosition(offsets, -80)).toBe(0);
     expect(clampPlannerSheetPosition(offsets, 800)).toBe(614);
+  });
+
+  it("Android 키보드가 창을 덮을 때 상태 표시줄과 여유 공간을 포함한다", () => {
+    expect(androidKeyboardAvoidanceInset(707, 418, 24)).toBe(329);
+    expect(androidKeyboardAvoidanceInset(418, 418, 24)).toBe(0);
+    expect(androidKeyboardAvoidanceInset(707, 418, -1)).toBe(305);
   });
 });

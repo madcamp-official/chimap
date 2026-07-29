@@ -4,6 +4,19 @@ export type PlannerSheetOffsets = Record<PlannerSheetSnap, number>;
 
 const snaps: PlannerSheetSnap[] = ["expanded", "middle", "collapsed"];
 
+const keyboardClearance = 16;
+
+export function androidKeyboardAvoidanceInset(
+  windowHeight: number,
+  keyboardScreenY: number,
+  statusBarHeight: number,
+): number {
+  const overlap = Math.max(0, windowHeight - keyboardScreenY);
+  return overlap === 0
+    ? 0
+    : overlap + Math.max(0, statusBarHeight) + keyboardClearance;
+}
+
 export function plannerSheetOffsets(
   stageHeight: number,
   bottomInset: number,
