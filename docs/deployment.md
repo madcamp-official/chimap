@@ -18,9 +18,9 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-현재 production 기준선은 2026-07-28 22:46 KST의 `main@95f518c` 이미지
-`sha256:138deb8f...`이며 migration 11, 실제 지하철 선로와 버스·도보
-`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 이미지 자산 정리
+현재 production 기준선은 2026-07-29 12:28 KST의 `main@6ef3e8a` 이미지
+`sha256:81d4709d...`이며 migration 11, 실제 지하철 선로와 버스·도보
+`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 투명 favicon
 승격 기록을 기준으로 합니다.
 
 ## 1. 사전 조건
@@ -926,3 +926,31 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
 - strict Web E2E 첫 실행은 TAGO 차량 위치 호출의 단발성 `UPSTREAM_TIMEOUT`으로
   10초 polling 응답 횟수가 한 번 부족해 2/3 통과했습니다. 같은 핵심 사례를
   즉시 재실행해 통과했으며 경로 추천·형상·지도 카메라 실패는 없었습니다.
+
+## 23. 2026-07-29 투명 favicon과 캐시 갱신 운영 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay
+- source: `main@6ef3e8abee896e599bf3e95cc59583bfe77babd0`, PR #5·#6
+- image: `sha256:81d4709d620cb143b2e6252f67b31146f343fc67fce1391802b4da85076f9a4d`
+- rollback images:
+  - `chimap:rollback-pre-transparent-favicon-20260729`
+    (`sha256:138deb8f90f62b67aa822afd8b233290ccf324e4dea802dda9bb655ac6295ef6`)
+  - `chimap:rollback-pre-favicon-cache-bust-20260729`
+    (`sha256:d16df6cf6b6c7be2bd3c1b6ad9351d7f9b006ab70241c83f63693f3a3404daed`)
+- schema 변경 없음, migration 11과 `TRANSIT_GEOMETRY_V2_ENABLED=1` 유지
+- 배포 직전 backup: `chimap-daily-20260729T032209Z.dump`, 18,149,938 bytes,
+  SHA-256 `a7d5518c698f50155fd8b65b3582c9eb2eeeaa3014bc2b54e88e0b55678e1e18`
+- favicon 원본의 크기와 불투명 영역 RGB는 유지하고 바깥 49,862픽셀을 완전
+  투명, 경계 447픽셀을 부분 투명 alpha로 변경했습니다. 공개 파일은 RGBA,
+  1,254×1,254, 모서리 alpha 0·중앙 alpha 255입니다.
+- 기존 `/images/app-icon.png`가 Cloudflare와 브라우저에서 1년 `immutable`로
+  캐시되어 이전 RGB 파일이 계속 반환되는 것을 배포 smoke에서 확인했습니다.
+  HTML을 `/images/app-icon.png?v=d343336a`로 변경해 새 캐시 키를 사용합니다.
+- 공개 HTML의 버전 URL, favicon SHA-256
+  `d343336a709b14803255b357eff6dcc9a5eb4b0eae02b2346649e02937b376bf`,
+  local·public health/readiness HTTP 200을 확인했습니다.
+- PR #5 run `30417960322`에서 Web/API·Mobile JS·PostGIS·iOS·Android 다섯 job이
+  모두 통과했습니다. PR #6은 Web `index.html`만 변경했고 run `30419501614`의
+  Web/API·Mobile JS·PostGIS 성공 후 병합했습니다.
+- Prometheus target 3개 `up`, rule 22개, API·alert relay 배포 후 error 0건과
+  공개 JavaScript의 서버 비밀값 미검출을 확인했습니다.
