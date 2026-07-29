@@ -13,12 +13,15 @@
 - 공용 계약·정책: `packages/contracts`, `packages/app-core`,
   `packages/design-tokens`
 - 지도 bitmap: `apps/mobile/src/platform/maps/images`
+- 공용 브랜드 bitmap: `apps/mobile/src/components/images`
 - `apps/mobile/android`와 `apps/mobile/ios`는 Expo CNG 생성물입니다. 직접 수정하거나
   Git에 commit하지 않습니다.
 
-웹 정적 이미지는 `apps/web/public/images`에 두며 모바일 native 지도 이미지와
-섞지 않습니다. 사용처가 없는 원본·변환 이미지는 production Docker context에
-남기지 않습니다.
+웹 정적 이미지는 `apps/web/public/images`, 모바일 공용 브랜드 이미지는
+`apps/mobile/src/components/images`, native 지도 이미지는 해당 지도 모듈의
+`images`에 둡니다. 사용처가 없는 원본·변환 이미지는 production Docker context에
+남기지 않습니다. 공용 브랜드 원본은 Web·iOS·Android에서 같은 SHA-256의 PNG를
+사용합니다.
 
 ## 2. 환경별 identity
 

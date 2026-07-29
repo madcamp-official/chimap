@@ -30,6 +30,7 @@ Apple 로그인 E2E와 production audience/provider credential은 외부 TestFli
 ```text
 apps/mobile/src                 공용 React Native 화면·state·API orchestration
 apps/mobile/src/platform       iOS/Android SDK adapter
+apps/mobile/src/components/images  Web와 동일한 공용 브랜드 bitmap
 apps/mobile/app.config.ts      bundle, plist, entitlement, native key
 apps/mobile/plugins            CNG native 변경
 packages/contracts             Web/API/Mobile request·response 계약

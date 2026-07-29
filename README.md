@@ -38,8 +38,8 @@ staging에서는 숨기며 외부 TestFlight 전 별도 E2E를 수행합니다. 
 1. 출발지와 목적지를 300ms 자동완성 또는 Enter/검색 버튼으로 조회합니다.
 2. 캠퍼스 중심·도로명 주소·출입구 표시를 확인하고 검색 결과를 직접
    선택합니다.
-3. 최초 이용 시 만 나이·신장·체중·생물학적 성별·하루 목표 걸음으로
-   개인화 한 걸음 길이를 계산합니다. 다섯 항목은 모두 필수이며 원본
+3. 최초 이용 시 만 나이·신장·체중·생물학적 성별로 개인화 한 걸음 길이와
+   논문 근거 기반 첫 하루 목표를 계산합니다. 목표는 직접 수정할 수 있으며 원본
    신체정보는 Web의 브라우저 또는 앱의 environment·OS·사용자 namespace에만
    저장합니다. 앱은 사용자별 최초 1회만 이 화면을 요구하고 이후 `내 정보`에서
    수정할 수 있습니다. 일정 거리를 걷게 하는 별도 측정 절차는 사용하지 않습니다.
@@ -141,6 +141,8 @@ apps/api/test-data       출처와 checksum이 있는 실제 응답 캡처
 apps/web                 React 검색·지도·추천 UI와 Playwright E2E
 apps/mobile              React Native/Expo iOS·Android 공용 feature와 OS adapter
 apps/web/test-data       출처와 checksum이 있는 실제 차량 응답 캡처
+apps/web/public/images   Web에서 실제 사용하는 logo·favicon 정적 자산
+apps/mobile/src/**/images  Mobile bundle이 실제 사용하는 brand·지도 bitmap
 packages/contracts       요청·응답·내부 정규화 Zod 계약
 packages/app-core        Web/RN 비의존 추천 선택·복원·stale 정책
 packages/design-tokens   Web/RN에서 공유하는 의미 기반 token
@@ -156,6 +158,11 @@ compose.yml              운영 API, DB, 모니터링과 장애 알림
 compose.staging.yml      staging API와 별도 PostgreSQL
 .env.example             유일한 환경변수 템플릿
 ```
+
+루트에는 빌드·배포 진입점만 둡니다. 과거 작업 계획서는 현재 운영서로 흡수한 뒤
+삭제하고, `node_modules`, `.expo`, CNG가 생성하는 `apps/mobile/ios`·`android`,
+`dist`·`coverage`와 변환 중간 이미지는 Git에 올리지 않습니다. 서버 운영 파일은
+`ops`, 개발 검증 도구는 `scripts`, 실제 앱 코드는 `apps` 경계를 유지합니다.
 
 ## 개발 시작
 

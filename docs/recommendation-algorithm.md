@@ -108,10 +108,23 @@ Directions의 다중 경유지에 전달해 받은 도로 vertex입니다. 한 �
 
 ## 4. 개인화 한 걸음 길이
 
-브라우저는 최초 이용 시 만 나이·신장·체중·생물학적 성별·하루 목표를
-필수로 입력받습니다. 만 나이는 현재 연도 기준 출생연도로 변환합니다. 계정은
+브라우저와 앱은 최초 이용 시 만 나이·신장·체중·생물학적 성별을 필수로
+입력받고, 논문 근거 기반 첫 하루 목표를 자동 제안합니다. 만 나이는 현재 연도
+기준 출생연도로 변환합니다. 사용자는 추천값을 직접 수정할 수 있고 기존에 저장한
+목표는 프로필 수정 때 자동으로 덮어쓰지 않습니다. 계정은
 만들지 않으며 원본 신체정보는 브라우저 localStorage version 3에만 저장합니다.
 직접 한 걸음 길이를 입력하거나 20m 보행 결과를 받는 경로는 없습니다.
+
+```text
+18 <= age < 60: firstGoal = 8,000, evidenceRange = 8,000~10,000
+60 <= age <= 90: firstGoal = 7,000, evidenceRange = 6,000~8,000
+estimatedGoalDistance = firstGoal × estimatedStepLengthMeters
+```
+
+걸음 수는 연령별 전향 코호트 메타분석 범위로만 결정합니다. 신장·체중·생물학적
+성별은 아래 보폭식과 목표 거리 환산에 사용하지만 걸음 수에 임의 가감하지
+않습니다. 현재 근거에는 성별이나 BMI별로 서로 다른 하루 걸음 목표를 정당화하는
+검증된 다변량식이 없기 때문입니다. 모델 버전은 `DING_PALUCH_2025_V1`입니다.
 
 ```text
 stepLengthCm =
@@ -266,6 +279,30 @@ TAGO 실시간 도착이 없으면 `REALTIME_UNAVAILABLE`, 주변 정류장 갱�
 실패하는 경우에만 이미 성공한 추천 응답 좌표를 SVG로 다시 그립니다.
 
 ## 11. 보폭 연구 근거와 한계
+
+하루 목표 근거:
+
+- Ding et al., *Daily steps and health outcomes in adults: a systematic
+  review and dose-response meta-analysis*, 2025,
+  <https://www.sciencedirect.com/science/article/pii/S2468266725001641>
+- Paluch et al., *Daily steps and all-cause mortality: a meta-analysis of 15
+  international cohorts*, 2022,
+  <https://pubmed.ncbi.nlm.nih.gov/35247352/>
+- Paluch et al., *Prospective Association of Daily Steps With Cardiovascular
+  Disease: A Harmonized Meta-Analysis*, 2023,
+  <https://pmc.ncbi.nlm.nih.gov/articles/PMC9839547/>
+- Saint-Maurice et al., *Association of Daily Step Count and Step Intensity
+  With Mortality Among US Adults*, 2020,
+  <https://jamanetwork.com/journals/jama/fullarticle/2763292>
+
+2025년 최신 종합분석은 7,000걸음을 현실적이고 유의미한 일반 성인 목표로
+제시하지만 연령별 분석이 부족하다고 명시합니다. CHIMap은 이를 2022년 연령별
+메타분석의 60세 미만 8,000~10,000, 60세 이상 6,000~8,000 정체 범위와 함께
+사용해 각각 보수적인 첫 목표 8,000과 7,000을 선택합니다. 이는 의료 처방이나
+개인의 현재 활동량을 반영한 적응형 목표가 아닙니다. 통증·임신·질환·낙상 위험이
+있으면 의료진과 목표를 조정해야 합니다.
+
+보폭 근거:
 
 - Han et al., *Development of a Multivariable Equation for Predicting
   Healthy Step Length*, 2026,
