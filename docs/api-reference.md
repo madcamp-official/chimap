@@ -506,8 +506,8 @@ type RecommendationResponse = {
 유지합니다. `coordinates`와 `bus.polyline`은 그 정류장 순서를 Kakao
 Mobility Directions 도로 vertex에 매칭한 표시용 geometry입니다. 이는
 버스 운영사의 정밀 GPS 궤적과는 구분합니다. 클라이언트 지도는 전체
-`bus.stops`를 마커로 만들지 않고 첫 승차, 버스 간 환승, 최종 하차만
-표시합니다.
+`bus.stops`를 개별 마커로 만들지 않습니다. 클라이언트 지도는 전체 여정의
+출발·환승·도착만 표시하고 승하차 정류장 이름은 상세 이동 단계에서 제공합니다.
 
 주요 warning:
 

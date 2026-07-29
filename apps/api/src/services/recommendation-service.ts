@@ -54,6 +54,12 @@ export class RecommendationService {
         ? timeoutSignal
         : AbortSignal.any([input.signal, timeoutSignal]);
     let geometryDegradedLegCount = 0;
+    const observeRouteGeometry = (observation: RouteGeometryObservation) => {
+      if (observation.outcome === "APPROXIMATE") {
+        geometryDegradedLegCount += 1;
+      }
+      input.observeRouteGeometry?.(observation);
+    };
 
     try {
       const generated = await this.#candidateGenerator.generate(
@@ -66,12 +72,7 @@ export class RecommendationService {
           ...(input.observeSubwayGeometry === undefined
             ? {}
             : { observeSubwayGeometry: input.observeSubwayGeometry }),
-          observeRouteGeometry: (observation) => {
-            if (observation.outcome === "APPROXIMATE") {
-              geometryDegradedLegCount += 1;
-            }
-            input.observeRouteGeometry?.(observation);
-          },
+          observeRouteGeometry,
         },
       );
       if (generated.routeApiCallCount > 9) {
@@ -112,6 +113,29 @@ export class RecommendationService {
           status: 500,
         });
       }
+      let recommendations = selection.recommendations;
+      if (input.geometryProfile === "TRANSIT_V2") {
+        const prioritized = [
+          ...recommendations.filter(
+            (recommendation) => recommendation.id === primaryRecommendationId,
+          ),
+          ...recommendations.filter(
+            (recommendation) => recommendation.id !== primaryRecommendationId,
+          ),
+        ];
+        const enriched = await this.#candidateGenerator.enrichWalkingGeometry(
+          prioritized,
+          signal,
+          observeRouteGeometry,
+        );
+        const enrichedById = new Map(
+          enriched.map((recommendation) => [recommendation.id, recommendation]),
+        );
+        recommendations = recommendations.map(
+          (recommendation) =>
+            enrichedById.get(recommendation.id) ?? recommendation,
+        );
+      }
 
       const baselineMetrics = calculateStepMetrics(
         input.request,
@@ -130,7 +154,7 @@ export class RecommendationService {
         },
       ];
       if (
-        selection.recommendations.some(
+        recommendations.some(
           (recommendation) => recommendation.isRealtime === false,
         )
       ) {
@@ -141,7 +165,7 @@ export class RecommendationService {
         });
       }
       if (
-        selection.recommendations.some(
+        recommendations.some(
           (recommendation) => recommendation.isPartial === true,
         )
       ) {
@@ -170,10 +194,10 @@ export class RecommendationService {
               : "설정한 마감시간과 추가시간 안에서는 목표 걸음의 ±5% 범위에 맞추기 어려워 가장 가까운 경로를 보여드려요.",
         });
       }
-      if (selection.recommendations.length < 3) {
+      if (recommendations.length < 3) {
         warnings.push({
           code: "LIMITED_ROUTE_VARIETY",
-          message: `조건을 만족하면서 충분히 다른 경로가 ${selection.recommendations.length}개뿐이에요.`,
+          message: `조건을 만족하면서 충분히 다른 경로가 ${recommendations.length}개뿐이에요.`,
         });
       }
 
@@ -201,7 +225,7 @@ export class RecommendationService {
           source: input.request.walkingMetric.source,
         },
         primaryRecommendationId,
-        recommendations: selection.recommendations,
+        recommendations,
         warnings,
       });
 

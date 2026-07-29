@@ -12,7 +12,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AppIcon } from "../components/app-icon";
+import { BrandLogo } from "../components/brand-logo";
 import { useMobileConfig } from "../features/api/mobile-config";
 import {
   apiBaseUrl,
@@ -108,7 +108,7 @@ function KakaoLoginScreen({ message }: { message: string | null }) {
           <View style={styles.orbitLarge} />
           <View style={styles.orbitSmall} />
           <View style={styles.loginBrandMark}>
-            <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={34} />
+            <BrandLogo size={62} />
           </View>
           <Text style={styles.loginBrand}>CHIMap</Text>
           <Text style={styles.loginTagline}>가는 길을 더 건강하게</Text>
@@ -260,10 +260,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 17,
-    borderWidth: 1,
-    borderColor: "rgba(8,45,55,0.28)",
     borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    overflow: "hidden",
   },
   loginBrand: { ...platformText, color: chimapTheme.navyStrong, fontSize: 54, fontWeight: "900", letterSpacing: -2 },
   loginTagline: { ...platformText, marginTop: 8, color: chimapTheme.navyStrong, fontSize: 14, fontWeight: "800" },

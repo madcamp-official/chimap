@@ -18,10 +18,10 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-현재 production 기준선은 2026-07-28 14:39 KST의 이미지
-`sha256:d6348b3d...`이며 migration 11, 실제 지하철 선로와 버스·도보
-`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 운영
-`transit-v2` 승격 기록을 기준으로 합니다.
+현재 production 기준선은 2026-07-29 12:28 KST의 `main@6ef3e8a` 이미지
+`sha256:81d4709d...`이며 migration 11, 실제 지하철 선로와 버스·도보
+`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 투명 favicon
+승격 기록을 기준으로 합니다.
 
 ## 1. 사전 조건
 
@@ -458,7 +458,8 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 
 1. `GET /api/v1/health`
 2. `GET /api/v1/readiness`
-3. 최초 이용 개인화에서 만 나이·신장·체중·생물학적 성별·하루 목표 필수 확인
+3. 최초 이용 개인화에서 만 나이·신장·체중·생물학적 성별 입력 후 연령별 첫
+   목표와 예상 거리가 자동 표시되고, 기존 저장 목표는 보존되는지 확인
 4. 직접 한 걸음 길이 입력·20m 보행 측정 필드가 없는지 확인
 5. 헤더 현재 걸음은 Enter·포커스 이탈에 반영되고 잘못된 값은 이전 값 유지
 6. 왼쪽 패널에 출발지·도착지·위치 교환·현재 위치·CTA만 표시되고 지도 위
@@ -901,3 +902,90 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
   cold 요청은 HTTP 200(15.1초), warm 5건은 모두 HTTP 200(0.84~2.13초)입니다.
 - Prometheus rule 22개 검증 성공, geometry 원인 504와 배포 후 API error는
   확인되지 않았습니다.
+
+## 22. 2026-07-28 이미지 자산 정리와 경로 표시 개선 운영 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay
+- source: `main@95f518c0ab749763077ad0e94c7e56359b0f802f`, PR #4
+- image: `sha256:138deb8f90f62b67aa822afd8b233290ccf324e4dea802dda9bb655ac6295ef6`
+- rollback image: `chimap:rollback-pre-route-assets-20260728`
+  (`sha256:5389ad43312bfaac35e2066924a23e4aa44a0fa143d66cf88758d463f052477c`)
+- schema 변경 없음, migration 11과 `TRANSIT_GEOMETRY_V2_ENABLED=1` 유지
+- 배포 직전 backup: `chimap-daily-20260728T134548Z.dump`, 18,148,791 bytes,
+  SHA-256 `0741c7052bd8edd517f773600eba3dcd72d1b7355bdf9b18a87fc76933f7112c`
+- Web 이미지는 `/images/logo.png`와 `/images/app-icon.png`로 정리하고, 사용하지
+  않는 좌·우 버스 bitmap과 루트 `bus_icon.webp`는 제거했습니다. 모바일 지도
+  출발·도착 bitmap은 `src/platform/maps/images`로 이동했습니다.
+- 모바일 도착시각은 `Asia/Seoul`을 명시해 Mac·GitHub UTC에서 같은 결과를
+  반환합니다. Expo iOS·Android bundle, clean prebuild, native config 검증과
+  GitHub Web/API·Mobile JS·iOS·Android·PostGIS job을 모두 통과했습니다.
+- local·public health/readiness/mobile-config HTTP 200, 이미지 해시 일치,
+  공개 JavaScript `index-BELtThX5.js`의 서버 비밀값 미검출을 확인했습니다.
+- 공개 `KAIST 본원`·`대전역` 검색은 정확한 장소가 각각 첫 결과이고 실제
+  `transit-v2` 추천은 `FAST/BALANCED/GOAL` 3건, `BUS/SUBWAY/WALK`를 반환했습니다.
+- Prometheus target 3개 `up`, rule 22개, API·alert relay 배포 직후 error 0건을
+  확인했습니다.
+- strict Web E2E 첫 실행은 TAGO 차량 위치 호출의 단발성 `UPSTREAM_TIMEOUT`으로
+  10초 polling 응답 횟수가 한 번 부족해 2/3 통과했습니다. 같은 핵심 사례를
+  즉시 재실행해 통과했으며 경로 추천·형상·지도 카메라 실패는 없었습니다.
+
+## 23. 2026-07-29 투명 favicon과 캐시 갱신 운영 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay
+- source: `main@6ef3e8abee896e599bf3e95cc59583bfe77babd0`, PR #5·#6
+- image: `sha256:81d4709d620cb143b2e6252f67b31146f343fc67fce1391802b4da85076f9a4d`
+- rollback images:
+  - `chimap:rollback-pre-transparent-favicon-20260729`
+    (`sha256:138deb8f90f62b67aa822afd8b233290ccf324e4dea802dda9bb655ac6295ef6`)
+  - `chimap:rollback-pre-favicon-cache-bust-20260729`
+    (`sha256:d16df6cf6b6c7be2bd3c1b6ad9351d7f9b006ab70241c83f63693f3a3404daed`)
+- schema 변경 없음, migration 11과 `TRANSIT_GEOMETRY_V2_ENABLED=1` 유지
+- 배포 직전 backup: `chimap-daily-20260729T032209Z.dump`, 18,149,938 bytes,
+  SHA-256 `a7d5518c698f50155fd8b65b3582c9eb2eeeaa3014bc2b54e88e0b55678e1e18`
+- favicon 원본의 크기와 불투명 영역 RGB는 유지하고 바깥 49,862픽셀을 완전
+  투명, 경계 447픽셀을 부분 투명 alpha로 변경했습니다. 공개 파일은 RGBA,
+  1,254×1,254, 모서리 alpha 0·중앙 alpha 255입니다.
+- 기존 `/images/app-icon.png`가 Cloudflare와 브라우저에서 1년 `immutable`로
+  캐시되어 이전 RGB 파일이 계속 반환되는 것을 배포 smoke에서 확인했습니다.
+  HTML을 `/images/app-icon.png?v=d343336a`로 변경해 새 캐시 키를 사용합니다.
+- 공개 HTML의 버전 URL, favicon SHA-256
+  `d343336a709b14803255b357eff6dcc9a5eb4b0eae02b2346649e02937b376bf`,
+  local·public health/readiness HTTP 200을 확인했습니다.
+- PR #5 run `30417960322`에서 Web/API·Mobile JS·PostGIS·iOS·Android 다섯 job이
+  모두 통과했습니다. PR #6은 Web `index.html`만 변경했고 run `30419501614`의
+  Web/API·Mobile JS·PostGIS 성공 후 병합했습니다.
+- Prometheus target 3개 `up`, rule 22개, API·alert relay 배포 후 error 0건과
+  공개 JavaScript의 서버 비밀값 미검출을 확인했습니다.
+
+## 24. 2026-07-29 개인화 첫 목표와 브랜드 로고 운영 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay
+- source: `main@f1320ca9f2d28106fc8a34a40e55bb729c4225d9`, PR #8
+- image: `sha256:4a8c8c55c826b979d69c7aac2074006e9223483678f3d7d9b0908f99e2e8ad16`
+- rollback image: `chimap:rollback-pre-personalized-goal-brand-20260729`
+  (`sha256:81d4709d620cb143b2e6252f67b31146f343fc67fce1391802b4da85076f9a4d`)
+- schema·migration·API 응답 계약 변경 없음, migration 11과
+  `TRANSIT_GEOMETRY_V2_ENABLED=1` 유지
+- 배포 직전 backup: `chimap-daily-20260729T042327Z.dump`, 18,149,941 bytes,
+  SHA-256 `ca1e83d9009aaa6d14a4ad4ac6cf0375f7dcca575a8d48e463ac05f38abfaa22`
+- 최초 프로필 저장 때만 연령별 논문 근거 목표를 자동 적용합니다. 18~59세는
+  8,000보, 60~90세는 7,000보이며 기존 저장 목표와 사용자의 직접 수정값은
+  보존합니다. 신장·체중·생물학적 성별은 목표 걸음 수 배수가 아니라 기존
+  걸음 길이 모델과 예상 거리 계산에만 사용합니다.
+- Web·iOS·Android 헤더는 주황·흰색 중심에 초록 잎과 경로를 더하고 검정은
+  외곽선·발자국으로 제한한 동일 PNG를 사용합니다. Web 공개 로고와 mobile
+  source asset의 SHA-256은 모두
+  `d28d13cfa0bb057925f5024b98a8cbe5952e52c75fafcb61a805f2b722bec9b7`이며,
+  Web은 `/images/logo.png?v=d28d13cf`로 캐시를 갱신합니다.
+- PR #8 run `30420745568`에서 Web/API, PostGIS, Expo iOS·Android bundle,
+  iOS simulator compile과 Android debug compile 다섯 job이 모두 통과했습니다.
+  저장소 전체 결정적 테스트는 API 147, Web 61, Mobile 56, Contracts 15,
+  App Core 10, Alert Relay 4개가 통과했습니다.
+- 병합된 main과 PR head의 tree가 동일함을 확인하고, 포트 3002 후보에서
+  health·readiness·mobile-config HTTP 200, migration current, PostGIS와 공급자
+  readiness, 로고 해시, 공개 번들 비밀값 미검출을 확인한 뒤 승격했습니다.
+- 공개 `KAIST 본원`·`대전역` 검색은 정확한 장소가 각각 첫 결과이고 실제
+  `transit-v2` 추천은 `FAST/BALANCED/GOAL` 3건과 `BUS/SUBWAY/WALK`를
+  반환했습니다. local·public health/readiness/mobile-config도 HTTP 200입니다.
+- Prometheus target 3개가 모두 `up`, rule 22개 중 firing 0건이며 API·alert relay
+  배포 후 오류 로그 0건을 확인했습니다.

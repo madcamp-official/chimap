@@ -25,6 +25,25 @@ prebuild로 다시 만들며 Git에 추가하거나 generated Gradle/Manifest �
 저장소 루트의 `app_icon.png`은 canonical 원본입니다. 원본을 덮어쓰지 않으며
 파생 자산은 `apps/mobile/assets/branding`에서 관리합니다.
 
+공용 브랜드는 `apps/mobile/src/components/images/logo.png`과
+`apps/web/public/images/logo.png`의 동일 PNG를 사용합니다. 두 파일의 SHA-256은
+`d28d13cfa0bb057925f5024b98a8cbe5952e52c75fafcb61a805f2b722bec9b7`이며,
+색상·비율·투명 여백을 임의로 바꾸지 않습니다. 지도 bitmap은
+`apps/mobile/src/platform/maps/images`에만 둡니다.
+
+### 공용 동작 호환성
+
+- Web·iOS·Android는 `transit-v2` 경로 계약과 추천 순위·ETA·요금·환승 의미를
+  공유합니다.
+- `APPROXIMATE` 도보·버스 구간은 흐린 점선, `DETAILED`는 실선입니다.
+- 출발·환승·도착 마커는 `@chimap/app-core`에서 파생하며 개별 승하차 마커를
+  반복하지 않습니다.
+- 버스 진행 방향은 공용 방위 계산을 사용하고 5m 미만 위치 흔들림에는 직전
+  방향을 유지합니다.
+- 도착시각은 host timezone과 무관하게 `Asia/Seoul`로 표시합니다.
+- 최초 목표는 만 18~59세 8,000보, 만 60~90세 7,000보이며 기존 사용자 목표를
+  자동으로 덮어쓰지 않습니다.
+
 ## 2. macOS 개발 환경 설치
 
 Homebrew 기준 설치 예시는 다음과 같습니다. JDK는 Temurin 17 또는 OpenJDK 17
@@ -112,7 +131,7 @@ interactive `pnpm dlx eas-cli login`을 사용하고 토큰을 파일로 저장�
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm boundaries
+pnpm boundaries:check
 pnpm --filter @chimap/contracts build
 pnpm --filter @chimap/app-core build
 pnpm --filter @chimap/design-tokens build
@@ -121,7 +140,6 @@ pnpm --filter @chimap/mobile test
 ```
 
 환경 파일은 출력하지 않고 현재 셸에만 로드합니다.
-
 ```bash
 set -a
 source apps/mobile/.env
@@ -288,9 +306,9 @@ request ID와 계정 식별자를 마스킹합니다.
 - [ ] 정부청사역 곡선 선로 geometry
 - [ ] 514번 버스 geometry와 차량 marker
 - [ ] approximate geometry의 dashed line
-- [ ] 출발/승차/환승/하차/도착/차량 marker와 z-index
-- [ ] 같은 role 15m 이내 marker 중 첫 경로 항목만 유지
-- [ ] 도보 전용 경로에는 transit marker 없음
+- [ ] 출발/환승/도착/차량 marker와 endpoint 우선 z-index
+- [ ] 같은 위치의 환승 marker 중복 제거
+- [ ] 환승 없는 경로에는 출발·도착 marker만 표시
 - [ ] “대전역” 검색 정확도
 - [ ] FAST/BALANCED/GOAL 추천, ETA·요금·환승·상세 단계
 - [ ] 지도 실패 중에도 추천 카드와 상세 단계 사용 가능

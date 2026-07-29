@@ -1,9 +1,10 @@
 import type { Place, Recommendation } from "@chimap/contracts";
+import { bearingDegrees, buildJourneyMapMarkers } from "@chimap/app-core";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RelevantVehiclePosition } from "../lib/vehicle-positions.js";
-import { MapView, transitMarkers } from "./MapView.js";
+import { MapView } from "./MapView.js";
 
 const origin: Place = {
   id: "kakao:place:10491355",
@@ -109,7 +110,7 @@ describe("MapView", () => {
   afterEach(() => {
     delete (window as Window & { naver?: unknown }).naver;
   });
-  it("지하철 탑승·노선 환승·하차 마커를 만든다", () => {
+  it("지도 마커는 지하철 개별 승하차 대신 출발·환승·도착만 만든다", () => {
     const subwayRoute: Recommendation = {
       ...route,
       id: "subway-transfer-route",
@@ -144,22 +145,29 @@ describe("MapView", () => {
       ],
     };
 
-    expect(transitMarkers(subwayRoute)).toEqual([
+    expect(buildJourneyMapMarkers({
+      route: subwayRoute,
+      origin: origin.location,
+      destination: destination.location,
+      originName: origin.name,
+      destinationName: destination.name,
+    })).toEqual([
       expect.objectContaining({
-        label: "탑승",
-        title: "월평 · 대전 1호선 탑승",
+        label: "출발",
+        role: "ORIGIN",
       }),
       expect.objectContaining({
         label: "환승",
+        role: "TRANSFER",
         title: "정부청사 · 대전 1호선에서 대전 2호선으로 환승",
       }),
       expect.objectContaining({
-        label: "하차",
-        title: "대전 · 대전 2호선 하차",
+        label: "도착",
+        role: "DESTINATION",
       }),
     ]);
 
-    render(
+    const { container } = render(
       <MapView
         origin={origin}
         destination={destination}
@@ -167,6 +175,12 @@ describe("MapView", () => {
         selectedRouteId={subwayRoute.id}
       />,
     );
+    expect(container.querySelectorAll("[data-marker-role]")).toHaveLength(3);
+    expect(container.querySelectorAll("[data-marker-role='origin']")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-marker-role='transfer']")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-marker-role='destination']")).toHaveLength(1);
+    expect(container).not.toHaveTextContent("탑승");
+    expect(container).not.toHaveTextContent("하차");
     expect(
       screen.getByRole("link", {
         name: "선로 데이터: © OpenStreetMap contributors 외",
@@ -266,7 +280,7 @@ describe("MapView", () => {
     expect(line).toHaveAttribute("stroke-opacity", "0.45");
   });
 
-  it("SVG fallback도 WebP 버스 이미지와 흰 전광판·검은 노선번호를 표시한다", () => {
+  it("SVG fallback도 진행방향 버스 모양과 읽을 수 있는 노선번호를 표시한다", () => {
     const { container } = render(
       <MapView
         origin={origin}
@@ -277,25 +291,22 @@ describe("MapView", () => {
       />,
     );
 
-    const image = container.querySelector(".route-preview-svg image");
+    const vehicleBody = container.querySelector(".preview-vehicle-body");
     const number = container.querySelector(".preview-vehicle-number");
-    expect(image).toHaveAttribute(
-      "href",
-      expect.stringContaining("bus_icon.webp"),
-    );
+    expect(vehicleBody).toHaveAttribute("transform", "rotate(0)");
     expect(number).toHaveTextContent("603");
     expect(number).toHaveClass("preview-vehicle-number");
-    expect(number).toHaveAttribute("fill", "#111");
-    expect(container.querySelector(".preview-vehicle-display")).toHaveAttribute(
-      "fill",
-      "#fff",
-    );
+    expect(number).toHaveAttribute("fill", "#fff");
+    expect(container.querySelector("[data-heading='0.0']")).toBeInTheDocument();
+    expect(
+      container.querySelector(".preview-vehicle-display"),
+    ).not.toBeInTheDocument();
     expect(container.querySelector(".route-preview-svg title")).toHaveTextContent(
       "603번 · 1분 후 도착",
     );
   });
 
-  it("차량만 갱신할 때 카메라는 유지하고 버스 이미지 마커만 교체한다", async () => {
+  it("차량만 갱신할 때 카메라는 유지하고 버스를 실제 이동 방위로 회전한다", async () => {
     const fitBounds = vi.fn();
     const setCenter = vi.fn();
     const setZoom = vi.fn();
@@ -346,15 +357,14 @@ describe("MapView", () => {
     const vehicleMarker = markerOptions.find((option) =>
       option.icon.content.classList.contains("map-marker-vehicle"),
     );
-    expect(vehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
-      "src",
-      expect.stringContaining("bus_icon"),
-    );
-    expect(vehicleMarker?.icon.content.querySelector("img")).toHaveAttribute(
-      "alt",
-      "",
-    );
+    expect(
+      vehicleMarker?.icon.content.querySelector(".map-marker-vehicle-body"),
+    ).toHaveStyle({ transform: "rotate(0deg)" });
     expect(vehicleMarker?.icon.content).toHaveTextContent("603");
+    expect(vehicleMarker?.icon.content).toHaveAttribute(
+      "data-heading",
+      "0.0",
+    );
     expect(vehicleMarker?.title).toContain("1분 후 도착");
     expect(vehicleMarker?.icon.content).toHaveAttribute(
       "aria-label",
@@ -370,7 +380,12 @@ describe("MapView", () => {
         cameraResetKey="request-1"
         ncpKeyId="public-map-key"
         vehiclePositions={[
-          { ...vehicle, latitude: 36.351, fetchedAt: "2026-07-25T06:37:10.000Z" },
+          {
+            ...vehicle,
+            latitude: 36.351,
+            longitude: 127.399,
+            fetchedAt: "2026-07-25T06:37:10.000Z",
+          },
         ]}
       />,
     );
@@ -381,6 +396,24 @@ describe("MapView", () => {
         ),
       ).toHaveLength(2),
     );
+    const updatedVehicleMarker = markerOptions
+      .filter((option) =>
+        option.icon.content.classList.contains("map-marker-vehicle"),
+      )
+      .at(-1);
+    const northWestHeading = bearingDegrees(
+      { lat: vehicle.latitude, lng: vehicle.longitude },
+      { lat: 36.351, lng: 127.399 },
+    );
+    expect(updatedVehicleMarker?.icon.content).toHaveAttribute(
+      "data-heading",
+      northWestHeading.toFixed(1),
+    );
+    expect(
+      updatedVehicleMarker?.icon.content.querySelector(
+        ".map-marker-vehicle-body",
+      ),
+    ).toHaveStyle({ transform: "rotate(" + northWestHeading + "deg)" });
     expect(fitBounds).toHaveBeenCalledTimes(1);
     expect(setCenter).not.toHaveBeenCalled();
     expect(setZoom).not.toHaveBeenCalled();
@@ -393,9 +426,35 @@ describe("MapView", () => {
         selectedRouteId={alternateRoute.id}
         cameraResetKey="request-1"
         ncpKeyId="public-map-key"
-        vehiclePositions={[vehicle]}
+        vehiclePositions={[
+          {
+            ...vehicle,
+            longitude: 127.401,
+            fetchedAt: "2026-07-25T06:37:20.000Z",
+          },
+        ]}
       />,
     );
     await waitFor(() => expect(fitBounds).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        markerOptions.filter((option) =>
+          option.icon.content.classList.contains("map-marker-vehicle"),
+        ),
+      ).toHaveLength(3),
+    );
+    const southEastMovingVehicleMarker = markerOptions
+      .filter((option) =>
+        option.icon.content.classList.contains("map-marker-vehicle"),
+      )
+      .at(-1);
+    const southEastHeading = bearingDegrees(
+      { lat: 36.351, lng: 127.399 },
+      { lat: vehicle.latitude, lng: 127.401 },
+    );
+    expect(southEastMovingVehicleMarker?.icon.content).toHaveAttribute(
+      "data-heading",
+      southEastHeading.toFixed(1),
+    );
   });
 });

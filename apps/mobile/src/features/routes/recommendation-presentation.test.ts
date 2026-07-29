@@ -30,7 +30,9 @@ describe("recommendation presentation", () => {
       expect(formatMinutes(1_560)).toBe("26분");
       expect(formatMeters(850)).toBe("850m");
       expect(formatMeters(1_250)).toBe("1.3km");
-      expect(formatClockTime("2026-07-28T10:25:00+09:00")).toMatch(/10:25/u);
+      const koreanTime = formatClockTime("2026-07-28T10:25:00+09:00");
+      expect(koreanTime).toMatch(/10:25/u);
+      expect(formatClockTime("2026-07-28T01:25:00Z")).toBe(koreanTime);
     } finally {
       if (originalTimeZone === undefined) {
         delete process.env.TZ;

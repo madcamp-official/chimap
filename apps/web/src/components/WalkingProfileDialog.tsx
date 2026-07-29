@@ -1,11 +1,12 @@
 import {
   estimatePersonalizedStepLengthMeters,
+  recommendPersonalizedDailyGoal,
   walkingProfileSchema,
   type BiologicalSex,
   type WalkingProfile,
 } from "@chimap/contracts";
 import { Footprints, ShieldCheck, X } from "lucide-react";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 type WalkingProfileDialogProps = {
   initialProfile?: WalkingProfile;
@@ -34,6 +35,9 @@ export function WalkingProfileDialog({
   const [dailyGoalSteps, setDailyGoalSteps] = useState(
     initialDailyGoalSteps,
   );
+  const [goalManuallyEdited, setGoalManuallyEdited] = useState(
+    initialProfile !== undefined,
+  );
   const profile = useMemo(() => {
     const parsed = walkingProfileSchema.safeParse({
       birthYear: currentYear - age,
@@ -54,8 +58,21 @@ export function WalkingProfileDialog({
     profile === undefined
       ? undefined
       : estimatePersonalizedStepLengthMeters(profile, currentYear);
+  const goalRecommendation = useMemo(
+    () =>
+      profile === undefined
+        ? undefined
+        : recommendPersonalizedDailyGoal(profile, currentYear),
+    [currentYear, profile],
+  );
   const bodyMassIndex =
     heightCm > 0 ? weightKg / (heightCm / 100) ** 2 : undefined;
+
+  useEffect(() => {
+    if (goalRecommendation !== undefined && !goalManuallyEdited) {
+      setDailyGoalSteps(goalRecommendation.dailyGoalSteps);
+    }
+  }, [goalManuallyEdited, goalRecommendation]);
 
   function submit(event: FormEvent): void {
     event.preventDefault();
@@ -147,9 +164,10 @@ export function WalkingProfileDialog({
                   max={100000}
                   required
                   value={dailyGoalSteps}
-                  onChange={(event) =>
-                    setDailyGoalSteps(Number(event.target.value))
-                  }
+                  onChange={(event) => {
+                    setGoalManuallyEdited(true);
+                    setDailyGoalSteps(Number(event.target.value));
+                  }}
                 />
                 <span>걸음</span>
               </div>
@@ -200,6 +218,42 @@ export function WalkingProfileDialog({
               여성
             </label>
           </fieldset>
+
+          {goalRecommendation === undefined ? null : (
+            <div className="profile-goal-recommendation" aria-live="polite">
+              <div>
+                <span>논문 근거 기반 첫 목표</span>
+                <strong>
+                  {goalRecommendation.dailyGoalSteps.toLocaleString()}걸음
+                </strong>
+              </div>
+              <p>
+                만 {goalRecommendation.age}세 연구 범위는 {" "}
+                {goalRecommendation.evidenceRange.minSteps.toLocaleString()}~
+                {goalRecommendation.evidenceRange.maxSteps.toLocaleString()}
+                걸음이며, 현재 신체정보로 환산하면 약 {" "}
+                {(goalRecommendation.estimatedDistanceMeters / 1_000).toFixed(1)}
+                km입니다.
+              </p>
+              <small>
+                나이는 걸음 목표 범위를 정하고 신장·체중·성별은 예상 보폭과
+                거리 환산에만 사용합니다.
+              </small>
+              {dailyGoalSteps === goalRecommendation.dailyGoalSteps ? (
+                <em>추천값 적용 중</em>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGoalManuallyEdited(true);
+                    setDailyGoalSteps(goalRecommendation.dailyGoalSteps);
+                  }}
+                >
+                  추천값 적용
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="profile-estimate" aria-live="polite">
             <span>연구 기반 예상 한 걸음 길이</span>

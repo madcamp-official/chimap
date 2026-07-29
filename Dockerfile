@@ -8,15 +8,17 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json .
 COPY apps/api/package.json apps/api/package.json
 COPY apps/alert-relay/package.json apps/alert-relay/package.json
 COPY apps/web/package.json apps/web/package.json
+COPY packages/app-core/package.json packages/app-core/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
-COPY bus_icon.webp bus_icon.webp
-
+COPY packages/design-tokens/package.json packages/design-tokens/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY apps/api apps/api
 COPY apps/alert-relay apps/alert-relay
 COPY apps/web apps/web
+COPY packages/app-core packages/app-core
 COPY packages/contracts packages/contracts
+COPY packages/design-tokens packages/design-tokens
 COPY data/subway_geometry_sources.json data/subway_geometry_sources.json
 COPY data/subway_segment_shapes.geojson data/subway_segment_shapes.geojson
 COPY data/subway_segment_shapes.report.json data/subway_segment_shapes.report.json
@@ -25,6 +27,8 @@ COPY data/subway_segment_shapes.LICENSE.md data/subway_segment_shapes.LICENSE.md
 ARG NAVER_MAP_BROWSER_CLIENT_ID=""
 
 RUN pnpm --filter @chimap/contracts build \
+  && pnpm --filter @chimap/app-core build \
+  && pnpm --filter @chimap/design-tokens build \
   && pnpm --filter @chimap/api build \
   && pnpm --filter @chimap/alert-relay build \
   && VITE_NAVER_MAP_NCP_KEY_ID="${NAVER_MAP_BROWSER_CLIENT_ID}" \

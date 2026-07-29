@@ -36,7 +36,7 @@ import {
 import {
   classifyGeometryError,
   RouteGeometryService,
-  withRouteGeometryLimit,
+  withWalkingGeometryLimit,
 } from "./route-geometry.js";
 import type { RouteGeometryObservation } from "./route-geometry.js";
 
@@ -895,6 +895,33 @@ export class MultimodalRoutePlanner {
             }),
       }];
     }
+    if (graph.geometryProfile === "TRANSIT_V2") {
+      return [{
+        id: `multimodal-walk-${index}`,
+        mode: "WALK",
+        guidance:
+          edge.walkingKind === "TRANSFER"
+            ? "환승 지점까지 도보 이동"
+            : edge.walkingKind === "EGRESS"
+              ? "하차 후 목적지까지 도보 이동"
+              : "탑승 지점까지 도보 이동",
+        distanceMeters: edge.distanceMeters,
+        durationSeconds: edge.durationSeconds,
+        coordinates: edge.coordinates,
+        geometryQuality: "APPROXIMATE",
+        isExerciseSegment: false,
+        walkingRole: role,
+        ...(edge.transferType === undefined
+          ? {}
+          : {
+              transfer: {
+                transferType: edge.transferType,
+                fromServiceId: edge.fromNodeId,
+                toServiceId: edge.toNodeId,
+              },
+            }),
+      }];
+    }
     const from = edge.coordinates[0]!;
     const to = edge.coordinates.at(-1)!;
     const cacheKey = `multimodal:walk:${from.lng.toFixed(5)},${from.lat.toFixed(5)}:${to.lng.toFixed(5)},${to.lat.toFixed(5)}`;
@@ -909,12 +936,12 @@ export class MultimodalRoutePlanner {
         cacheKey,
         30 * 60 * 1_000,
         () =>
-          withRouteGeometryLimit(() => this.#baseProvider.getWalkingRoute({
+          withWalkingGeometryLimit(() => this.#baseProvider.getWalkingRoute({
             origin: from,
             destination: to,
             routeMode: "BROAD_FIRST",
             signal: walkingSignal,
-          })),
+          }), walkingSignal),
       );
       const legs = route.legs.map((leg, legIndex) => ({
         ...leg,
@@ -969,9 +996,6 @@ export class MultimodalRoutePlanner {
         distanceMeters: edge.distanceMeters,
         durationSeconds: edge.durationSeconds,
         coordinates: edge.coordinates,
-        ...(graph.geometryProfile === "TRANSIT_V2"
-          ? { geometryQuality: "APPROXIMATE" as const }
-          : {}),
         isExerciseSegment: false,
         walkingRole: role,
         ...(edge.transferType === undefined

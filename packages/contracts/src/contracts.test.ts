@@ -11,6 +11,7 @@ import {
   mobileConfigResponseSchema,
   mobileKakaoLoginRequestSchema,
   mobileTokenPairSchema,
+  recommendPersonalizedDailyGoal,
   recommendationRequestSchema,
   routeLegSchema,
   storedPreferencesV1Schema,
@@ -247,6 +248,88 @@ describe("공유 계약", () => {
     ).toBeCloseTo(0.694, 3);
     expect(() =>
       estimatePersonalizedStepLengthMeters(
+        {
+          birthYear: 2010,
+          heightCm: 170,
+          weightKg: 65,
+          biologicalSex: "MALE",
+        },
+        2026,
+      ),
+    ).toThrow(/18~90세/u);
+  });
+
+  it("연령별 연구 범위로 첫 하루 목표를 추천하고 신체정보로 거리를 환산한다", () => {
+    const younger = recommendPersonalizedDailyGoal(
+      {
+        birthYear: 2001,
+        heightCm: 170,
+        weightKg: 65,
+        biologicalSex: "FEMALE",
+      },
+      2026,
+    );
+    const older = recommendPersonalizedDailyGoal(
+      {
+        birthYear: 1960,
+        heightCm: 170,
+        weightKg: 65,
+        biologicalSex: "MALE",
+      },
+      2026,
+    );
+
+    expect(younger).toMatchObject({
+      age: 25,
+      dailyGoalSteps: 8_000,
+      evidenceRange: { minSteps: 8_000, maxSteps: 10_000 },
+      modelVersion: "DING_PALUCH_2025_V1",
+    });
+    expect(older).toMatchObject({
+      age: 66,
+      dailyGoalSteps: 7_000,
+      evidenceRange: { minSteps: 6_000, maxSteps: 8_000 },
+    });
+    expect(younger.estimatedDistanceMeters).toBeGreaterThan(0);
+  });
+
+  it("60세 경계만 걸음 범위를 바꾸고 성별·신체치수는 거리 환산에만 사용한다", () => {
+    const at59 = recommendPersonalizedDailyGoal(
+      {
+        birthYear: 1967,
+        heightCm: 160,
+        weightKg: 55,
+        biologicalSex: "FEMALE",
+      },
+      2026,
+    );
+    const sameAgeDifferentBody = recommendPersonalizedDailyGoal(
+      {
+        birthYear: 1967,
+        heightCm: 190,
+        weightKg: 90,
+        biologicalSex: "MALE",
+      },
+      2026,
+    );
+    const at60 = recommendPersonalizedDailyGoal(
+      {
+        birthYear: 1966,
+        heightCm: 160,
+        weightKg: 55,
+        biologicalSex: "FEMALE",
+      },
+      2026,
+    );
+
+    expect(at59.dailyGoalSteps).toBe(8_000);
+    expect(sameAgeDifferentBody.dailyGoalSteps).toBe(8_000);
+    expect(sameAgeDifferentBody.estimatedDistanceMeters).not.toBe(
+      at59.estimatedDistanceMeters,
+    );
+    expect(at60.dailyGoalSteps).toBe(7_000);
+    expect(() =>
+      recommendPersonalizedDailyGoal(
         {
           birthYear: 2010,
           heightCm: 170,

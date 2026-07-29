@@ -1,4 +1,9 @@
-import type { Coordinate, RouteLeg } from "@chimap/contracts";
+import {
+  buildJourneyMapMarkers,
+  resolveVehicleHeading,
+  type RelevantVehiclePosition,
+} from "@chimap/app-core";
+import type { Coordinate, Recommendation, RouteLeg } from "@chimap/contracts";
 import {
   NaverMapMarkerOverlay,
   NaverMapPolylineOverlay,
@@ -20,10 +25,6 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { chimapTheme } from "../../theme/chimap-theme";
 import { dashedPolylineSegments } from "./dashed-polyline";
 import type { NativeRouteMapProps } from "./map-contract";
-import {
-  deriveRouteMarkers,
-  type RouteMarkerRole,
-} from "./route-markers";
 
 const defaultRegion = {
   latitude: 36.31,
@@ -38,8 +39,8 @@ const endpointMarker = {
   width: 50,
 } as const;
 
-const originMarkerImage = require("./assets/route-marker-origin.png");
-const destinationMarkerImage = require("./assets/route-marker-destination.png");
+const originMarkerImage = require("./images/route-marker-origin.png");
+const destinationMarkerImage = require("./images/route-marker-destination.png");
 const mapInitializationTimeoutMs = 10_000;
 
 function MapFallback({ style }: Pick<NativeRouteMapProps, "style">) {
@@ -123,6 +124,62 @@ function routeRegion(coordinates: Coordinate[]) {
   };
 }
 
+function vehicleMarkerIdentity(
+  vehicle: RelevantVehiclePosition,
+): string {
+  return [
+    vehicle.cityCode,
+    vehicle.routeId,
+    vehicle.vehicleNo ?? vehicle.displayReason,
+  ].join(":");
+}
+
+function vehicleRouteSegments(
+  route: Recommendation | null,
+  vehicle: RelevantVehiclePosition,
+): Coordinate[][] {
+  return route?.legs.flatMap((leg) =>
+    leg.mode === "BUS" && leg.bus?.routeId === vehicle.routeId
+      ? [leg.coordinates]
+      : [],
+  ) ?? [];
+}
+
+function useVehicleHeadings(
+  vehiclePositions: RelevantVehiclePosition[],
+  route: Recommendation | null,
+): Map<string, number> {
+  const previousPositionsRef = useRef(new Map<string, Coordinate>());
+  const previousHeadingsRef = useRef(new Map<string, number>());
+  const headings = useMemo(() => {
+    const result = new Map<string, number>();
+    vehiclePositions.forEach((vehicle) => {
+      const identity = vehicleMarkerIdentity(vehicle);
+      result.set(
+        identity,
+        resolveVehicleHeading({
+          current: { lat: vehicle.latitude, lng: vehicle.longitude },
+          previous: previousPositionsRef.current.get(identity),
+          previousHeading: previousHeadingsRef.current.get(identity),
+          routeSegments: vehicleRouteSegments(route, vehicle),
+        }),
+      );
+    });
+    return result;
+  }, [route, vehiclePositions]);
+
+  useEffect(() => {
+    previousPositionsRef.current = new Map(
+      vehiclePositions.map((vehicle) => [
+        vehicleMarkerIdentity(vehicle),
+        { lat: vehicle.latitude, lng: vehicle.longitude },
+      ]),
+    );
+    previousHeadingsRef.current = headings;
+  }, [headings, vehiclePositions]);
+  return headings;
+}
+
 function NativeRouteMapContent({
   origin,
   destination,
@@ -146,11 +203,16 @@ function NativeRouteMapContent({
     [destination, origin, route],
   );
   const region = useMemo(() => routeRegion(coordinates), [coordinates]);
-  const routeMarkers = useMemo(
-    () => deriveRouteMarkers(route?.legs ?? []),
-    [route],
-  );
   const hasSubway = route?.legs.some((leg) => leg.mode === "SUBWAY") === true;
+  const vehicleHeadings = useVehicleHeadings(vehiclePositions, route);
+  const transferMarkers = useMemo(
+    () => buildJourneyMapMarkers({
+      route,
+      origin,
+      destination,
+    }).filter((marker) => marker.role === "TRANSFER"),
+    [destination, origin, route],
+  );
 
   useEffect(() => {
     if (mapInitialized) {
@@ -249,58 +311,73 @@ function NativeRouteMapContent({
             </Fragment>
           );
         })}
-        {routeMarkers.map((marker) => (
+        {vehiclePositions.map((vehicle) => {
+          const identity = vehicleMarkerIdentity(vehicle);
+          const heading = vehicleHeadings.get(identity) ?? 0;
+          return (
+            <NaverMapMarkerOverlay
+              anchor={{ x: 0.5, y: 0.5 }}
+              caption={{
+                text:
+                  vehicle.displayReason === "ARRIVING_SOON"
+                    ? `${vehicle.routeNo}번 · ${vehicle.stopsUntilBoarding}정류장 전`
+                    : `${vehicle.routeNo}번 · 운행 중`,
+                color: chimapTheme.busBlue,
+                haloColor: chimapTheme.white,
+                textSize: 10,
+                offset: 4,
+              }}
+              height={56}
+              key={identity}
+              latitude={vehicle.latitude}
+              longitude={vehicle.longitude}
+              width={56}
+              zIndex={18}
+            >
+              <View
+                accessibilityLabel={`${vehicle.routeNo}번 버스 진행방향 ${Math.round(heading)}도`}
+                collapsable={false}
+                style={styles.vehicleMarker}
+              >
+                <View
+                  style={[
+                    styles.vehicleBody,
+                    { transform: [{ rotate: `${heading}deg` }] },
+                  ]}
+                >
+                  <View style={styles.vehicleFrontWindow} />
+                  <View style={styles.vehicleRearWindow} />
+                  <View style={[styles.vehicleWheel, styles.vehicleWheelFrontLeft]} />
+                  <View style={[styles.vehicleWheel, styles.vehicleWheelFrontRight]} />
+                  <View style={[styles.vehicleWheel, styles.vehicleWheelRearLeft]} />
+                  <View style={[styles.vehicleWheel, styles.vehicleWheelRearRight]} />
+                </View>
+                <Text numberOfLines={1} style={styles.vehicleMarkerText}>
+                  {vehicle.routeNo}
+                </Text>
+              </View>
+            </NaverMapMarkerOverlay>
+          );
+        })}
+        {transferMarkers.map((marker, index) => (
           <NaverMapMarkerOverlay
-            anchor={{ x: 0.5, y: 0.5 }}
-            height={36}
-            key={marker.id}
+            anchor={endpointMarker.anchor}
+            height={endpointMarker.height}
+            key={`transfer:${index}:${marker.coordinate.lat}:${marker.coordinate.lng}`}
             latitude={marker.coordinate.lat}
             longitude={marker.coordinate.lng}
-            width={36}
-            zIndex={transitMarkerZIndex(marker.role)}
+            width={endpointMarker.width}
+            zIndex={20}
           >
             <View
+              accessibilityLabel={marker.title}
               collapsable={false}
-              style={[
-                styles.transitMarker,
-                marker.role === "TRANSFER" && styles.transferMarker,
-                marker.role === "ALIGHT" && styles.alightMarker,
-              ]}
+              style={styles.transferMarker}
             >
-              <Text style={styles.transitMarkerText}>
-                {marker.role === "BOARD"
-                  ? "승"
-                  : marker.role === "TRANSFER"
-                    ? "환"
-                    : "하"}
-              </Text>
-            </View>
-          </NaverMapMarkerOverlay>
-        ))}
-        {vehiclePositions.map((vehicle) => (
-          <NaverMapMarkerOverlay
-            anchor={{ x: 0.5, y: 0.5 }}
-            caption={{
-              text:
-                vehicle.displayReason === "ARRIVING_SOON"
-                  ? `${vehicle.stopsUntilBoarding}정류장 전`
-                  : "운행 중",
-              color: chimapTheme.busBlue,
-              haloColor: chimapTheme.white,
-              textSize: 10,
-              offset: 4,
-            }}
-            height={38}
-            key={`${vehicle.cityCode}:${vehicle.routeId}:${vehicle.vehicleNo ?? vehicle.nodeOrder}`}
-            latitude={vehicle.latitude}
-            longitude={vehicle.longitude}
-            width={38}
-            zIndex={18}
-          >
-            <View collapsable={false} key={vehicle.routeNo} style={styles.vehicleMarker}>
-              <Text numberOfLines={1} style={styles.vehicleMarkerText}>
-                {vehicle.routeNo}
-              </Text>
+              <View style={styles.transferMarkerBubble}>
+                <Text style={styles.transferMarkerText}>환승</Text>
+              </View>
+              <View style={styles.transferMarkerTail} />
             </View>
           </NaverMapMarkerOverlay>
         ))}
@@ -349,12 +426,6 @@ function NativeRouteMapContent({
   );
 }
 
-function transitMarkerZIndex(role: RouteMarkerRole): number {
-  if (role === "BOARD") return 14;
-  if (role === "TRANSFER") return 15;
-  return 16;
-}
-
 export function NativeRouteMap(props: NativeRouteMapProps) {
   return (
     <MapErrorBoundary style={props.style}>
@@ -383,34 +454,93 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: "center",
   },
-  transitMarker: {
-    width: 36,
-    height: 36,
+  vehicleMarker: {
+    width: 56,
+    height: 56,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 18,
-    borderWidth: 3,
+  },
+  vehicleBody: {
+    position: "absolute",
+    width: 28,
+    height: 48,
+    borderRadius: 8,
+    borderWidth: 2,
     borderColor: chimapTheme.white,
     backgroundColor: chimapTheme.busBlue,
+    shadowColor: "#0b356b",
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
   },
-  transferMarker: { backgroundColor: chimapTheme.purple },
-  alightMarker: { backgroundColor: chimapTheme.orange },
-  transitMarkerText: {
+  vehicleFrontWindow: {
+    position: "absolute",
+    top: 5,
+    left: 5,
+    width: 14,
+    height: 7,
+    borderRadius: 2,
+    backgroundColor: "#b9dcff",
+  },
+  vehicleRearWindow: {
+    position: "absolute",
+    bottom: 5,
+    left: 5,
+    width: 14,
+    height: 6,
+    borderRadius: 2,
+    backgroundColor: "#153963",
+  },
+  vehicleWheel: {
+    position: "absolute",
+    width: 4,
+    height: 9,
+    borderRadius: 2,
+    backgroundColor: "#152334",
+  },
+  vehicleWheelFrontLeft: { top: 12, left: -5 },
+  vehicleWheelFrontRight: { top: 12, right: -5 },
+  vehicleWheelRearLeft: { bottom: 10, left: -5 },
+  vehicleWheelRearRight: { right: -5, bottom: 10 },
+  vehicleMarkerText: {
+    color: chimapTheme.white,
+    fontSize: 9,
+    fontWeight: "900",
+    textShadowColor: "#123c48",
+    textShadowRadius: 2,
+  },
+  transferMarker: {
+    width: endpointMarker.width,
+    height: endpointMarker.height,
+    alignItems: "center",
+  },
+  transferMarkerBubble: {
+    width: 46,
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 23,
+    borderWidth: 3,
+    borderColor: chimapTheme.white,
+    backgroundColor: chimapTheme.orange,
+  },
+  transferMarkerText: {
     color: chimapTheme.white,
     fontSize: 13,
     fontWeight: "900",
   },
-  vehicleMarker: {
-    width: 38,
-    height: 38,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 19,
-    borderWidth: 3,
-    borderColor: chimapTheme.white,
-    backgroundColor: chimapTheme.busBlue,
+  transferMarkerTail: {
+    width: 0,
+    height: 0,
+    marginTop: -2,
+    borderLeftWidth: 8,
+    borderRightWidth: 8,
+    borderTopWidth: 13,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: chimapTheme.orange,
   },
-  vehicleMarkerText: { color: chimapTheme.white, fontSize: 9, fontWeight: "900" },
   attribution: {
     position: "absolute",
     right: 6,

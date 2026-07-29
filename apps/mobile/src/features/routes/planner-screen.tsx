@@ -47,6 +47,7 @@ import {
 } from "react-native-safe-area-context";
 
 import { AppIcon } from "../../components/app-icon";
+import { BrandLogo } from "../../components/brand-logo";
 import { requestCurrentLocation } from "../../platform/location/current-location";
 import { NativeRouteMap } from "../../platform/maps/native-route-map";
 import {
@@ -1291,7 +1292,7 @@ export function PlannerScreen({
         >
           <View style={styles.brandLockup}>
             <View style={styles.brandMark}>
-              <AppIcon color={chimapTheme.navyStrong} name="arrowUpRight" size={18} />
+              <BrandLogo size={32} />
             </View>
             <Text style={styles.brand}>CHIMap</Text>
           </View>
@@ -1677,7 +1678,7 @@ const styles = StyleSheet.create({
   headerCompactRow: { minHeight: 48, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   headerAccessible: { rowGap: 4 },
   brandLockup: { minWidth: 104, flexDirection: "row", alignItems: "center", gap: 6 },
-  brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: chimapTheme.orange },
+  brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 10 },
   brand: { ...platformText, minWidth: 0, flexShrink: 1, color: chimapTheme.white, fontSize: 18, fontWeight: "900" },
   headerMetrics: { minWidth: 128, flex: 1, flexDirection: "row" },
   headerMetricsAccessible: { width: "100%", flexBasis: "100%", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chimapTheme.dividerOnNavy },

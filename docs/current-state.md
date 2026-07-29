@@ -5,15 +5,16 @@
 - **현재 구현**: Web/API/Mobile 공통 계약과 Expo 앱, migration 11, 요청 범위
   버스·지하철 멀티모달 그래프, 실제 지하철 선로, 버스 도로 형상 영속 캐시,
   연속 도보 형상과 `DETAILED/APPROXIMATE` 표시를 포함합니다. 결정적 테스트는
-  API 141개, mobile 48개, web 57개, contracts 12개, app-core/relay 각 4개이며
+  API 147개, mobile 56개, web 61개, contracts 15개, app-core 10개,
+  alert-relay 4개이며
   PostGIS 의존 통합 테스트 10개는 별도 환경에서 실행합니다.
-- **현재 공개 배포**: 2026-07-28 14:39 KST에 이미지
-  `sha256:d6348b3d…`로 API/웹/alert relay를 교체했습니다.
+- **현재 공개 배포**: 2026-07-29 13:24 KST에 `main@f1320ca` 이미지
+  `sha256:4a8c8c55…`로 API/웹/alert relay를 교체했습니다.
   `TRANSIT_ROUTER_MODE=multimodal`, `TRANSIT_GEOMETRY_V2_ENABLED=1`이며
   `transit-v2`는 실제 지하철 선로와 검증된 버스·도보 형상을 반환합니다.
-- **마지막 전체 운영 점검**: 2026-07-28 14:40 KST에 컨테이너, PostgreSQL,
-  migration 11, 공개 health/readiness, 514번 실제 추천, Prometheus 22개 규칙,
-  정적 출처 페이지와 배포 전후 백업을 대조했습니다.
+- **마지막 전체 운영 점검**: 2026-07-29 13:26 KST에 컨테이너, PostgreSQL,
+  migration 11, 공개 health/readiness/mobile-config, 검색·`transit-v2` 추천,
+  Prometheus 22개 규칙, 새 브랜드 로고 해시와 공개 번들 비밀값을 확인했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
@@ -36,8 +37,9 @@
 - 추천 카드를 시간·이동수단·도보·환승 중심의 간략 기본 표시로 개편
 - 상세 이동 단계는 카드별 `자세히/접기`로만 표시하고 경로 변경 시 자동 닫힘
 - 운행 경고를 기본 접힌 안내로 이동하고 상세 열림 상태의 접근성 속성 적용
-- 회원가입 없이 필수 만 나이·신장·체중·생물학적 성별·하루 목표를 받는 개인화
-  온보딩과 브라우저 전용 저장·수정·삭제 구현
+- 회원가입 없이 필수 만 나이·신장·체중·생물학적 성별을 받고 연령별 논문 근거
+  첫 목표(18~59세 8,000, 60~90세 7,000)를 자동 적용하는 개인화 온보딩과
+  브라우저 전용 저장·수정·삭제 구현. 저장된 사용자 목표는 수정 화면에서 보존
 - 헤더 중앙에 현재 걸음 수정·목표 걸음·개인화 한 걸음 요약을 배치하고,
   767px 이하에서는 두 번째 행 3열로 전환
 - 지도 위 검색 패널을 제거하고 출발지·도착지·위치 교환·현재 위치·한 번의
@@ -51,6 +53,10 @@
 - 명시적 동의 뒤 strict enum만 204로 집계하는 익명 UI 이벤트 추가
 - 헤더의 선택형 카카오 로그인, 로그인 사용자 표시, 로그아웃과 실패·취소
   안내를 추가하고 비회원 핵심 흐름은 그대로 유지
+- Web·iOS·Android 헤더는 주황·흰색·초록 중심의 같은 브랜드 PNG를 각 플랫폼의
+  `images` 폴더에서 사용하고, favicon은 Web 이미지 폴더의 `app-icon.png`, 모바일
+  지도 bitmap은 지도 모듈의 `images`에 둠
+- 모바일 도착시각은 실행 OS나 CI 시간대와 무관하게 `Asia/Seoul`로 표시
 
 ### 실제 검색·교통
 
@@ -63,11 +69,12 @@
 - 운행 노선과 연결 경로가 없을 때 500m→800m→1.2km 정류장 확장 탐색
 - KAIST 본원 중심→대전 갤러리아 경로 실패 재현 후 실제 추천 3건으로 수정
 - TAGO 정류장 직선 연결을 Kakao 다중 경유지 도로 geometry로 교체
-- 지도 버스 마커를 첫 승차·환승·최종 하차만 표시하도록 정리
+- 지도 여정 마커를 출발·환승·도착만 표시하도록 정리하고 개별 승하차 반복 제거
 - 선택 경로와 무관해 보이던 노선 전체 차량 표시를 제거
 - 도착 10분 이하일 때 탑승 정류장에 가장 가까운 접근 차량과 승차~하차
   정류장 순서 안에서 운행 중인 차량을 중복 없이 표시
-- `bus_icon.webp` 중앙에 흰 전광판과 검은 노선번호를 겹쳐 NAVER·SVG 지도에서 통일
+- 별도 버스 bitmap 대신 Web CSS와 native view로 차량을 그리고 공용 방위 계산으로
+  진행 방향을 회전하며 GPS 미세 흔들림에는 직전 방향을 유지
 - 차량 10초 갱신을 경로 overlay와 분리해 사용자 중심·줌과 bounds를 보존
 - 전국 지하철역 CSV 1,099행을 자연키 기준 1,097개로 원자적 import
 - CSV 지하철역 706개를 TAGO 역 ID에 정확 매핑하고 391개는 임의 fuzzy
@@ -114,7 +121,7 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:d6348b3d…`), 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:81d4709d…`, `main@6ef3e8a`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, migration 11, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 22개 경보 규칙 정상 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
@@ -127,10 +134,10 @@
 | 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 구현 브랜치 | `main` (`feat/mobile/cross-platform-foundation@1df41a5`와 iOS staging 통합) |
-| 마지막 공개 기준선 CI | `965aa88`, push run `30194446016` 당시 Web/API 두 job 성공 |
-| foundation CI | push run `30230011225`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
-| 공개 웹 asset | `index-DVyoPrrl.js`·`index-CQVn3DWd.css`·`bus_icon-DB1cEqjH.webp`(9,464 bytes) |
+| 구현 브랜치 | `main@6ef3e8a` (Web·API·iOS·Android 공용 변경 통합) |
+| 마지막 공개 기준선 CI | PR #5 run `30417960322`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
+| favicon cache 보완 CI | PR #6 run `30419501614`, Web/API·Mobile JS·PostGIS 성공 후 병합 |
+| 공개 웹 asset | `index-BELtThX5.js`·`index-B5t-EbPr.css`·`/images/logo.png`·`/images/app-icon.png?v=d343336a` |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | staging server는 guest/Kakao enabled·Apple disabled, 현재 iOS 앱 화면은 Kakao session 필수 |
 | 기본 브랜치 | `main`에 Web/API foundation과 iOS staging 구현 통합 |
@@ -211,14 +218,14 @@ readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 �
 - TAGO 정류장 순서를 최대 30개 경유지 단위로 Kakao 도로에 매칭
 - 빠른·빠른 경로 대비 약 2배 걸음·목표 근접 최대 3개 추천
 - 남은 목표가 있으면 목표에 가장 가까운 추천을 기본 선택
-- NAVER 지도에 도로 매칭 경로와 첫 승차·환승·최종 하차만 표시
+- NAVER 지도에 도로 매칭 경로와 전체 여정의 출발·환승·도착만 표시
 - 운동 시작 마커를 제거하고 모든 도보 구간을 주황색 실선으로 통일
 - 지도는 비선택 0.18, 카드 hover/focus 0.55, 선택 0.95
   불투명도를 사용하고 SVG 복구 지도의 선택 경로는 1.0으로 표시
 - 도착 600초 이하 승차 전 최근접 차량 1대와 승차~하차 구간 운행 차량 전체를
   중복 제거해 표시하고, 순서 없음·ETA 초과·하차 통과 차량 제외
-- 차량은 `bus_icon.webp` 중앙 흰 전광판 위 검은 노선번호와 상태 title로 표시하고
-  지도 bounds 계산에서는 제외
+- 차량은 코드 기반 버스 본체·노선번호와 상태 title로 표시하고 진행 방향으로
+  회전시키며 지도 bounds 계산에서는 제외
 - 차량·도착 10초 갱신은 차량 overlay만 바꾸며 경로와 사용자 중심·줌 보존
 - NAVER SDK 장애 시 동일 추천 좌표 SVG 표시
 - 첫 방문 3초 인트로와 `prefers-reduced-motion` 처리

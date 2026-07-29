@@ -559,18 +559,23 @@ summary:focus-visible,
 }
 
 .brand-mark {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
-  border: 1px solid rgb(255 255 255 / 20%);
   border-radius: 13px;
-  color: #ffc49d;
-  background: rgb(255 255 255 / 9%);
+  overflow: hidden;
+  background: white;
+  box-shadow:
+    0 4px 12px rgb(8 45 55 / 22%),
+    0 0 0 1px rgb(255 255 255 / 20%);
 }
 
-.brand-mark svg {
-  width: 21px;
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
 }
 
 .brand > span:last-child {
@@ -1323,23 +1328,15 @@ summary:focus-visible,
 }
 
 .map-marker-origin {
-  background: var(--bus-blue);
+  background: #22a765;
 }
 
 .map-marker-destination {
-  background: var(--green);
-}
-
-.map-marker-boarding {
-  background: var(--bus-blue);
+  background: #e54863;
 }
 
 .map-marker-transfer {
   background: var(--orange);
-}
-
-.map-marker-alighting {
-  background: var(--purple);
 }
 
 .map-marker-vehicle {
@@ -1354,33 +1351,92 @@ summary:focus-visible,
   box-shadow: none;
 }
 
-.map-marker-vehicle img {
+.map-marker-vehicle-body {
+  position: absolute;
+  z-index: 1;
+  top: 5px;
+  left: 15px;
   display: block;
-  width: 100%;
-  height: 100%;
-  filter: drop-shadow(0 4px 5px rgb(11 53 107 / 28%));
+  width: 30px;
+  height: 50px;
+  border: 2px solid #fff;
+  border-radius: 9px;
+  background: linear-gradient(90deg, #2059bd, #3782ed 48%, #2059bd);
+  box-shadow: 0 4px 7px rgb(11 53 107 / 32%);
+  transform-origin: center;
+}
+
+.map-marker-vehicle-front-window,
+.map-marker-vehicle-rear-window,
+.map-marker-vehicle-left-wheels,
+.map-marker-vehicle-right-wheels {
+  position: absolute;
+  display: block;
+}
+
+.map-marker-vehicle-front-window {
+  top: 5px;
+  left: 5px;
+  width: 16px;
+  height: 7px;
+  border-radius: 3px 3px 2px 2px;
+  background: #b9dcff;
+}
+
+.map-marker-vehicle-rear-window {
+  bottom: 5px;
+  left: 5px;
+  width: 16px;
+  height: 6px;
+  border-radius: 2px;
+  background: #153963;
+}
+
+.map-marker-vehicle-left-wheels,
+.map-marker-vehicle-right-wheels {
+  top: 13px;
+  width: 4px;
+  height: 9px;
+  border-radius: 2px;
+  background: #152334;
+  box-shadow: 0 17px 0 #152334;
+}
+
+.map-marker-vehicle-left-wheels {
+  left: -5px;
+}
+
+.map-marker-vehicle-right-wheels {
+  right: -5px;
 }
 
 .map-marker-vehicle-number {
   position: absolute;
-  top: 34%;
-  left: 30%;
+  z-index: 2;
+  top: 41%;
+  left: 28%;
   display: flex;
-  width: 40%;
-  height: 22%;
+  width: 44%;
+  height: 18%;
   align-items: center;
   justify-content: center;
-  color: #111;
-  background: #fff;
+  color: #fff;
   font-weight: 900;
   line-height: 1;
+  text-shadow:
+    0 1px 2px rgb(4 25 61 / 95%),
+    0 0 2px rgb(4 25 61 / 90%);
   white-space: nowrap;
   transform-origin: center;
 }
 
+.preview-vehicle-body {
+  filter: drop-shadow(0 3px 3px rgb(11 53 107 / 25%));
+}
+
 .preview-vehicle-number {
-  fill: #111;
-  font-size: 5px;
+  fill: #fff;
+  font-size: 6px;
   font-weight: 900;
 }
 
@@ -1744,6 +1800,62 @@ summary:focus-visible,
   border: 1px solid #d3e5dc;
   border-radius: 14px;
   background: #edf7f2;
+}
+
+.profile-goal-recommendation {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  margin-bottom: 10px;
+  border: 1px solid rgb(99 183 70 / 34%);
+  border-radius: 14px;
+  background: #f2f8e9;
+}
+
+.profile-goal-recommendation > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-goal-recommendation span,
+.profile-goal-recommendation small {
+  color: #58705d;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.profile-goal-recommendation strong {
+  color: #377b2e;
+  font-size: 20px;
+}
+
+.profile-goal-recommendation p {
+  margin: 0;
+  color: #405a4a;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.profile-goal-recommendation em {
+  color: #377b2e;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.profile-goal-recommendation button {
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgb(55 123 46 / 35%);
+  border-radius: 10px;
+  color: #2f6d28;
+  background: white;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .profile-estimate span,

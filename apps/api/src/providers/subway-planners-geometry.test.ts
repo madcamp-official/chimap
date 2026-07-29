@@ -168,4 +168,38 @@ describe("두 지하철 플래너의 track-v1 회귀", () => {
       trackLeg.timing?.waitSeconds,
     );
   });
+
+  it("transit-v2 후보 순위 계산 중에는 Kakao 도보 형상을 미리 호출하지 않는다", async () => {
+    const config = loadConfig({ NODE_ENV: "test" });
+    const legacyDependencies = dependencies();
+    const legacyPlanner = new SubwayRoutePlanner({
+      ...legacyDependencies,
+      config,
+    });
+    const multimodalDependencies = dependencies();
+    const multimodalPlanner = new MultimodalRoutePlanner({
+      ...multimodalDependencies,
+      config,
+    });
+    const request = {
+      origin: place("origin", { lat: 36.3485, lng: 127.378 }),
+      destination: place("destination", { lat: 36.3515, lng: 127.402 }),
+      geometryProfile: "TRANSIT_V2" as const,
+    };
+
+    const [legacyRoutes, multimodalRoutes] = await Promise.all([
+      legacyPlanner.getRoutes(request),
+      multimodalPlanner.getRoutes(request),
+    ]);
+
+    expect(legacyDependencies.baseProvider.getWalkingRoute).not.toHaveBeenCalled();
+    expect(multimodalDependencies.baseProvider.getWalkingRoute).not.toHaveBeenCalled();
+    for (const route of [...legacyRoutes, ...multimodalRoutes]) {
+      expect(
+        route.legs
+          .filter((leg) => leg.mode === "WALK")
+          .every((leg) => leg.geometryQuality === "APPROXIMATE"),
+      ).toBe(true);
+    }
+  });
 });

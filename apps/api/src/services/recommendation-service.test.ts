@@ -1,5 +1,6 @@
 import type {
   NormalizedRoute,
+  Recommendation,
   RecommendationRequest,
 } from "@chimap/contracts";
 import type { Logger } from "pino";
@@ -136,5 +137,35 @@ describe("자동 추천 서비스 경고", () => {
         code: "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
       }),
     );
+  });
+
+  it("transit-v2는 추천을 선택한 뒤 선택 결과만 도보 형상으로 보강한다", async () => {
+    const enrichWalkingGeometry = vi.fn(
+      async (recommendations: readonly Recommendation[]) => [...recommendations],
+    );
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline,
+        candidates: [{ route: baseline, kind: "BASE" }],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      enrichWalkingGeometry,
+    } as unknown as CandidateGenerator;
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: vi.fn() } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+    });
+
+    const response = await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000002",
+      geometryProfile: "TRANSIT_V2",
+    });
+
+    expect(enrichWalkingGeometry).toHaveBeenCalledTimes(1);
+    expect(enrichWalkingGeometry.mock.calls[0]?.[0]).toHaveLength(1);
+    expect(response.recommendations).toHaveLength(1);
   });
 });
