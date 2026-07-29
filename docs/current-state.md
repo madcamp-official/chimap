@@ -8,13 +8,13 @@
   API 147개, mobile 56개, web 61개, contracts 15개, app-core 10개,
   alert-relay 4개이며
   PostGIS 의존 통합 테스트 10개는 별도 환경에서 실행합니다.
-- **현재 공개 배포**: 2026-07-29 12:28 KST에 `main@6ef3e8a` 이미지
-  `sha256:81d4709d…`로 API/웹/alert relay를 교체했습니다.
+- **현재 공개 배포**: 2026-07-29 13:24 KST에 `main@f1320ca` 이미지
+  `sha256:4a8c8c55…`로 API/웹/alert relay를 교체했습니다.
   `TRANSIT_ROUTER_MODE=multimodal`, `TRANSIT_GEOMETRY_V2_ENABLED=1`이며
   `transit-v2`는 실제 지하철 선로와 검증된 버스·도보 형상을 반환합니다.
-- **마지막 전체 운영 점검**: 2026-07-29 12:29 KST에 컨테이너, PostgreSQL,
-  migration 11, 공개 health/readiness, Prometheus 22개 규칙, 버전이 포함된 투명
-  favicon의 공개 alpha와 공개 번들 비밀값을 확인했습니다.
+- **마지막 전체 운영 점검**: 2026-07-29 13:26 KST에 컨테이너, PostgreSQL,
+  migration 11, 공개 health/readiness/mobile-config, 검색·`transit-v2` 추천,
+  Prometheus 22개 규칙, 새 브랜드 로고 해시와 공개 번들 비밀값을 확인했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
   `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
   external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.

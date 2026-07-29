@@ -955,3 +955,36 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
   Web/API·Mobile JS·PostGIS 성공 후 병합했습니다.
 - Prometheus target 3개 `up`, rule 22개, API·alert relay 배포 후 error 0건과
   공개 JavaScript의 서버 비밀값 미검출을 확인했습니다.
+
+## 24. 2026-07-29 개인화 첫 목표와 브랜드 로고 운영 승격 기록
+
+- 대상: `https://chimap.madcamp-kaist.org` API·웹·alert relay
+- source: `main@f1320ca9f2d28106fc8a34a40e55bb729c4225d9`, PR #8
+- image: `sha256:4a8c8c55c826b979d69c7aac2074006e9223483678f3d7d9b0908f99e2e8ad16`
+- rollback image: `chimap:rollback-pre-personalized-goal-brand-20260729`
+  (`sha256:81d4709d620cb143b2e6252f67b31146f343fc67fce1391802b4da85076f9a4d`)
+- schema·migration·API 응답 계약 변경 없음, migration 11과
+  `TRANSIT_GEOMETRY_V2_ENABLED=1` 유지
+- 배포 직전 backup: `chimap-daily-20260729T042327Z.dump`, 18,149,941 bytes,
+  SHA-256 `ca1e83d9009aaa6d14a4ad4ac6cf0375f7dcca575a8d48e463ac05f38abfaa22`
+- 최초 프로필 저장 때만 연령별 논문 근거 목표를 자동 적용합니다. 18~59세는
+  8,000보, 60~90세는 7,000보이며 기존 저장 목표와 사용자의 직접 수정값은
+  보존합니다. 신장·체중·생물학적 성별은 목표 걸음 수 배수가 아니라 기존
+  걸음 길이 모델과 예상 거리 계산에만 사용합니다.
+- Web·iOS·Android 헤더는 주황·흰색 중심에 초록 잎과 경로를 더하고 검정은
+  외곽선·발자국으로 제한한 동일 PNG를 사용합니다. Web 공개 로고와 mobile
+  source asset의 SHA-256은 모두
+  `d28d13cfa0bb057925f5024b98a8cbe5952e52c75fafcb61a805f2b722bec9b7`이며,
+  Web은 `/images/logo.png?v=d28d13cf`로 캐시를 갱신합니다.
+- PR #8 run `30420745568`에서 Web/API, PostGIS, Expo iOS·Android bundle,
+  iOS simulator compile과 Android debug compile 다섯 job이 모두 통과했습니다.
+  저장소 전체 결정적 테스트는 API 147, Web 61, Mobile 56, Contracts 15,
+  App Core 10, Alert Relay 4개가 통과했습니다.
+- 병합된 main과 PR head의 tree가 동일함을 확인하고, 포트 3002 후보에서
+  health·readiness·mobile-config HTTP 200, migration current, PostGIS와 공급자
+  readiness, 로고 해시, 공개 번들 비밀값 미검출을 확인한 뒤 승격했습니다.
+- 공개 `KAIST 본원`·`대전역` 검색은 정확한 장소가 각각 첫 결과이고 실제
+  `transit-v2` 추천은 `FAST/BALANCED/GOAL` 3건과 `BUS/SUBWAY/WALK`를
+  반환했습니다. local·public health/readiness/mobile-config도 HTTP 200입니다.
+- Prometheus target 3개가 모두 `up`, rule 22개 중 firing 0건이며 API·alert relay
+  배포 후 오류 로그 0건을 확인했습니다.
