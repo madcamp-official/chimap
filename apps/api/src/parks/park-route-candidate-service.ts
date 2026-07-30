@@ -113,8 +113,8 @@ function connectorLegs(
   return route.legs.map((leg, index) => ({
     ...leg,
     id: `${prefix}-${index}`,
-    walkingRole: "ACCESS" as const,
-    isExerciseSegment: false,
+    walkingRole: "PARK_CONNECTOR" as const,
+    isExerciseSegment: true,
   }));
 }
 
@@ -142,8 +142,8 @@ function approximateConnectorLeg(
     durationSeconds,
     coordinates: [origin, destination],
     geometryQuality: "APPROXIMATE",
-    walkingRole: "ACCESS",
-    isExerciseSegment: false,
+    walkingRole: "PARK_CONNECTOR",
+    isExerciseSegment: true,
   };
 }
 

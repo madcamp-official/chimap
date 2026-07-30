@@ -440,6 +440,15 @@ export function createApp(options: CreateAppOptions): Express {
       ...(observation.httpStatus === undefined
         ? {}
         : { httpStatus: observation.httpStatus }),
+      ...(observation.providerCode === undefined
+        ? {}
+        : { providerCode: observation.providerCode }),
+      ...(observation.providerReason === undefined
+        ? {}
+        : { providerReason: observation.providerReason }),
+      ...(observation.circuitState === undefined
+        ? {}
+        : { circuitState: observation.circuitState }),
     });
   };
   transitService.setSubwayMetricsObserver?.((input) =>
@@ -473,7 +482,7 @@ export function createApp(options: CreateAppOptions): Express {
     cacheTtlSeconds:
       options.config.walking.router === "VALHALLA"
         ? options.config.walking.cacheTtlSeconds
-        : 30 * 60,
+        : 24 * 60 * 60,
   });
   const placeLookup = providers.places;
   const parkRouteRepository = new ParkRouteRepository(

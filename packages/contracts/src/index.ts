@@ -402,6 +402,7 @@ export const walkingRoleSchema = z.enum([
   "TRANSFER",
   "GOAL_LATE_BOARDING",
   "GOAL_EARLY_ALIGHTING",
+  "PARK_CONNECTOR",
   "PARK_DETOUR",
 ]);
 
@@ -456,13 +457,15 @@ export const routeLegSchema = z
       });
     }
     if (
-      leg.walkingRole?.startsWith("GOAL_") === true &&
+      (leg.walkingRole?.startsWith("GOAL_") === true ||
+        leg.walkingRole === "PARK_CONNECTOR" ||
+        leg.walkingRole === "PARK_DETOUR") &&
       !leg.isExerciseSegment
     ) {
       context.addIssue({
         code: "custom",
         path: ["isExerciseSegment"],
-        message: "목표 도보 구간은 운동 구간으로 표시해야 합니다.",
+        message: "목표·공원 도보 구간은 운동 구간으로 표시해야 합니다.",
       });
     }
     if (

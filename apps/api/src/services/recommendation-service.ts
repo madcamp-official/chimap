@@ -43,6 +43,7 @@ export const RECOMMENDATION_PHASES = [
 export type RecommendationPhase = (typeof RECOMMENDATION_PHASES)[number];
 export type RecommendationPhaseOutcome =
   | "SUCCESS"
+  | "DEGRADED"
   | "ERROR"
   | "TIMEOUT"
   | "SKIPPED";
@@ -270,13 +271,26 @@ export class RecommendationService {
     const planningSignal = planningDeadlineSignal === undefined
       ? requestSignal
       : AbortSignal.any([requestSignal, planningDeadlineSignal]);
-    let geometryDegradedLegCount = 0;
+    let selectedGeometryDegradedWorkCount = 0;
     const observeRouteGeometry = (observation: RouteGeometryObservation) => {
-      if (observation.outcome === "APPROXIMATE") {
-        geometryDegradedLegCount += 1;
-      }
       input.observeRouteGeometry?.(observation);
     };
+    const observeSelectedRouteGeometry = (
+      observation: RouteGeometryObservation,
+    ) => {
+      if (observation.outcome === "APPROXIMATE") {
+        selectedGeometryDegradedWorkCount += 1;
+      }
+      observeRouteGeometry(observation);
+    };
+    const observeSelectedGeometrySkipped = (
+      observation: GeometrySkippedObservation,
+    ) => {
+      selectedGeometryDegradedWorkCount += 1;
+      this.#observeGeometrySkipped?.(observation);
+    };
+    const selectedGeometryOutcome = (): RecommendationPhaseOutcome =>
+      selectedGeometryDegradedWorkCount > 0 ? "DEGRADED" : "SUCCESS";
 
     try {
       const generationStartedAt = performance.now();
@@ -336,6 +350,12 @@ export class RecommendationService {
           status: 500,
         });
       }
+      const candidateKindByRecommendationId = new Map(
+        generated.candidates.map((candidate) => [
+          candidate.route.id,
+          candidate.kind,
+        ] as const),
+      );
 
       const selectionStartedAt = performance.now();
       let policy: ReturnType<typeof resolveRecommendationPolicy>;
@@ -410,14 +430,14 @@ export class RecommendationService {
               ? this.#candidateGenerator.enrichSelectedRouteGeometry(
                   prioritized,
                   finalPhaseSignal,
-                  observeRouteGeometry,
-                  this.#observeGeometrySkipped,
+                  observeSelectedRouteGeometry,
+                  observeSelectedGeometrySkipped,
                 )
               : this.#candidateGenerator.enrichWalkingGeometry(
                   prioritized,
                   finalPhaseSignal,
-                  observeRouteGeometry,
-                  this.#observeGeometrySkipped,
+                  observeSelectedRouteGeometry,
+                  observeSelectedGeometrySkipped,
                 ),
           );
           this.#recordPhase(
@@ -442,8 +462,8 @@ export class RecommendationService {
             () => this.#candidateGenerator.prepareSelectedRouteGeometry(
               prioritized,
               finalPhaseSignal,
-              observeRouteGeometry,
-              this.#observeGeometrySkipped,
+              observeSelectedRouteGeometry,
+              observeSelectedGeometrySkipped,
             ),
           );
           geometryCompletion = withAbortSignal(
@@ -453,7 +473,7 @@ export class RecommendationService {
             (enriched): GeometryCompletion => {
               this.#recordPhase(
                 "SELECTED_GEOMETRY",
-                "SUCCESS",
+                selectedGeometryOutcome(),
                 "NONE",
                 geometryStartedAt,
               );
@@ -507,14 +527,14 @@ export class RecommendationService {
                   ? this.#candidateGenerator.enrichSelectedRouteGeometry(
                       prioritized,
                       finalPhaseSignal,
-                      observeRouteGeometry,
-                      this.#observeGeometrySkipped,
+                      observeSelectedRouteGeometry,
+                      observeSelectedGeometrySkipped,
                     )
                   : this.#candidateGenerator.enrichWalkingGeometry(
                       prioritized,
                       finalPhaseSignal,
-                      observeRouteGeometry,
-                      this.#observeGeometrySkipped,
+                      observeSelectedRouteGeometry,
+                      observeSelectedGeometrySkipped,
                     ),
               ),
               finalPhaseSignal,
@@ -531,7 +551,9 @@ export class RecommendationService {
             );
             this.#recordPhase(
               "SELECTED_GEOMETRY",
-              finalPhaseSignal.aborted ? "TIMEOUT" : "SUCCESS",
+              finalPhaseSignal.aborted
+                ? "TIMEOUT"
+                : selectedGeometryOutcome(),
               finalPhaseSignal.aborted
                 ? this.#timeoutOrigin({
                     phase: "GEOMETRY",
@@ -619,6 +641,19 @@ export class RecommendationService {
             const newGoalId = recommendations.find(
               (recommendation) => recommendation.type === "GOAL",
             )?.id;
+            const priorGoalCandidateKind =
+              priorGoalId === undefined
+                ? undefined
+                : candidateKindByRecommendationId.get(priorGoalId);
+            if (
+              newGoalId !== undefined &&
+              priorGoalCandidateKind !== undefined
+            ) {
+              candidateKindByRecommendationId.set(
+                newGoalId,
+                priorGoalCandidateKind,
+              );
+            }
             if (
               primaryRecommendationId === priorGoalId &&
               newGoalId !== undefined
@@ -688,9 +723,76 @@ export class RecommendationService {
         policy,
         requireDetailedExerciseWalking:
           input.geometryProfile === "TRANSIT_V2",
+        candidateKindByRecommendationId,
       });
       recommendations = finalized.recommendations;
       primaryRecommendationId = finalized.primaryRecommendationId;
+      const goalDecisionReason =
+        "rejectionReason" in finalized.goalDecision
+          ? finalized.goalDecision.rejectionReason
+          : finalized.goalDecision.outcome === "KEPT"
+            ? "VALID"
+            : "NO_GOAL_CANDIDATE";
+      this.#logger.info({
+        event: "recommendation.goal_decision",
+        requestId: input.requestId,
+        outcome: finalized.goalDecision.outcome,
+        reason: goalDecisionReason,
+        originalGoalRecommendationId:
+          "originalGoalRecommendationId" in finalized.goalDecision
+            ? finalized.goalDecision.originalGoalRecommendationId ?? null
+            : null,
+        finalGoalRecommendationId:
+          "finalGoalRecommendationId" in finalized.goalDecision
+            ? finalized.goalDecision.finalGoalRecommendationId
+            : null,
+        promotedFromType:
+          "promotedFromType" in finalized.goalDecision
+            ? finalized.goalDecision.promotedFromType
+            : null,
+      });
+      if (
+        "originalGoalRecommendationId" in finalized.goalDecision &&
+        finalized.goalDecision.originalGoalRecommendationId !== undefined &&
+        "rejectionReason" in finalized.goalDecision &&
+        (finalized.goalDecision.outcome === "REMOVED" ||
+          finalized.goalDecision.outcome === "PROMOTED" ||
+          finalized.goalDecision.outcome === "NOT_REQUIRED")
+      ) {
+        this.#logger.info({
+          event: "recommendation.goal_removed",
+          requestId: input.requestId,
+          recommendationId:
+            finalized.goalDecision.originalGoalRecommendationId,
+          reason: finalized.goalDecision.rejectionReason,
+          recommendationTypeBefore: "GOAL",
+          recommendationTypeAfter: null,
+          goalDecisionOutcome: finalized.goalDecision.outcome,
+          ...(finalized.goalDecision.outcome === "PROMOTED" &&
+              finalized.goalDecision.finalGoalRecommendationId !== undefined
+            ? {
+                replacementRecommendationId:
+                  finalized.goalDecision.finalGoalRecommendationId,
+                replacementRecommendationType: "GOAL",
+              }
+            : {}),
+        });
+      }
+      if (
+        finalized.goalDecision.outcome === "PROMOTED" &&
+        finalized.goalDecision.finalGoalRecommendationId !== undefined
+      ) {
+        this.#logger.info({
+          event: "recommendation.goal_promoted",
+          requestId: input.requestId,
+          recommendationId: finalized.goalDecision.finalGoalRecommendationId,
+          recommendationTypeBefore:
+            finalized.goalDecision.promotedFromType ?? "BALANCED",
+          recommendationTypeAfter: "GOAL",
+          replacedGoalRecommendationId:
+            finalized.goalDecision.originalGoalRecommendationId ?? null,
+        });
+      }
       if (primaryRecommendationId === undefined) {
         throw new AppError({
           code: "INTERNAL_ERROR",
@@ -809,6 +911,13 @@ export class RecommendationService {
         throw error;
       }
 
+      const geometryDegradedLegCount = response.recommendations.reduce(
+        (count, recommendation) =>
+          count + recommendation.legs.filter(
+            (leg) => leg.geometryQuality === "APPROXIMATE",
+          ).length,
+        0,
+      );
       this.#logger.info({
         event: "recommendation.completed",
         requestId: input.requestId,

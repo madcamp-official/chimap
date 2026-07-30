@@ -12,7 +12,10 @@ import {
   type EvaluatedCandidate,
   type RecommendationPolicy,
 } from "./calculations.js";
-import type { RouteCandidate } from "./candidate-generator.js";
+import type {
+  CandidateKind,
+  RouteCandidate,
+} from "./candidate-generator.js";
 import { deduplicateRoutes } from "./route-deduplicator.js";
 
 export type RecommendationSelection = {
@@ -27,7 +30,43 @@ export type FinalizedRecommendationSelection = {
   recommendations: Recommendation[];
   primaryRecommendationId?: string;
   goalReachable: boolean;
+  goalDecision: GoalFinalizationDecision;
 };
+
+export type GoalValidationFailureReason =
+  | "GOAL_ALREADY_REACHED"
+  | "OUTSIDE_STEP_TOLERANCE"
+  | "OUTSIDE_POLICY"
+  | "NO_EXERCISE_WALK"
+  | "EXERCISE_WALK_ROLE_INVALID"
+  | "NO_SUBSTANTIAL_EXERCISE_WALK"
+  | "EXERCISE_WALK_NOT_DETAILED"
+  | "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT";
+
+export type GoalFinalizationDecision =
+  | {
+      outcome: "KEPT";
+      originalGoalRecommendationId: string;
+      finalGoalRecommendationId: string;
+    }
+  | {
+      outcome: "PROMOTED";
+      originalGoalRecommendationId?: string;
+      finalGoalRecommendationId: string;
+      promotedFromType: "BALANCED";
+      rejectionReason?: GoalValidationFailureReason;
+    }
+  | {
+      outcome: "REMOVED";
+      originalGoalRecommendationId: string;
+      rejectionReason: GoalValidationFailureReason;
+    }
+  | {
+      outcome: "NOT_REQUIRED";
+      originalGoalRecommendationId?: string;
+      rejectionReason: "GOAL_ALREADY_REACHED";
+    }
+  | { outcome: "ABSENT" };
 
 const TYPE_COPY: Record<
   RecommendationType,
@@ -214,16 +253,134 @@ function satisfiesRecommendationPolicy(input: {
 
 const SHORT_EXERCISE_WALK_METERS = 20;
 
-function hasVerifiedExerciseWalking(
-  recommendation: Recommendation,
+function isGoalExerciseWalkingRole(
+  role: Recommendation["legs"][number]["walkingRole"],
 ): boolean {
-  return recommendation.legs.every(
-    (leg) =>
-      leg.mode !== "WALK" ||
-      !leg.isExerciseSegment ||
-      leg.distanceMeters <= SHORT_EXERCISE_WALK_METERS ||
-      leg.geometryQuality === "DETAILED",
+  return role === "GOAL_LATE_BOARDING" ||
+    role === "GOAL_EARLY_ALIGHTING" ||
+    role === "PARK_CONNECTOR" ||
+    role === "PARK_DETOUR";
+}
+
+function inferCandidateKind(
+  recommendation: Recommendation,
+): CandidateKind {
+  const roles = new Set(
+    recommendation.legs.flatMap((leg) =>
+      leg.mode === "WALK" && leg.walkingRole !== undefined
+        ? [leg.walkingRole]
+        : [],
+    ),
   );
+  const hasEarly = roles.has("GOAL_EARLY_ALIGHTING");
+  const hasLate = roles.has("GOAL_LATE_BOARDING");
+  if (hasEarly && hasLate) return "BOTH_ENDS";
+  if (hasEarly) return "EARLY_ALIGHT";
+  if (hasLate) return "LATE_BOARD";
+  return "BASE";
+}
+
+function validateGoalCandidate(input: {
+  recommendation: Recommendation;
+  candidateKind?: CandidateKind;
+  departureAt: Date;
+  baselineDurationSeconds: number;
+  policy: RecommendationPolicy;
+  requireDetailedExerciseWalking: boolean;
+}): GoalValidationFailureReason | undefined {
+  const candidateKind =
+    input.candidateKind ?? inferCandidateKind(input.recommendation);
+  const intentionalWalking = input.recommendation.legs.filter(
+    (leg) =>
+      leg.mode === "WALK" &&
+      (isGoalExerciseWalkingRole(leg.walkingRole) ||
+        leg.parkRoute !== undefined),
+  );
+  if (intentionalWalking.some((leg) => !leg.isExerciseSegment)) {
+    return "NO_EXERCISE_WALK";
+  }
+
+  // Keep causal exercise failures ahead of aggregate fit/policy failures so
+  // provider degradation is not hidden by the numbers it made inaccurate.
+  const markedExerciseWalking = input.recommendation.legs.filter(
+    (leg) =>
+      leg.mode === "WALK" &&
+      leg.isExerciseSegment &&
+      leg.distanceMeters > 0,
+  );
+  const requiresAdjustedExercise = candidateKind !== "BASE";
+  const hasParkDetour = markedExerciseWalking.some(
+    (leg) => leg.walkingRole === "PARK_DETOUR",
+  );
+  if (
+    markedExerciseWalking.length === 0 &&
+    (requiresAdjustedExercise || intentionalWalking.length > 0)
+  ) {
+    return "NO_EXERCISE_WALK";
+  }
+  if (markedExerciseWalking.some(
+    (leg) => !isGoalExerciseWalkingRole(leg.walkingRole),
+  )) {
+    return "EXERCISE_WALK_ROLE_INVALID";
+  }
+  const roles = new Set(
+    markedExerciseWalking.flatMap((leg) =>
+      leg.walkingRole === undefined ? [] : [leg.walkingRole],
+    ),
+  );
+  if (
+    (candidateKind === "EARLY_ALIGHT" &&
+      !roles.has("GOAL_EARLY_ALIGHTING")) ||
+    (candidateKind === "LATE_BOARD" &&
+      !roles.has("GOAL_LATE_BOARDING")) ||
+    (candidateKind === "BOTH_ENDS" &&
+      (!roles.has("GOAL_EARLY_ALIGHTING") ||
+        !roles.has("GOAL_LATE_BOARDING"))) ||
+    (candidateKind === "BASE" &&
+      (roles.has("GOAL_EARLY_ALIGHTING") ||
+        roles.has("GOAL_LATE_BOARDING"))) ||
+    (roles.has("PARK_CONNECTOR") && !hasParkDetour)
+  ) {
+    return "EXERCISE_WALK_ROLE_INVALID";
+  }
+
+  const exerciseWalking = markedExerciseWalking;
+  if (
+    exerciseWalking.length > 0 &&
+    !exerciseWalking.some(
+      (leg) => leg.distanceMeters > SHORT_EXERCISE_WALK_METERS,
+    )
+  ) {
+    return "NO_SUBSTANTIAL_EXERCISE_WALK";
+  }
+  if (
+    input.requireDetailedExerciseWalking &&
+    exerciseWalking.some(
+      (leg) =>
+        leg.distanceMeters > SHORT_EXERCISE_WALK_METERS &&
+        leg.geometryQuality !== "DETAILED",
+    )
+  ) {
+    return "EXERCISE_WALK_NOT_DETAILED";
+  }
+
+  if (!satisfiesRecommendationPolicy(input)) {
+    return "OUTSIDE_POLICY";
+  }
+  return undefined;
+}
+
+function withRecommendationType(
+  recommendation: Recommendation,
+  type: RecommendationType,
+): Recommendation {
+  const copy = TYPE_COPY[type];
+  return {
+    ...recommendation,
+    type,
+    title: copy.title,
+    reason: copy.reason,
+  };
 }
 
 export function finalizeRecommendations(input: {
@@ -233,49 +390,126 @@ export function finalizeRecommendations(input: {
   baselineDurationSeconds: number;
   policy: RecommendationPolicy;
   requireDetailedExerciseWalking: boolean;
+  candidateKindByRecommendationId?: ReadonlyMap<string, CandidateKind>;
 }): FinalizedRecommendationSelection {
   const recalculated = recalculateRecommendations(input);
   const remainingSteps = calculateRemainingSteps(
     input.request.currentSteps,
     input.request.goalSteps,
   );
-  const isVerifiedGoalCandidate = (
+  const goalValidationFailure = (
     recommendation: Recommendation,
-  ): boolean =>
-    recommendation.goalFit === "WITHIN_TOLERANCE" &&
-    satisfiesRecommendationPolicy({
+  ): GoalValidationFailureReason | undefined => {
+    const candidateKind =
+      input.candidateKindByRecommendationId?.get(recommendation.id);
+    return validateGoalCandidate({
       recommendation,
+      ...(candidateKind === undefined ? {} : { candidateKind }),
       departureAt: input.departureAt,
       baselineDurationSeconds: input.baselineDurationSeconds,
       policy: input.policy,
-    }) &&
-    (!input.requireDetailedExerciseWalking ||
-      hasVerifiedExerciseWalking(recommendation));
-  const goal = recalculated.find(
+      requireDetailedExerciseWalking:
+        input.requireDetailedExerciseWalking,
+    });
+  };
+  const originalGoal = recalculated.find(
     (recommendation) => recommendation.type === "GOAL",
   );
-  const keepGoal =
+  const originalGoalRejectionReason =
+    originalGoal === undefined
+      ? undefined
+      : goalValidationFailure(originalGoal);
+  const keepOriginalGoal =
     remainingSteps > 0 &&
-    goal !== undefined &&
-    isVerifiedGoalCandidate(goal);
-  const recommendations = keepGoal
-    ? recalculated
-    : recalculated.filter((recommendation) => recommendation.type !== "GOAL");
+    originalGoal !== undefined &&
+    originalGoalRejectionReason === undefined;
+
+  // FAST is the stable fallback and is never relabelled. If detailed geometry
+  // makes the selected GOAL invalid, only an already-selected BALANCED route
+  // with verified exercise walking may take the GOAL label.
+  const promotableBalanced =
+    remainingSteps <= 0 || keepOriginalGoal
+      ? undefined
+      : recalculated.find(
+          (recommendation) =>
+            recommendation.type === "BALANCED" &&
+            goalValidationFailure(recommendation) === undefined,
+        );
+  const finalGoal = keepOriginalGoal ? originalGoal : promotableBalanced;
+  const recommendations = recalculated.flatMap((recommendation) => {
+    if (
+      recommendation.type === "GOAL" &&
+      recommendation.id !== finalGoal?.id
+    ) {
+      return [];
+    }
+    if (
+      promotableBalanced !== undefined &&
+      recommendation.id === promotableBalanced.id
+    ) {
+      return [withRecommendationType(recommendation, "GOAL")];
+    }
+    return [recommendation];
+  });
   const primaryRecommendationId =
-    remainingSteps > 0 && keepGoal
-      ? goal.id
+    remainingSteps > 0 && finalGoal !== undefined
+      ? finalGoal.id
       : (recommendations.find(
           (recommendation) => recommendation.type === "FAST",
         )?.id ?? recommendations[0]?.id);
   const goalReachable =
-    remainingSteps === 0 ||
-    recommendations.some(isVerifiedGoalCandidate);
+    remainingSteps === 0 || finalGoal?.goalFit === "WITHIN_TOLERANCE";
+  let goalDecision: GoalFinalizationDecision;
+  if (remainingSteps === 0) {
+    goalDecision = {
+      outcome: "NOT_REQUIRED",
+      ...(originalGoal === undefined
+        ? {}
+        : { originalGoalRecommendationId: originalGoal.id }),
+      rejectionReason: "GOAL_ALREADY_REACHED",
+    };
+  } else if (
+    originalGoal !== undefined &&
+    originalGoalRejectionReason === undefined
+  ) {
+    goalDecision = {
+      outcome: "KEPT",
+      originalGoalRecommendationId: originalGoal.id,
+      finalGoalRecommendationId: originalGoal.id,
+    };
+  } else if (promotableBalanced !== undefined) {
+    goalDecision = {
+      outcome: "PROMOTED",
+      ...(originalGoal === undefined
+        ? {}
+        : {
+            originalGoalRecommendationId: originalGoal.id,
+            ...(originalGoalRejectionReason === undefined
+              ? {}
+              : { rejectionReason: originalGoalRejectionReason }),
+          }),
+      finalGoalRecommendationId: promotableBalanced.id,
+      promotedFromType: "BALANCED",
+    };
+  } else if (originalGoal === undefined) {
+    goalDecision = { outcome: "ABSENT" };
+  } else {
+    if (originalGoalRejectionReason === undefined) {
+      throw new TypeError("제거할 GOAL의 검증 실패 사유가 없습니다.");
+    }
+    goalDecision = {
+      outcome: "REMOVED",
+      originalGoalRecommendationId: originalGoal.id,
+      rejectionReason: originalGoalRejectionReason,
+    };
+  }
   return {
     recommendations,
     ...(primaryRecommendationId === undefined
       ? {}
       : { primaryRecommendationId }),
     goalReachable,
+    goalDecision,
   };
 }
 

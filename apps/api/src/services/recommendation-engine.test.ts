@@ -193,6 +193,11 @@ describe("건강 경로 추천 선정", () => {
     ]);
     expect(finalized.primaryRecommendationId).toBe("actual-fast-108");
     expect(finalized.goalReachable).toBe(true);
+    expect(finalized.goalDecision).toEqual({
+      outcome: "NOT_REQUIRED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "GOAL_ALREADY_REACHED",
+    });
   });
 
   it("2배 걸음 경로는 빠른 경로 예상 걸음의 정확한 두 배에 가장 가까운 후보를 고른다", () => {
@@ -389,9 +394,14 @@ describe("건강 경로 추천 선정", () => {
     ]);
     expect(result.primaryRecommendationId).toBe("actual-fast-108");
     expect(result.goalReachable).toBe(false);
+    expect(result.goalDecision).toEqual({
+      outcome: "REMOVED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "EXERCISE_WALK_NOT_DETAILED",
+    });
   });
 
-  it("20m 이하의 짧은 운동 WALK는 provider 상세화 없이도 GOAL 검증을 막지 않는다", () => {
+  it("주 운동 WALK가 검증되면 20m 이하 connector는 상세화 없이도 GOAL 검증을 막지 않는다", () => {
     const departureAt = new Date("2026-07-25T12:00:00.000Z");
     const selected = selectRecommendations({
       candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
@@ -410,6 +420,8 @@ describe("건강 경로 추천 선정", () => {
                 distanceMeters: 1_880,
                 durationSeconds: 1_790,
                 geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "GOAL_EARLY_ALIGHTING",
               },
               {
                 ...recommendation.legs[0]!,
@@ -440,6 +452,329 @@ describe("건강 경로 추천 선정", () => {
         goalFit: "WITHIN_TOLERANCE",
       });
     expect(result.primaryRecommendationId).toBe("actual-goal-511");
+  });
+
+  it("목표 범위여도 실제 운동 WALK가 하나도 없으면 GOAL로 인정하지 않는다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations;
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "BALANCED",
+    ]);
+    expect(result.primaryRecommendationId).toBe("actual-fast-108");
+    expect(result.goalReachable).toBe(false);
+    expect(result.goalDecision).toEqual({
+      outcome: "REMOVED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "NO_EXERCISE_WALK",
+    });
+  });
+
+  it("ACCESS를 운동으로 잘못 표시해도 GOAL 운동 구간으로 인정하지 않는다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: recommendation.legs.map((leg, index) =>
+              index !== 0
+                ? leg
+                : {
+                    ...leg,
+                    distanceMeters: 1_890,
+                    geometryQuality: "DETAILED",
+                    isExerciseSegment: true,
+                    walkingRole: "ACCESS",
+                  }
+            ),
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.goalDecision).toEqual({
+      outcome: "REMOVED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "EXERCISE_WALK_ROLE_INVALID",
+    });
+  });
+
+  it("20m 이하 connector만 운동으로 표시된 경로는 GOAL로 인정하지 않는다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: [
+              {
+                ...recommendation.legs[0]!,
+                distanceMeters: 1_880,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: false,
+                walkingRole: "ACCESS",
+              },
+              {
+                ...recommendation.legs[0]!,
+                id: "short-only-exercise-connector",
+                distanceMeters: 10,
+                durationSeconds: 8,
+                geometryQuality: "APPROXIMATE",
+                isExerciseSegment: true,
+                walkingRole: "GOAL_EARLY_ALIGHTING",
+              },
+              ...recommendation.legs.slice(1),
+            ],
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.goalDecision).toEqual({
+      outcome: "REMOVED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "NO_SUBSTANTIAL_EXERCISE_WALK",
+    });
+  });
+
+  it("일반 ACCESS WALK가 만든 증가분을 작은 운동 구간에 잘못 귀속하지 않는다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: [
+              {
+                ...recommendation.legs[0]!,
+                distanceMeters: 1_880,
+                durationSeconds: 1_790,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: false,
+                walkingRole: "ACCESS",
+              },
+              {
+                ...recommendation.legs[0]!,
+                id: "misattributed-exercise-connector",
+                distanceMeters: 25,
+                durationSeconds: 20,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "GOAL_EARLY_ALIGHTING",
+              },
+              ...recommendation.legs.slice(1),
+            ],
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.some((item) => item.type === "GOAL"))
+      .toBe(false);
+    expect(result.goalDecision).toEqual({
+      outcome: "REMOVED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT",
+    });
+  });
+
+  it("공원 connector와 산책로에 운동 provenance가 있으면 topology가 다른 GOAL을 유지한다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: [
+              {
+                ...recommendation.legs[0]!,
+                distanceMeters: 700,
+                durationSeconds: 560,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: false,
+                walkingRole: "ACCESS",
+              },
+              {
+                ...recommendation.legs[0]!,
+                id: "park-access-connector",
+                distanceMeters: 200,
+                durationSeconds: 160,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "PARK_CONNECTOR",
+              },
+              {
+                ...recommendation.legs[0]!,
+                id: "park-detour",
+                distanceMeters: 860,
+                durationSeconds: 688,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "PARK_DETOUR",
+                parkRoute: {
+                  routeId: "park-route-1",
+                  officialParkId: "park-1",
+                  parkName: "샘머리공원",
+                  datasetId: "park-dataset-1",
+                },
+              },
+              {
+                ...recommendation.legs[0]!,
+                id: "park-egress-connector",
+                distanceMeters: 200,
+                durationSeconds: 160,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "PARK_CONNECTOR",
+              },
+              ...recommendation.legs.slice(1),
+            ],
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        id: "actual-goal-511",
+        walkDistanceMeters: 1_960,
+        estimatedSteps: 2_800,
+        goalFit: "WITHIN_TOLERANCE",
+      });
+    expect(result.goalDecision).toEqual({
+      outcome: "KEPT",
+      originalGoalRecommendationId: "actual-goal-511",
+      finalGoalRecommendationId: "actual-goal-511",
+    });
+  });
+
+  it("상세화 후 목표 범위에 들어온 검증된 BALANCED만 GOAL로 승격한다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation => {
+      if (recommendation.type === "FAST") return recommendation;
+      const distanceMeters =
+        recommendation.type === "BALANCED" ? 1_890 : 1_500;
+      return {
+        ...recommendation,
+        legs: recommendation.legs.map((leg, index) =>
+          index !== 0
+            ? leg
+            : {
+                ...leg,
+                distanceMeters,
+                durationSeconds: Math.round(distanceMeters / 1.05),
+                geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "GOAL_EARLY_ALIGHTING",
+              }
+        ),
+      };
+    });
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "GOAL",
+    ]);
+    expect(result.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        id: "actual-double-102",
+        title: "목표 근접 경로",
+        reason: "남은 걸음 수에 가장 가까운 경로예요.",
+        goalFit: "WITHIN_TOLERANCE",
+      });
+    expect(result.primaryRecommendationId).toBe("actual-double-102");
+    expect(result.goalReachable).toBe(true);
+    expect(result.goalDecision).toEqual({
+      outcome: "PROMOTED",
+      originalGoalRecommendationId: "actual-goal-511",
+      finalGoalRecommendationId: "actual-double-102",
+      promotedFromType: "BALANCED",
+      rejectionReason: "OUTSIDE_STEP_TOLERANCE",
+    });
   });
 
   it("검증할 GOAL 카드가 애초에 없으면 BALANCED 대신 FAST를 기본 선택한다", () => {

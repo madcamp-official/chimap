@@ -11,6 +11,7 @@ import {
   runWithRecommendationContext,
   runWithRequestContext,
 } from "../monitoring/request-context.js";
+import type { RouteGeometryObservation } from "../providers/route-geometry.js";
 import type { CandidateGenerator } from "./candidate-generator.js";
 import {
   overlaySelectedRouteGeometry,
@@ -252,6 +253,7 @@ function goalRecommendation(
 
 describe("자동 추천 서비스 경고", () => {
   it("자동 범위에서 목표에 못 미치면 전용 warning을 반환한다", async () => {
+    const loggerInfo = vi.fn();
     const candidateGenerator = {
       generate: vi.fn().mockResolvedValue({
         baseline,
@@ -260,10 +262,9 @@ describe("자동 추천 서비스 경고", () => {
         routeApiCallCount: 1,
       }),
     } as unknown as CandidateGenerator;
-    const logger = { info: vi.fn() } as unknown as Logger;
     const service = new RecommendationService({
       candidateGenerator,
-      logger,
+      logger: { info: loggerInfo } as unknown as Logger,
       clock: () => new Date("2026-07-26T03:00:00.000Z"),
     });
 
@@ -282,6 +283,13 @@ describe("자동 추천 서비스 경고", () => {
         code: "GOAL_UNREACHABLE_WITHIN_CONSTRAINTS",
       }),
     );
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_decision",
+      outcome: "ABSENT",
+      reason: "NO_GOAL_CANDIDATE",
+      originalGoalRecommendationId: null,
+      finalGoalRecommendationId: null,
+    }));
   });
 
   it("transit-v2는 추천을 선택한 뒤 선택 결과만 도보 형상으로 보강한다", async () => {
@@ -317,6 +325,7 @@ describe("자동 추천 서비스 경고", () => {
   });
 
   it("transit-v2 상세 WALK 결과로 모든 추천 지표를 다시 계산하고 GOAL을 확정한다", async () => {
+    const loggerInfo = vi.fn();
     const enrichSelectedRouteGeometry = vi.fn(
       async (recommendations: readonly Recommendation[]) =>
         detailGoalWalking(recommendations),
@@ -337,7 +346,7 @@ describe("자동 추천 서비스 경고", () => {
     } as unknown as CandidateGenerator;
     const service = new RecommendationService({
       candidateGenerator,
-      logger: { info: vi.fn() } as unknown as Logger,
+      logger: { info: loggerInfo } as unknown as Logger,
       clock: () => new Date("2026-07-26T03:00:00.000Z"),
       selectedGeometryEnabled: true,
     });
@@ -366,9 +375,17 @@ describe("자동 추천 서비스 경고", () => {
     expect(response.warnings).not.toContainEqual(expect.objectContaining({
       code: "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
     }));
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_decision",
+      outcome: "KEPT",
+      reason: "VALID",
+      originalGoalRecommendationId: "goal-route",
+      finalGoalRecommendationId: "goal-route",
+    }));
   });
 
   it("transit-v2 운동 WALK 상세화 실패 시 GOAL을 제거하고 최종 warning을 다시 계산한다", async () => {
+    const loggerInfo = vi.fn();
     const candidateGenerator = {
       generate: vi.fn().mockResolvedValue({
         baseline: fastRoute,
@@ -389,7 +406,7 @@ describe("자동 추천 서비스 경고", () => {
     } as unknown as CandidateGenerator;
     const service = new RecommendationService({
       candidateGenerator,
-      logger: { info: vi.fn() } as unknown as Logger,
+      logger: { info: loggerInfo } as unknown as Logger,
       clock: () => new Date("2026-07-26T03:00:00.000Z"),
       selectedGeometryEnabled: true,
     });
@@ -407,6 +424,144 @@ describe("자동 추천 서비스 경고", () => {
     expect(response.primaryRecommendationId).toBe("fast-route");
     expect(response.warnings).toContainEqual(expect.objectContaining({
       code: "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
+    }));
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_decision",
+      outcome: "REMOVED",
+      reason: "EXERCISE_WALK_NOT_DETAILED",
+      originalGoalRecommendationId: "goal-route",
+      finalGoalRecommendationId: null,
+    }));
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_removed",
+      requestId: "00000000-0000-4000-8000-000000000012",
+      recommendationId: "goal-route",
+      reason: "EXERCISE_WALK_NOT_DETAILED",
+      recommendationTypeBefore: "GOAL",
+      recommendationTypeAfter: null,
+      goalDecisionOutcome: "REMOVED",
+    }));
+  });
+
+  it("무효 GOAL을 제거하고 검증된 BALANCED를 승격하면 제거·승격 로그를 함께 기록한다", async () => {
+    const loggerInfo = vi.fn();
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline: fastRoute,
+        candidates: [
+          { route: fastRoute, kind: "BASE" },
+          { route: balancedRoute, kind: "BASE" },
+          { route: goalRoute, kind: "EARLY_ALIGHT" },
+        ],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      enrichSelectedRouteGeometry: vi.fn(
+        async (recommendations: readonly Recommendation[]) =>
+          recommendations.map((recommendation) =>
+            recommendation.type !== "BALANCED"
+              ? recommendation
+              : {
+                  ...recommendation,
+                  legs: recommendation.legs.map((leg) =>
+                    leg.mode !== "WALK"
+                      ? leg
+                      : {
+                          ...leg,
+                          distanceMeters: 1_890,
+                          durationSeconds: 1_800,
+                          geometryQuality: "DETAILED" as const,
+                          isExerciseSegment: true,
+                          walkingRole: "GOAL_EARLY_ALIGHTING" as const,
+                        }
+                  ),
+                }
+          ),
+      ),
+      enrichWalkingGeometry: vi.fn(),
+    } as unknown as CandidateGenerator;
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: loggerInfo } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      selectedGeometryEnabled: true,
+    });
+
+    const response = await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000015",
+      geometryProfile: "TRANSIT_V2",
+    });
+
+    expect(response.primaryRecommendationId).toBe("balanced-route");
+    expect(response.recommendations.find((item) => item.id === "balanced-route"))
+      .toMatchObject({ type: "GOAL" });
+    expect(response.recommendations.some((item) => item.id === "goal-route"))
+      .toBe(false);
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_removed",
+      recommendationId: "goal-route",
+      reason: "EXERCISE_WALK_NOT_DETAILED",
+      recommendationTypeBefore: "GOAL",
+      recommendationTypeAfter: null,
+      goalDecisionOutcome: "PROMOTED",
+      replacementRecommendationId: "balanced-route",
+      replacementRecommendationType: "GOAL",
+    }));
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_promoted",
+      recommendationId: "balanced-route",
+      recommendationTypeBefore: "BALANCED",
+      recommendationTypeAfter: "GOAL",
+      replacedGoalRecommendationId: "goal-route",
+    }));
+  });
+
+  it("이미 목표를 달성해 기존 GOAL이 불필요해지면 제거 사유를 기록한다", async () => {
+    const loggerInfo = vi.fn();
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline,
+        candidates: [{ route: baseline, kind: "BASE" }],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+    } as unknown as CandidateGenerator;
+    const improveGoal = vi.fn(async (input: {
+      recommendations: Recommendation[];
+    }) => {
+      const fast = input.recommendations[0]!;
+      return [
+        ...input.recommendations,
+        {
+          ...fast,
+          id: "not-required-goal",
+          type: "GOAL" as const,
+          title: "목표 경로",
+        },
+      ];
+    });
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: loggerInfo } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      parkRoutes: { improveGoal } as unknown as ParkRouteCandidateService,
+    });
+
+    const response = await service.createRecommendations({
+      request: { ...request, currentSteps: request.goalSteps },
+      requestId: "00000000-0000-4000-8000-000000000016",
+    });
+
+    expect(response.recommendations.some((item) => item.type === "GOAL"))
+      .toBe(false);
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_removed",
+      recommendationId: "not-required-goal",
+      reason: "GOAL_ALREADY_REACHED",
+      recommendationTypeBefore: "GOAL",
+      recommendationTypeAfter: null,
+      goalDecisionOutcome: "NOT_REQUIRED",
     }));
   });
 
@@ -913,6 +1068,68 @@ describe("자동 추천 서비스 경고", () => {
       outcome: "TIMEOUT",
     }));
     expect(phases).toContainEqual(expect.objectContaining({
+      phase: "SELECTED_GEOMETRY",
+      outcome: "SUCCESS",
+    }));
+  });
+
+  it("selected geometry leg가 하나라도 근사로 강등되면 phase를 DEGRADED로 기록한다", async () => {
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline,
+        candidates: [{ route: baseline, kind: "BASE" }],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      prepareSelectedRouteGeometry: vi.fn((
+        recommendations: readonly Recommendation[],
+        _signal?: AbortSignal,
+        observe?: (observation: RouteGeometryObservation) => void,
+      ) => {
+        observe?.({
+          mode: "WALK",
+          outcome: "APPROXIMATE",
+          reason: "UPSTREAM",
+          source: "FALLBACK",
+          cacheState: "NONE",
+          durationMilliseconds: 12,
+          inputVertexCount: 2,
+          outputVertexCount: 2,
+          successfulSectionCount: 0,
+          failedSectionCount: 1,
+        });
+        const enriched = Promise.resolve([...recommendations]);
+        return { goalWalking: enriched, complete: enriched };
+      }),
+      enrichSelectedRouteGeometry: vi.fn(),
+      enrichWalkingGeometry: vi.fn(),
+    } as unknown as CandidateGenerator;
+    const phases: Array<{ phase: string; outcome: string }> = [];
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: vi.fn() } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      parkRoutes: {
+        improveGoal: vi.fn(async (input: {
+          recommendations: Recommendation[];
+        }) => input.recommendations),
+      } as unknown as ParkRouteCandidateService,
+      selectedGeometryEnabled: true,
+      observePhase: (observation) => phases.push(observation),
+    });
+
+    await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000014",
+      geometryProfile: "TRANSIT_V2",
+    });
+
+    expect(phases).toContainEqual(expect.objectContaining({
+      phase: "SELECTED_GEOMETRY",
+      outcome: "DEGRADED",
+      timeoutOrigin: "NONE",
+    }));
+    expect(phases).not.toContainEqual(expect.objectContaining({
       phase: "SELECTED_GEOMETRY",
       outcome: "SUCCESS",
     }));

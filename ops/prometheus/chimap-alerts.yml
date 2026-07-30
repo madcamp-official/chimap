@@ -26,7 +26,7 @@ groups:
           severity: critical
         annotations:
           summary: CHIMap provider configuration is incomplete
-          description: A required Kakao, NAVER, TAGO credential or selected Valhalla endpoint is missing.
+          description: A required Kakao, NAVER, or TAGO credential is missing.
 
       - alert: ChimapAlertmanagerDown
         expr: up{job="alertmanager"} == 0
@@ -103,12 +103,15 @@ groups:
           description: The API p95 latency remained above 10 seconds for 5 minutes.
 
       - alert: ChimapRateLimitObserved
-        expr: increase(chimap_http_requests_total{status="429"}[10m]) > 0
+        expr: |
+          increase(chimap_http_requests_total{status="429"}[10m]) > 0
+          or
+          sum(increase(chimap_route_provider_requests_total{outcome="RATE_LIMIT"}[10m])) > 0
         labels:
           severity: warning
         annotations:
-          summary: CHIMap or an upstream provider returned 429
-          description: At least one rate-limit response occurred in the last 10 minutes.
+          summary: CHIMap or an upstream provider hit a rate or quota limit
+          description: An HTTP 429 or a provider-specific rate/quota limit occurred in the last 10 minutes. Inspect provider operation logs for the sanitized provider code and circuit state.
 
       - alert: ChimapPlaceEmptyRatioHigh
         expr: |

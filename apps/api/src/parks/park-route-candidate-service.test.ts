@@ -195,6 +195,22 @@ describe("ParkRouteCandidateService", () => {
       100,
     ]);
     expect(
+      result[2]?.legs.filter(
+        (leg) => leg.walkingRole === "PARK_CONNECTOR",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        distanceMeters: 50,
+        geometryQuality: "DETAILED",
+        isExerciseSegment: true,
+      }),
+      expect.objectContaining({
+        distanceMeters: 50,
+        geometryQuality: "DETAILED",
+        isExerciseSegment: true,
+      }),
+    ]);
+    expect(
       result[2]?.legs.find((leg) => leg.walkingRole === "PARK_DETOUR"),
     ).toMatchObject({
       coordinates: middlePark.coordinates,
@@ -253,6 +269,20 @@ describe("ParkRouteCandidateService", () => {
     expect(
       improved?.legs.filter((leg) => leg.geometryQuality === "APPROXIMATE"),
     ).toHaveLength(2);
+    expect(
+      improved?.legs.filter(
+        (leg) => leg.walkingRole === "PARK_CONNECTOR",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        geometryQuality: "APPROXIMATE",
+        isExerciseSegment: true,
+      }),
+      expect.objectContaining({
+        geometryQuality: "APPROXIMATE",
+        isExerciseSegment: true,
+      }),
+    ]);
     expect(
       improved?.legs.find((leg) => leg.walkingRole === "PARK_DETOUR"),
     ).toMatchObject({

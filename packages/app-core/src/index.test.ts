@@ -10,9 +10,9 @@ import {
 
 describe("recommendation geometry cache namespace", () => {
   it("transit-v2 이전 persisted 추천을 재사용하지 않는다", () => {
-    expect(RECOMMENDATION_CACHE_VERSION).toBe("v4-bus-geometry-v3");
+    expect(RECOMMENDATION_CACHE_VERSION).toBe("v5-goal-walk-validation");
     expect(recommendationQueryKey("request-hash")).toContain(
-      "v4-bus-geometry-v3",
+      "v5-goal-walk-validation",
     );
   });
 });

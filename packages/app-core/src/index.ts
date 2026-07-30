@@ -8,7 +8,7 @@ export * from "./vehicle-positions.js";
 export * from "./route-map-markers.js";
 export * from "./vehicle-heading.js";
 
-export const RECOMMENDATION_CACHE_VERSION = "v4-bus-geometry-v3";
+export const RECOMMENDATION_CACHE_VERSION = "v5-goal-walk-validation";
 export const RECOMMENDATION_STALE_TIME_MS = 5 * 60 * 1000;
 export const RECOMMENDATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

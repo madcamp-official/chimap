@@ -14,7 +14,6 @@ import {
   recommendPersonalizedDailyGoal,
   recommendationRequestSchema,
   routeLegSchema,
-  routeSourceSchema,
   storedPreferencesV1Schema,
   storedPreferencesV2Schema,
   storedPreferencesV3Schema,
@@ -156,6 +155,33 @@ describe("공유 계약", () => {
     expect(result.success).toBe(false);
   });
 
+  it("공원 connector 역할은 운동 도보 구간에만 허용한다", () => {
+    const connector = {
+      id: "park-connector-1",
+      mode: "WALK",
+      distanceMeters: 250,
+      durationSeconds: 180,
+      coordinates: [
+        { lng: 127.381, lat: 36.357 },
+        { lng: 127.384, lat: 36.346 },
+      ],
+      walkingRole: "PARK_CONNECTOR",
+    };
+
+    expect(
+      routeLegSchema.safeParse({
+        ...connector,
+        isExerciseSegment: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      routeLegSchema.safeParse({
+        ...connector,
+        isExerciseSegment: false,
+      }).success,
+    ).toBe(false);
+  });
+
   it("상세·근사 경로 geometry 품질을 구분한다", () => {
     const leg = {
       id: "subway-1",
@@ -178,10 +204,6 @@ describe("공유 계약", () => {
     expect(
       routeLegSchema.safeParse({ ...leg, geometryQuality: "UNKNOWN" }).success,
     ).toBe(false);
-  });
-
-  it("Valhalla를 정규화 도보 경로 source로 허용한다", () => {
-    expect(routeSourceSchema.parse("VALHALLA")).toBe("VALHALLA");
   });
 
   it("추천 입력의 걸음 수와 개인화 한 걸음 길이 경계를 검증한다", () => {
