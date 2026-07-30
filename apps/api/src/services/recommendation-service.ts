@@ -732,7 +732,9 @@ export class RecommendationService {
           ? finalized.goalDecision.rejectionReason
           : finalized.goalDecision.outcome === "KEPT"
             ? "VALID"
-            : "NO_GOAL_CANDIDATE";
+            : finalized.goalDecision.outcome === "PROMOTED"
+              ? "CLOSER_TO_STEP_TARGET"
+              : "NO_GOAL_CANDIDATE";
       this.#logger.info({
         event: "recommendation.goal_decision",
         requestId: input.requestId,
