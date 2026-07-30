@@ -33,6 +33,7 @@ services:
     build:
       context: .
       args:
+        APP_COMMIT_SHA: ${APP_COMMIT_SHA:-unknown}
         NAVER_MAP_BROWSER_CLIENT_ID: ${VITE_NAVER_MAP_NCP_KEY_ID:?VITE_NAVER_MAP_NCP_KEY_ID is required}
     restart: unless-stopped
     env_file:

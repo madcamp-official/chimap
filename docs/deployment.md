@@ -455,8 +455,13 @@ export RELEASE_TAG="chimap:release-${RELEASE_SHA:0:8}"
 
 test -z "$(git status --porcelain)"
 docker build \
+  --build-arg APP_COMMIT_SHA="$RELEASE_SHA" \
   --build-arg NAVER_MAP_BROWSER_CLIENT_ID="$VITE_NAVER_MAP_NCP_KEY_ID" \
   --tag "$RELEASE_TAG" .
+
+test "$(docker image inspect "$RELEASE_TAG" \
+  --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" \
+  = "$RELEASE_SHA"
 
 docker run --rm -d \
   --name chimap-api-candidate \
@@ -487,8 +492,10 @@ curl -fsS http://127.0.0.1:3002/api/v1/mobile-config
 주소를 만듭니다. 후보의 `WEB_ORIGIN`은 loopback이므로 정적 asset과 로컬 UI를
 검증할 수 있지만 운영 OAuth callback 검증은 공개 승격 뒤 수행합니다.
 `APP_COMMIT_SHA`는 `.env`의 과거 값이 아니라 후보를 만든 정확한 Git SHA를
-주입합니다. staging과 production의 browser NAVER Client ID가 다르면 같은
-image를 재태그하지 말고 같은 Git SHA에서 환경별 image를 각각 빌드합니다.
+build arg와 runtime 환경에 모두 주입합니다. OCI revision label과
+`chimap_build_info`가 같은 SHA인지 확인합니다. staging과 production의 browser
+NAVER Client ID가 다르면 같은 image를 재태그하지 말고 같은 Git SHA에서 환경별
+image를 각각 빌드합니다.
 
 ## 11. API·모니터링 승격
 

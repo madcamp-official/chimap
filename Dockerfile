@@ -37,6 +37,9 @@ RUN pnpm --filter @chimap/contracts build \
 
 FROM node:24.18.0-alpine AS runtime
 
+ARG APP_COMMIT_SHA=unknown
+LABEL org.opencontainers.image.revision="${APP_COMMIT_SHA}"
+
 ENV NODE_ENV=production \
     PORT=3000 \
     WEB_ORIGIN=https://chimap.madcamp-kaist.org \
