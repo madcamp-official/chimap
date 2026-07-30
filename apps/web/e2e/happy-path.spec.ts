@@ -74,20 +74,28 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   const goalRecommendation = recommendationPayload.recommendations.find(
     (recommendation) => recommendation.type === "GOAL",
   );
-  expect(balancedRecommendation).toBeDefined();
   expect(goalRecommendation).toBeDefined();
+  const transitRecommendation = [
+    balancedRecommendation,
+    goalRecommendation,
+  ].find((recommendation) =>
+    recommendation?.legs.some((leg) => leg.mode === "BUS"),
+  );
+  if (transitRecommendation === undefined) {
+    throw new Error("버스 상세를 검증할 BALANCED 또는 GOAL 경로가 없습니다.");
+  }
+  const transitRecommendationTitle =
+    transitRecommendation.type === "BALANCED"
+      ? "2배 걸음 경로"
+      : "목표 근접 경로";
 
   const fast = page.getByRole("button", {
     name: /빠른 경로, 예상 도착/u,
-  });
-  const doubleSteps = page.getByRole("button", {
-    name: /2배 걸음 경로, 예상 도착/u,
   });
   const goal = page.getByRole("button", {
     name: /목표 근접 경로, 예상 도착/u,
   });
   await expect(fast).toBeVisible();
-  await expect(doubleSteps).toBeVisible();
   await expect(goal).toBeVisible();
   await expect(page.getByText("목표에 가까움", { exact: true }))
     .toBeVisible();
@@ -132,22 +140,30 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await expect(page.locator(".subway-endpoint-card")).toHaveCount(2);
   await expect(page.locator(".map-provider-chip")).toHaveCount(0);
 
-  // FAST는 지하철 단독일 수 있으므로 버스 표시 검증은 버스가 포함된
-  // 멀티모달 BALANCED 경로를 선택한 뒤 수행한다.
-  await doubleSteps.click();
-  await expect(doubleSteps).toHaveAttribute("aria-pressed", "true");
+  // FAST는 지하철 단독일 수 있고, 유효 고유 후보가 두 개면 BALANCED가
+  // GOAL로 승격될 수 있으므로 존재하는 비-FAST 버스 경로를 사용한다.
+  const transitRecommendationButton = page.getByRole("button", {
+    name: new RegExp(`${transitRecommendationTitle}, 예상 도착`, "u"),
+  });
+  await transitRecommendationButton.click();
+  await expect(transitRecommendationButton).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
   ).toHaveCount(0);
-  const doubleStepsDetails = page.getByRole("button", {
-    name: "2배 걸음 경로 자세히",
+  const transitRecommendationDetails = page.getByRole("button", {
+    name: `${transitRecommendationTitle} 자세히`,
   });
-  await doubleStepsDetails.click();
+  await transitRecommendationDetails.click();
   await expect(
-    page.getByRole("button", { name: "2배 걸음 경로 상세 접기" }),
+    page.getByRole("button", {
+      name: `${transitRecommendationTitle} 상세 접기`,
+    }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(
-    page.getByRole("heading", { name: "2배 걸음 경로" }),
+    page.getByRole("heading", { name: transitRecommendationTitle }),
   ).toBeVisible();
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
@@ -158,7 +174,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   if (process.env.E2E_REQUIRE_NAVER_MAP === "1") {
     await expect(page.locator(".map-marker-origin")).toHaveCount(1);
     await expect(page.locator(".map-marker-transfer")).toHaveCount(
-      balancedRecommendation?.transferCount ?? 0,
+      transitRecommendation.transferCount,
     );
     await expect(page.locator(".map-marker-destination")).toHaveCount(1);
     await expect(page.locator(".map-marker-boarding")).toHaveCount(0);
@@ -168,7 +184,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     const preview = page.locator(".route-preview-svg");
     await expect(preview.locator("[data-marker-role='origin']")).toHaveCount(1);
     await expect(preview.locator("[data-marker-role='transfer']")).toHaveCount(
-      balancedRecommendation?.transferCount ?? 0,
+      transitRecommendation.transferCount,
     );
     await expect(preview.locator("[data-marker-role='destination']")).toHaveCount(1);
   }
@@ -211,7 +227,9 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     );
   }
 
-  await page.getByRole("button", { name: "2배 걸음 경로 간략히 보기" }).click();
+  await page.getByRole("button", {
+    name: `${transitRecommendationTitle} 간략히 보기`,
+  }).click();
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
   ).toHaveCount(0);
