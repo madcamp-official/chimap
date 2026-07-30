@@ -32,6 +32,7 @@ import {
   type GeometrySkippedObservation,
   type SelectedRouteGeometryPlan,
 } from "./selected-route-geometry-service.js";
+import { hasExactInsertedWalkingAttribution } from "./walking-attribution.js";
 
 export type CandidateKind =
   | "BASE"
@@ -725,8 +726,18 @@ async function buildAdjustedCandidate(
     boardingStop?.nodeId ?? "same-board",
     alightingStop?.nodeId ?? "same-alight",
   ].join("-");
+  const rebuilt = rebuildRoute(spec.route, legs, id, spec.kind);
+  if (!hasExactInsertedWalkingAttribution({
+    parentLegs: spec.route.legs,
+    childLegs: rebuilt.legs,
+    insertedLegs: [...startWalkingLegs, ...endWalkingLegs],
+  })) {
+    throw new TypeError(
+      "조정 후보의 추가 도보 거리를 운동 구간에 정확히 귀속하지 못했습니다.",
+    );
+  }
   return {
-    route: rebuildRoute(spec.route, legs, id, spec.kind),
+    route: rebuilt,
     kind: spec.kind,
   };
 }

@@ -10,6 +10,7 @@ import type { Logger } from "pino";
 
 import type { WalkingRouteProvider } from "../providers/types.js";
 import type { RecommendationPolicy } from "../services/calculations.js";
+import { hasExactInsertedWalkingAttribution } from "../services/walking-attribution.js";
 import {
   ParkRouteRepository,
   type ParkRouteDirection,
@@ -395,6 +396,15 @@ export class ParkRouteCandidateService {
         split.suffix,
         ...goal.legs.slice(selected.index + 1),
       ];
+      if (!hasExactInsertedWalkingAttribution({
+        parentLegs: goal.legs,
+        childLegs: legs,
+        insertedLegs: [...access, park, ...egress],
+      })) {
+        throw new TypeError(
+          "공원 후보의 추가 도보 거리를 운동 구간에 정확히 귀속하지 못했습니다.",
+        );
+      }
       const walkDistanceMeters = legs
         .filter((leg) => leg.mode === "WALK")
         .reduce((sum, leg) => sum + leg.distanceMeters, 0);
