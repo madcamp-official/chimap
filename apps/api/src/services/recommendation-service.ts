@@ -803,6 +803,23 @@ export class RecommendationService {
         });
       }
 
+      const finalFastRecommendation = recommendations.find(
+        (recommendation) => recommendation.type === "FAST",
+      );
+      if (finalFastRecommendation === undefined) {
+        throw new AppError({
+          code: "INTERNAL_ERROR",
+          message: "최종 빠른 경로를 결정하지 못했어요.",
+          status: 500,
+        });
+      }
+      const finalBaseline = {
+        durationSeconds: finalFastRecommendation.durationSeconds,
+        arrivalAt: finalFastRecommendation.arrivalAt,
+        walkDistanceMeters: finalFastRecommendation.walkDistanceMeters,
+        estimatedSteps: finalFastRecommendation.estimatedSteps,
+      };
+
       const baselineMetrics = calculateStepMetrics(
         input.request,
         generated.baseline,
@@ -875,13 +892,10 @@ export class RecommendationService {
           generatedAt: this.#clock().toISOString(),
           departureAt: departureAt.toISOString(),
           baseline: {
-            durationSeconds: generated.baseline.durationSeconds,
-            arrivalAt: new Date(
-              departureAt.getTime() +
-                generated.baseline.durationSeconds * 1000,
-            ).toISOString(),
-            walkDistanceMeters: generated.baseline.walkDistanceMeters,
-            estimatedSteps: baselineMetrics.baseEstimatedSteps,
+            durationSeconds: finalBaseline.durationSeconds,
+            arrivalAt: finalBaseline.arrivalAt,
+            walkDistanceMeters: finalBaseline.walkDistanceMeters,
+            estimatedSteps: finalBaseline.estimatedSteps,
           },
           walkingGoal: {
             remainingSteps: baselineMetrics.remainingSteps,

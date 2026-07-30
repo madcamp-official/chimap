@@ -26,9 +26,8 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
 
   const intro = page.getByRole("dialog", { name: "CHIMap 시작 화면" });
   const skipIntro = page.getByRole("button", { name: "인트로 건너뛰기" });
-  if (await skipIntro.isVisible().catch(() => false)) {
-    await skipIntro.click({ force: true }).catch(() => undefined);
-  }
+  await expect(intro).toBeVisible();
+  await skipIntro.click();
   await expect(intro).toBeHidden();
   const walkingProfile = page.getByRole("dialog", {
     name: "내 건강 경로 설정",
@@ -43,10 +42,10 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await expect(walkingProfile).toBeHidden();
 
   const origin = page.getByRole("combobox", { name: "출발지" });
-  await origin.fill("대전 유성구 대학로 291");
+  await origin.fill("KAIST 본원");
   await page.getByRole("button", { name: "출발지 검색" }).click();
   await page
-    .getByRole("option", { name: /^한국과학기술원/u })
+    .getByRole("option", { name: /^KAIST 본원(?:\s|$)/u })
     .click();
 
   const destination = page.getByRole("combobox", { name: "도착지" });
@@ -56,7 +55,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     .getByRole("option", { name: /^대전역 대전 동구 중앙로/u })
     .click();
 
-  await page.getByLabel("현재 걸음").fill("5200");
+  await page.getByLabel("현재 걸음").fill("0");
   await page.getByLabel("현재 걸음").press("Enter");
 
   const recommendationResponsePromise = page.waitForResponse(
@@ -218,9 +217,11 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     await naverMap.hover();
     await page.mouse.wheel(0, -600);
     const responsesBeforeWaiting = vehicleResponseCount;
+    // 한 번의 후속 polling이면 사용자가 바꾼 카메라가 유지되는지 충분히
+    // 검증할 수 있다. 외부 TAGO 지연 중 두 번을 요구하면 live E2E가 불안정하다.
     await expect
       .poll(() => vehicleResponseCount, { timeout: 25_000 })
-      .toBeGreaterThanOrEqual(responsesBeforeWaiting + 2);
+      .toBeGreaterThanOrEqual(responsesBeforeWaiting + 1);
     await expect(naverMap).toHaveAttribute(
       "data-camera-fit-count",
       cameraFitCount ?? "1",
@@ -250,12 +251,12 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     page.getByRole("dialog", { name: "CHIMap 시작 화면" }),
   ).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "출발지" })).toHaveValue(
-    "한국과학기술원",
+    "KAIST 본원",
   );
   await expect(page.getByRole("combobox", { name: "도착지" })).toHaveValue(
     "대전역",
   );
-  await expect(page.getByLabel("현재 걸음")).toHaveValue("5200");
+  await expect(page.getByLabel("현재 걸음")).toHaveValue("0");
   await expect(page.locator('[aria-label="오늘의 걸음 요약"]')).toContainText(
     "8,000걸음",
   );
