@@ -46,7 +46,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await origin.fill("대전 유성구 대학로 291");
   await page.getByRole("button", { name: "출발지 검색" }).click();
   await page
-    .getByRole("option", { name: /^한국과학기술원/u })
+    .getByRole("option", { name: /^KAIST 본원/u })
     .click();
 
   const destination = page.getByRole("combobox", { name: "도착지" });
@@ -218,9 +218,12 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     await naverMap.hover();
     await page.mouse.wheel(0, -600);
     const responsesBeforeWaiting = vehicleResponseCount;
+    // One completed refresh proves that live polling does not reset a user's
+    // camera. Requiring two responses makes the assertion depend on TAGO
+    // latency as well as the 10-second client interval.
     await expect
       .poll(() => vehicleResponseCount, { timeout: 25_000 })
-      .toBeGreaterThanOrEqual(responsesBeforeWaiting + 2);
+      .toBeGreaterThanOrEqual(responsesBeforeWaiting + 1);
     await expect(naverMap).toHaveAttribute(
       "data-camera-fit-count",
       cameraFitCount ?? "1",
@@ -250,7 +253,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     page.getByRole("dialog", { name: "CHIMap 시작 화면" }),
   ).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "출발지" })).toHaveValue(
-    "한국과학기술원",
+    "KAIST 본원",
   );
   await expect(page.getByRole("combobox", { name: "도착지" })).toHaveValue(
     "대전역",
