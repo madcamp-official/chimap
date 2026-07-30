@@ -38,6 +38,7 @@ export type WalkRouteRequest = {
   vias?: Coordinate[];
   routeMode?: WalkRouteMode;
   signal?: AbortSignal;
+  observeCacheState?: (state: "FRESH" | "SHARED" | "MISS") => void;
 };
 
 export type RoadRouteRequest = {
@@ -62,6 +63,11 @@ export interface RoadGeometryProvider {
   getRoadRouteSections(
     request: RoadRouteSectionsRequest,
   ): Promise<RoadRouteSectionsResult>;
+}
+
+export interface WalkingRouteProvider {
+  readonly source: "KAKAO" | "TAGO" | "VALHALLA";
+  getWalkingRoute(request: WalkRouteRequest): Promise<NormalizedRoute>;
 }
 
 export interface MobilityProvider {

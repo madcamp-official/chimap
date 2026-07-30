@@ -7,7 +7,10 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 
 import { ProviderError } from "../errors.js";
-import type { MobilityProvider } from "../providers/types.js";
+import type {
+  MobilityProvider,
+  WalkingRouteProvider,
+} from "../providers/types.js";
 import {
   CandidateGenerator,
   adjustedBusLeg,
@@ -614,15 +617,15 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
     const middle = { lat: 36.351, lng: 127.3715 };
     const to = { lat: 36.352, lng: 127.373 };
     const getWalkingRoute = vi.fn(async (): Promise<NormalizedRoute> => ({
-      id: "kakao-walk",
-      source: "KAKAO",
+      id: "valhalla-walk",
+      source: "VALHALLA",
       durationSeconds: 999,
       distanceMeters: 999,
       walkDistanceMeters: 999,
       transitDistanceMeters: 0,
       transferCount: 0,
       legs: [{
-        id: "kakao-walk-leg",
+        id: "valhalla-walk-leg",
         mode: "WALK",
         guidance: "상세 도보",
         distanceMeters: 999,
@@ -631,10 +634,17 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
         isExerciseSegment: false,
       }],
     }));
+    const mobilityWalking = vi.fn(async () => {
+      throw new Error("mobility walking must not be used");
+    });
     const provider: MobilityProvider = {
       source: "TAGO",
       searchPlaces: async () => [],
       getTransitRoutes: async () => [],
+      getWalkingRoute: mobilityWalking,
+    };
+    const walkingProvider: WalkingRouteProvider = {
+      source: "VALHALLA",
       getWalkingRoute,
     };
     const recommendation: Recommendation = {
@@ -666,12 +676,16 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
       }],
     };
     const observations: unknown[] = [];
-    const enriched = await new CandidateGenerator(provider).enrichWalkingGeometry(
+    const enriched = await new CandidateGenerator(
+      provider,
+      walkingProvider,
+    ).enrichWalkingGeometry(
       [recommendation, { ...recommendation, id: "selected-duplicate" }],
       undefined,
       (observation) => observations.push(observation),
     );
 
+    expect(mobilityWalking).not.toHaveBeenCalled();
     expect(getWalkingRoute).toHaveBeenCalledTimes(1);
     expect(enriched).toHaveLength(2);
     for (const result of enriched) {
@@ -687,7 +701,7 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
     expect(observations).toHaveLength(1);
     expect(observations[0]).toMatchObject({
       outcome: "DETAILED",
-      source: "KAKAO_WALK",
+      source: "VALHALLA_WALK",
       walkingRole: "ACCESS",
     });
   });

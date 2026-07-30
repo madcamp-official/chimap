@@ -41,7 +41,7 @@ const transitSyncStatusSchema = z.object({
 type UpstreamProvider = "TAGO" | "KAKAO_NAVER" | "KAKAO_TAGO" | "UNKNOWN";
 
 export type RouteProviderObservation = {
-  provider: "TAGO" | "KAKAO" | "NAVER" | "DATABASE";
+  provider: "TAGO" | "KAKAO" | "VALHALLA" | "NAVER" | "DATABASE";
   operation:
     | "CITY_CODES"
     | "SUBWAY_STATIONS"
@@ -68,6 +68,7 @@ export type RouteProviderObservation = {
     | "HTTP_5XX";
   timeoutOrigin: RecommendationTimeoutOrigin;
   durationMilliseconds: number;
+  httpStatus?: number;
 };
 
 export type GeometrySkippedObservation = {
@@ -82,7 +83,7 @@ export type GeometrySkippedObservation = {
 export type BusGeometryQualityObservation = {
   algorithmVersion: "transit-v2" | "kakao-road-pair-v3" | "unknown";
   source: "KAKAO_ROAD" | "PRECOMPUTED" | "FALLBACK";
-  cacheState: "FRESH" | "STALE" | "MISS" | "NONE";
+  cacheState: "FRESH" | "STALE" | "SHARED" | "MISS" | "NONE";
   outcome: "ACCEPTED" | "REJECTED";
   startSnapDistanceMeters?: number;
   endSnapDistanceMeters?: number;
@@ -791,6 +792,12 @@ export class AppMetrics {
         ? 1
         : 0,
     );
+    if (this.#config.walking.router === "VALHALLA") {
+      this.#providerConfigured.set(
+        { provider: "VALHALLA" },
+        this.#config.walking.valhallaBaseUrl === undefined ? 0 : 1,
+      );
+    }
 
     if (this.#backupStatusPath === undefined) {
       this.#backupLastSuccess.set(0);

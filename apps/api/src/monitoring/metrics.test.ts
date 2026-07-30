@@ -61,6 +61,10 @@ describe("운영 metrics", () => {
       TAGO_BUS_ROUTE_SERVICE_KEY: "route-key",
       TAGO_BUS_ARRIVAL_SERVICE_KEY: "arrival-key",
       TAGO_BUS_LOCATION_SERVICE_KEY: "location-key",
+      WALKING_ROUTER: "VALHALLA",
+      VALHALLA_BASE_URL: "http://valhalla.internal:8002",
+      TRANSIT_GEOMETRY_V2_ENABLED: "1",
+      RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
       APP_COMMIT_SHA: "3e8684e",
     });
     const metrics = new AppMetrics({
@@ -112,6 +116,14 @@ describe("운영 metrics", () => {
       outcome: "TIMEOUT",
       timeoutOrigin: "PROVIDER",
       durationMilliseconds: 7_000,
+    });
+    metrics.observeRouteProvider({
+      provider: "VALHALLA",
+      operation: "WALK_GEOMETRY",
+      outcome: "SUCCESS",
+      timeoutOrigin: "NONE",
+      durationMilliseconds: 125,
+      httpStatus: 200,
     });
     metrics.observePlace("resolve", placeResult);
     metrics.observeSubwayTrackGeometry({
@@ -199,6 +211,12 @@ describe("운영 metrics", () => {
     );
     expect(output).toContain(
       'chimap_route_provider_duration_seconds_sum{service="chimap-api",provider="TAGO",operation="NEARBY_STOPS",outcome="TIMEOUT"} 7',
+    );
+    expect(output).toContain(
+      'chimap_route_provider_requests_total{provider="VALHALLA",operation="WALK_GEOMETRY",outcome="SUCCESS",timeout_origin="NONE",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_provider_configured{provider="VALHALLA",service="chimap-api"} 1',
     );
     expect(output).toContain(
       'chimap_recommendation_degraded_legs_sum{service="chimap-api"} 2',

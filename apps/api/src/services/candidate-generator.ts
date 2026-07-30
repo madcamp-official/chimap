@@ -14,7 +14,10 @@ import {
 import pLimit, { type LimitFunction } from "p-limit";
 
 import { ProviderError } from "../errors.js";
-import type { MobilityProvider } from "../providers/types.js";
+import type {
+  MobilityProvider,
+  WalkingRouteProvider,
+} from "../providers/types.js";
 import type {
   RouteGeometryProfile,
   SubwayGeometryObservation,
@@ -142,6 +145,7 @@ function withAbortSignal<T>(
 
 class RouteCallBudget {
   readonly #provider: MobilityProvider;
+  readonly #walkingProvider: WalkingRouteProvider;
   readonly #limit: LimitFunction;
   #transitCalls = 0;
   #walkCalls = 0;
@@ -156,12 +160,14 @@ class RouteCallBudget {
 
   public constructor(
     provider: MobilityProvider,
+    walkingProvider: WalkingRouteProvider,
     concurrency = 3,
     geometryProfile?: RouteGeometryProfile,
     observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void,
     observeRouteGeometry?: (observation: RouteGeometryObservation) => void,
   ) {
     this.#provider = provider;
+    this.#walkingProvider = walkingProvider;
     this.#limit = pLimit(concurrency);
     this.#geometryProfile = geometryProfile;
     this.#observeSubwayGeometry = observeSubwayGeometry;
@@ -230,7 +236,7 @@ class RouteCallBudget {
       );
     }
     this.#walkCalls += 1;
-    return this.#limit(() => this.#provider.getWalkingRoute({
+    return this.#limit(() => this.#walkingProvider.getWalkingRoute({
       origin,
       destination,
       routeMode: "BROAD_FIRST",
@@ -737,11 +743,19 @@ function withinGoalTolerance(
 
 export class CandidateGenerator {
   readonly #provider: MobilityProvider;
+  readonly #walkingProvider: WalkingRouteProvider;
   readonly #selectedRouteGeometry: SelectedRouteGeometryService;
 
-  public constructor(provider: MobilityProvider) {
+  public constructor(
+    provider: MobilityProvider,
+    walkingProvider: WalkingRouteProvider = provider,
+  ) {
     this.#provider = provider;
-    this.#selectedRouteGeometry = new SelectedRouteGeometryService(provider);
+    this.#walkingProvider = walkingProvider;
+    this.#selectedRouteGeometry = new SelectedRouteGeometryService(
+      provider,
+      walkingProvider,
+    );
   }
 
   public enrichSelectedRouteGeometry(
@@ -809,6 +823,7 @@ export class CandidateGenerator {
   ): Promise<CandidateGenerationResult> {
     const budget = new RouteCallBudget(
       this.#provider,
+      this.#walkingProvider,
       3,
       options.geometryProfile,
       options.observeSubwayGeometry,

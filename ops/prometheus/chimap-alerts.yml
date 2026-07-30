@@ -26,7 +26,7 @@ groups:
           severity: critical
         annotations:
           summary: CHIMap provider configuration is incomplete
-          description: A required Kakao, NAVER, or TAGO credential is missing.
+          description: A required Kakao, NAVER, TAGO credential or selected Valhalla endpoint is missing.
 
       - alert: ChimapAlertmanagerDown
         expr: up{job="alertmanager"} == 0

@@ -229,6 +229,35 @@ const environmentSchema = z
       .int()
       .nonnegative()
       .default(25),
+    WALKING_ROUTER: z.enum(["KAKAO", "VALHALLA"]).default("KAKAO"),
+    VALHALLA_BASE_URL: optionalUrl,
+    VALHALLA_HTTP_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(10_000)
+      .default(3_500),
+    VALHALLA_HTTP_RETRY_COUNT: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(3)
+      .default(1),
+    VALHALLA_WALK_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(1_800),
+    VALHALLA_MAX_SNAP_DISTANCE_METERS: z.coerce
+      .number()
+      .min(10)
+      .max(500)
+      .default(100),
+    VALHALLA_MAX_DETOUR_RATIO: z.coerce
+      .number()
+      .min(1)
+      .max(20)
+      .default(5),
     PARK_ROUTE_IMPORT_ENABLED: z.enum(["0", "1"]).default("0"),
     PARK_ROUTE_IMPORT_TOKEN: optionalSecret,
     PARK_ROUTE_INTEGRATION_ENABLED: z.enum(["0", "1"]).default("0"),
@@ -394,6 +423,56 @@ const environmentSchema = z
       });
     }
     if (
+      environment.WALKING_ROUTER === "VALHALLA" &&
+      environment.VALHALLA_BASE_URL === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["VALHALLA_BASE_URL"],
+        message: "Valhalla 도보 라우터에는 VALHALLA_BASE_URL이 필요합니다.",
+      });
+    }
+    if (
+      environment.WALKING_ROUTER === "VALHALLA" &&
+      environment.TRANSIT_GEOMETRY_V2_ENABLED !== "1"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["TRANSIT_GEOMETRY_V2_ENABLED"],
+        message:
+          "Valhalla 상세 도보 라우터에는 TRANSIT_GEOMETRY_V2_ENABLED=1이 필요합니다.",
+      });
+    }
+    if (
+      environment.WALKING_ROUTER === "VALHALLA" &&
+      environment.RECOMMENDATION_SELECTED_GEOMETRY_ENABLED !== "1"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["RECOMMENDATION_SELECTED_GEOMETRY_ENABLED"],
+        message:
+          "Valhalla 상세 도보 라우터에는 RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1이 필요합니다.",
+      });
+    }
+    if (environment.VALHALLA_BASE_URL !== undefined) {
+      const valhallaUrl = new URL(environment.VALHALLA_BASE_URL);
+      if (
+        (valhallaUrl.protocol !== "http:" &&
+          valhallaUrl.protocol !== "https:") ||
+        valhallaUrl.username !== "" ||
+        valhallaUrl.password !== "" ||
+        valhallaUrl.search !== "" ||
+        valhallaUrl.hash !== ""
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["VALHALLA_BASE_URL"],
+          message:
+            "Valhalla URL은 HTTP(S) endpoint여야 하며 인증정보, query, fragment를 포함할 수 없습니다.",
+        });
+      }
+    }
+    if (
       environment.SEOUL_SUBWAY_ENABLED === "1" &&
       environment.SEOUL_SUBWAY_API_KEY === undefined
     ) {
@@ -548,6 +627,15 @@ export type AppConfig = {
   recommendation: {
     phasedTimeoutsEnabled: boolean;
     selectedGeometryEnabled: boolean;
+  };
+  walking: {
+    router: "KAKAO" | "VALHALLA";
+    valhallaBaseUrl?: string;
+    timeoutMs: number;
+    retryCount: number;
+    cacheTtlSeconds: number;
+    maxSnapDistanceMeters: number;
+    maxDetourRatio: number;
   };
   parkRoutes: {
     importEnabled: boolean;
@@ -735,6 +823,17 @@ export function loadConfig(
         parsed.RECOMMENDATION_PHASED_TIMEOUTS_ENABLED === "1",
       selectedGeometryEnabled:
         parsed.RECOMMENDATION_SELECTED_GEOMETRY_ENABLED === "1",
+    },
+    walking: {
+      router: parsed.WALKING_ROUTER,
+      ...(parsed.VALHALLA_BASE_URL === undefined
+        ? {}
+        : { valhallaBaseUrl: parsed.VALHALLA_BASE_URL }),
+      timeoutMs: parsed.VALHALLA_HTTP_TIMEOUT_MS,
+      retryCount: parsed.VALHALLA_HTTP_RETRY_COUNT,
+      cacheTtlSeconds: parsed.VALHALLA_WALK_CACHE_TTL_SECONDS,
+      maxSnapDistanceMeters: parsed.VALHALLA_MAX_SNAP_DISTANCE_METERS,
+      maxDetourRatio: parsed.VALHALLA_MAX_DETOUR_RATIO,
     },
     parkRoutes: {
       importEnabled: parsed.PARK_ROUTE_IMPORT_ENABLED === "1",

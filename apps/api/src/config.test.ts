@@ -129,6 +129,92 @@ describe("환경변수 보안 경계", () => {
     expect(enabled.transit.busGeometryPairV3Enabled).toBe(true);
   });
 
+  it("Valhalla 도보 라우터 설정과 허용 범위를 검증한다", () => {
+    expect(loadConfig({ NODE_ENV: "test" }).walking).toEqual({
+      router: "KAKAO",
+      timeoutMs: 3_500,
+      retryCount: 1,
+      cacheTtlSeconds: 1_800,
+      maxSnapDistanceMeters: 100,
+      maxDetourRatio: 5,
+    });
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        WALKING_ROUTER: "VALHALLA",
+      }),
+    ).toThrow(/VALHALLA_BASE_URL/u);
+
+    expect(loadConfig({
+      NODE_ENV: "test",
+      WALKING_ROUTER: "VALHALLA",
+      VALHALLA_BASE_URL: "http://10.0.0.8:8002/internal/valhalla",
+      TRANSIT_GEOMETRY_V2_ENABLED: "1",
+      RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+      VALHALLA_HTTP_TIMEOUT_MS: "10000",
+      VALHALLA_HTTP_RETRY_COUNT: "3",
+      VALHALLA_WALK_CACHE_TTL_SECONDS: "1",
+      VALHALLA_MAX_SNAP_DISTANCE_METERS: "500",
+      VALHALLA_MAX_DETOUR_RATIO: "20",
+    }).walking).toEqual({
+      router: "VALHALLA",
+      valhallaBaseUrl: "http://10.0.0.8:8002/internal/valhalla",
+      timeoutMs: 10_000,
+      retryCount: 3,
+      cacheTtlSeconds: 1,
+      maxSnapDistanceMeters: 500,
+      maxDetourRatio: 20,
+    });
+
+    for (const valhallaBaseUrl of [
+      "ftp://10.0.0.8:8002",
+      "http://router:secret@10.0.0.8:8002",
+      "https://valhalla.internal:8002?token=secret",
+      "https://valhalla.internal:8002#route",
+    ]) {
+      expect(() =>
+        loadConfig({
+          NODE_ENV: "test",
+          WALKING_ROUTER: "VALHALLA",
+          VALHALLA_BASE_URL: valhallaBaseUrl,
+          TRANSIT_GEOMETRY_V2_ENABLED: "1",
+          RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+        }),
+      ).toThrow(/HTTP\(S\)/u);
+    }
+
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        WALKING_ROUTER: "VALHALLA",
+        VALHALLA_BASE_URL: "http://valhalla.internal:8002",
+        RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+      }),
+    ).toThrow(/TRANSIT_GEOMETRY_V2_ENABLED=1/u);
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        WALKING_ROUTER: "VALHALLA",
+        VALHALLA_BASE_URL: "http://valhalla.internal:8002",
+        TRANSIT_GEOMETRY_V2_ENABLED: "1",
+      }),
+    ).toThrow(/RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1/u);
+
+    for (const invalid of [
+      { VALHALLA_HTTP_TIMEOUT_MS: "499" },
+      { VALHALLA_HTTP_TIMEOUT_MS: "10001" },
+      { VALHALLA_HTTP_RETRY_COUNT: "-1" },
+      { VALHALLA_HTTP_RETRY_COUNT: "4" },
+      { VALHALLA_WALK_CACHE_TTL_SECONDS: "0" },
+      { VALHALLA_MAX_SNAP_DISTANCE_METERS: "9" },
+      { VALHALLA_MAX_SNAP_DISTANCE_METERS: "501" },
+      { VALHALLA_MAX_DETOUR_RATIO: "0.9" },
+      { VALHALLA_MAX_DETOUR_RATIO: "21" },
+    ]) {
+      expect(() => loadConfig({ NODE_ENV: "test", ...invalid })).toThrow();
+    }
+  });
+
   it("공원 Import token과 추천 조회 범위를 검증한다", () => {
     expect(() =>
       loadConfig({

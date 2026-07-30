@@ -8,7 +8,7 @@ import {
 } from "@chimap/contracts";
 import type { Logger } from "pino";
 
-import type { MobilityProvider } from "../providers/types.js";
+import type { WalkingRouteProvider } from "../providers/types.js";
 import type { RecommendationPolicy } from "../services/calculations.js";
 import {
   ParkRouteRepository,
@@ -107,7 +107,7 @@ function routeAnchors(input: {
 }
 
 function connectorLegs(
-  route: Awaited<ReturnType<MobilityProvider["getWalkingRoute"]>>,
+  route: Awaited<ReturnType<WalkingRouteProvider["getWalkingRoute"]>>,
   prefix: string,
 ): RouteLeg[] {
   return route.legs.map((leg, index) => ({
@@ -210,7 +210,7 @@ export class ParkRouteCandidateService {
       radiusMeters: number;
       maxCandidates: number;
       repository: ParkRouteRepository;
-      provider: MobilityProvider;
+      provider: WalkingRouteProvider;
       logger: Logger;
     },
   ) {}

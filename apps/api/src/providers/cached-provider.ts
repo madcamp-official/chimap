@@ -13,6 +13,7 @@ import type {
   PlaceSearchOptions,
   TransitRouteRequest,
   WalkRouteRequest,
+  WalkingRouteProvider,
 } from "./types.js";
 import type { ResolvedBusGeometry } from "./route-geometry.js";
 
@@ -82,7 +83,11 @@ export class CachedMobilityProvider implements MobilityProvider {
   public async getWalkingRoute(
     request: WalkRouteRequest,
   ): Promise<NormalizedRoute> {
-    const { signal, ...sharedRequest } = request;
+    const { signal, observeCacheState, ...sharedRequest } = request;
+    if (signal?.aborted === true) {
+      throw signal.reason ??
+        new DOMException("요청이 취소되었습니다.", "AbortError");
+    }
     const viaKey = (request.vias ?? []).map(coordinateCacheKey).join(";");
     const key = [
       "walk",
@@ -91,6 +96,13 @@ export class CachedMobilityProvider implements MobilityProvider {
       coordinateCacheKey(request.destination),
       request.routeMode ?? "BROAD_FIRST",
     ].join(":");
+
+    const cacheState = this.#cache.getLoadState(key);
+    try {
+      observeCacheState?.(cacheState);
+    } catch {
+      // Cache observability must never change a walking route result.
+    }
 
     return waitForSharedLoad(
       this.#cache.getOrLoad(key, WALK_TTL_MS, () =>
@@ -109,5 +121,52 @@ export class CachedMobilityProvider implements MobilityProvider {
       );
     }
     return this.#provider.resolveBusGeometry(request);
+  }
+}
+
+export class CachedWalkingProvider implements WalkingRouteProvider {
+  public readonly source: WalkingRouteProvider["source"];
+
+  public constructor(
+    private readonly provider: WalkingRouteProvider,
+    private readonly ttlMilliseconds: number,
+    private readonly cache = new MemoryCache(),
+  ) {
+    this.source = provider.source;
+  }
+
+  public getWalkingRoute(
+    request: WalkRouteRequest,
+  ): Promise<NormalizedRoute> {
+    const { signal, observeCacheState, ...sharedRequest } = request;
+    if (signal?.aborted === true) {
+      return Promise.reject(
+        signal.reason ??
+          new DOMException("요청이 취소되었습니다.", "AbortError"),
+      );
+    }
+    const viaKey = (request.vias ?? []).map(coordinateCacheKey).join(";");
+    const key = [
+      "walk-v3",
+      this.source,
+      coordinateCacheKey(request.origin),
+      viaKey,
+      coordinateCacheKey(request.destination),
+      request.routeMode ?? "BROAD_FIRST",
+    ].join(":");
+
+    const cacheState = this.cache.getLoadState(key);
+    try {
+      observeCacheState?.(cacheState);
+    } catch {
+      // Cache observability must never change a walking route result.
+    }
+
+    return waitForSharedLoad(
+      this.cache.getOrLoad(key, this.ttlMilliseconds, () =>
+        this.provider.getWalkingRoute(sharedRequest),
+      ),
+      signal,
+    );
   }
 }

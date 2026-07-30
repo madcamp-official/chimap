@@ -506,7 +506,12 @@ export const routeLegSchema = z
 
 export type RouteLeg = z.infer<typeof routeLegSchema>;
 
-export const routeSourceSchema = z.enum(["KAKAO", "TAGO", "MULTIMODAL"]);
+export const routeSourceSchema = z.enum([
+  "KAKAO",
+  "TAGO",
+  "MULTIMODAL",
+  "VALHALLA",
+]);
 export type RouteSource = z.infer<typeof routeSourceSchema>;
 
 export const normalizedRouteSchema = z

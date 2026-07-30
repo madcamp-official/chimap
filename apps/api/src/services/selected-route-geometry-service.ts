@@ -7,7 +7,10 @@ import type {
   WalkingRole,
 } from "@chimap/contracts";
 
-import type { MobilityProvider } from "../providers/types.js";
+import type {
+  MobilityProvider,
+  WalkingRouteProvider,
+} from "../providers/types.js";
 import {
   classifyGeometryError,
   withWalkingGeometryLimit,
@@ -142,7 +145,10 @@ function usableBusGeometry(
 }
 
 export class SelectedRouteGeometryService {
-  public constructor(private readonly provider: MobilityProvider) {}
+  public constructor(
+    private readonly mobilityProvider: MobilityProvider,
+    private readonly walkingProvider: WalkingRouteProvider = mobilityProvider,
+  ) {}
 
   public enrich(
     recommendations: readonly Recommendation[],
@@ -181,7 +187,27 @@ export class SelectedRouteGeometryService {
         ) {
           const from = leg.coordinates[0];
           const to = leg.coordinates.at(-1);
-          if (from !== undefined && to !== undefined) {
+          if (
+            from === undefined ||
+            to === undefined ||
+            leg.coordinates.length < 2
+          ) {
+            observeRouteGeometry(observe, {
+              mode: "WALK",
+              outcome: "APPROXIMATE",
+              reason: "EMPTY_PATH",
+              source: "FALLBACK",
+              cacheState: "NONE",
+              durationMilliseconds: 0,
+              inputVertexCount: leg.coordinates.length,
+              outputVertexCount: leg.coordinates.length,
+              successfulSectionCount: 0,
+              failedSectionCount: 1,
+              ...(leg.walkingRole === undefined
+                ? {}
+                : { walkingRole: leg.walkingRole }),
+            });
+          } else {
             const key = walkingGeometryKey(from, to);
             const existing = walkingTargets.get(key);
             if (existing === undefined) {
@@ -210,7 +236,7 @@ export class SelectedRouteGeometryService {
           leg.bus !== undefined &&
           leg.bus.stops.length >= 2 &&
           options.includeBus !== false &&
-          this.provider.resolveBusGeometry !== undefined
+          this.mobilityProvider.resolveBusGeometry !== undefined
         ) {
           const key = busGeometryKey(leg.bus.stops);
           if (!busTargets.has(key)) busTargets.set(key, leg.bus.stops);
@@ -265,14 +291,18 @@ export class SelectedRouteGeometryService {
       let queueWaitMilliseconds = 0;
       let queueStartedCount = 0;
       let queueAbortedBeforeStartCount = 0;
+      let walkingCacheState: RouteGeometryObservation["cacheState"] = "NONE";
       walkingResolutions.set(
         key,
         withWalkingGeometryLimit(
-          () => this.provider.getWalkingRoute({
+          () => this.walkingProvider.getWalkingRoute({
             origin: target.from,
             destination: target.to,
             routeMode: "BROAD_FIRST",
             ...(signal === undefined ? {} : { signal }),
+            observeCacheState: (state) => {
+              walkingCacheState = state;
+            },
           }),
           signal,
           (observation) => {
@@ -313,8 +343,10 @@ export class SelectedRouteGeometryService {
               reason: resolved.reason,
               source: resolved.coordinates === null
                 ? "FALLBACK"
-                : "KAKAO_WALK",
-              cacheState: "NONE",
+                : route.source === "VALHALLA"
+                  ? "VALHALLA_WALK"
+                  : "KAKAO_WALK",
+              cacheState: walkingCacheState,
               durationMilliseconds: resolved.durationMilliseconds,
               inputVertexCount: 2,
               outputVertexCount:
@@ -347,7 +379,7 @@ export class SelectedRouteGeometryService {
               outcome: "APPROXIMATE",
               reason: resolved.reason,
               source: "FALLBACK",
-              cacheState: "NONE",
+              cacheState: walkingCacheState,
               durationMilliseconds: resolved.durationMilliseconds,
               inputVertexCount: 2,
               outputVertexCount: target.fallbackVertexCount,
@@ -381,7 +413,7 @@ export class SelectedRouteGeometryService {
       };
       busResolutions.set(
         key,
-        this.provider.resolveBusGeometry!({
+        this.mobilityProvider.resolveBusGeometry!({
           stops,
           ...(signal === undefined ? {} : { signal }),
           ...(observe === undefined ? {} : { observe: observeBusOnce }),

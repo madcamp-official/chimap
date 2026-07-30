@@ -1050,3 +1050,52 @@ integration flags are intentionally separate so data can be validated before
 recommendations use it. Re-sending identical data is a no-op. To roll back,
 disable integration immediately or import the previously validated content
 under a new dataset ID, then verify status; do not delete the active dataset.
+
+# Valhalla walking geometry rollout
+
+Only the CHIMap API calls Valhalla. Use a private or tightly allowlisted
+endpoint and never expose Valhalla TCP 8002 to the public internet. Kakao is
+still required for place lookup and bus road geometry; this setting changes
+only the detailed walking geometry provider.
+
+Verify network access from the API host and the actual API container before
+changing the router:
+
+```bash
+curl --fail-with-body --connect-timeout 3 --max-time 5 \
+  -X POST "${VALHALLA_BASE_URL}/route" \
+  -H 'content-type: application/json' \
+  -d '{"locations":[{"lat":36.3501,"lon":127.3801},{"lat":36.3552,"lon":127.3845}],"costing":"pedestrian","units":"kilometers","directions_options":{"units":"kilometers"}}'
+
+pnpm valhalla:smoke-test \
+  --base-url "${VALHALLA_BASE_URL}" \
+  --from 127.3801,36.3501 \
+  --to 127.3845,36.3552
+```
+
+First deploy with `WALKING_ROUTER=KAKAO`. After the smoke test and staging
+recommendation regression pass, configure and restart the API with:
+
+```dotenv
+TRANSIT_GEOMETRY_V2_ENABLED=1
+RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1
+WALKING_ROUTER=VALHALLA
+VALHALLA_BASE_URL=http://VALHALLA_PRIVATE_OR_ALLOWLISTED_HOST:8002
+VALHALLA_HTTP_TIMEOUT_MS=3500
+VALHALLA_HTTP_RETRY_COUNT=1
+VALHALLA_WALK_CACHE_TTL_SECONDS=1800
+VALHALLA_MAX_SNAP_DISTANCE_METERS=100
+VALHALLA_MAX_DETOUR_RATIO=5
+```
+
+The API rejects a Valhalla configuration unless both geometry flags are set to
+`1`. A base URL path prefix is preserved when the client appends `/route`.
+
+Check `chimap_provider_configured{provider="VALHALLA"} == 1`, then verify
+ordinary, bus-only, bus/subway, subway-only, GOAL, and park connector routes. Successful detailed walking legs must be recorded with source
+`VALHALLA_WALK`. A Valhalla failure is isolated to an approximate walking leg;
+there is no automatic Kakao fallback switch.
+
+To roll back, explicitly set `WALKING_ROUTER=KAKAO` and restart only the API.
+Keep the Kakao credentials in place throughout the rollout. If park connectors
+are also unhealthy, set `PARK_ROUTE_INTEGRATION_ENABLED=0` independently.

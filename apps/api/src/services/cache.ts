@@ -63,6 +63,11 @@ export class MemoryCache {
     return this.#cache.get(key)?.value as T | undefined;
   }
 
+  public getLoadState(key: string): "FRESH" | "SHARED" | "MISS" {
+    if (this.get(key) !== undefined) return "FRESH";
+    return this.#inFlight.has(key) ? "SHARED" : "MISS";
+  }
+
   public set<T>(key: string, value: T, ttlMilliseconds: number): void {
     this.#cache.set(key, { value }, { ttl: ttlMilliseconds });
   }

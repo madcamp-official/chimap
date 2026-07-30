@@ -5,7 +5,10 @@ import type {
 } from "@chimap/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import type { MobilityProvider } from "../providers/types.js";
+import type {
+  MobilityProvider,
+  WalkingRouteProvider,
+} from "../providers/types.js";
 import { SelectedRouteGeometryService } from "./selected-route-geometry-service.js";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -633,6 +636,152 @@ describe("선택 경로 형상 상세화", () => {
         queueWaitMilliseconds: expect.any(Number),
         queueStartedCount: 1,
         queueAbortedBeforeStartCount: 0,
+      }),
+    ]);
+  });
+
+  it("공유 WALK 성공 캐시의 hit/miss 상태를 geometry 관측에 전달한다", async () => {
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [],
+      getWalkingRoute: vi.fn(async (walkingRequest): Promise<NormalizedRoute> => {
+        walkingRequest.observeCacheState?.("FRESH");
+        return {
+          id: "cached-walk-detail",
+          source: "KAKAO",
+          durationSeconds: 1,
+          distanceMeters: 1,
+          walkDistanceMeters: 1,
+          transitDistanceMeters: 0,
+          transferCount: 0,
+          legs: [{
+            id: "cached-walk-detail-leg",
+            mode: "WALK",
+            distanceMeters: 1,
+            durationSeconds: 1,
+            coordinates: [walkFrom, walkMiddle, walkTo],
+            isExerciseSegment: false,
+          }],
+        };
+      }),
+    };
+    const observations: unknown[] = [];
+
+    await new SelectedRouteGeometryService(provider).enrich(
+      [recommendation("cached-walk")],
+      undefined,
+      (observation) => observations.push(observation),
+      { includeBus: false },
+    );
+
+    expect(observations).toEqual([
+      expect.objectContaining({
+        mode: "WALK",
+        outcome: "DETAILED",
+        cacheState: "FRESH",
+      }),
+    ]);
+  });
+
+  it("상세 WALK만 별도 Valhalla provider로 조회하고 source를 정확히 기록한다", async () => {
+    const mobilityWalking = vi.fn(async () => {
+      throw new Error("mobility walking must not be used");
+    });
+    const mobilityProvider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [],
+      getWalkingRoute: mobilityWalking,
+    };
+    const valhallaWalking = vi.fn(async (): Promise<NormalizedRoute> => ({
+      id: "valhalla-detail",
+      source: "VALHALLA",
+      durationSeconds: 321,
+      distanceMeters: 456,
+      walkDistanceMeters: 456,
+      transitDistanceMeters: 0,
+      transferCount: 0,
+      legs: [{
+        id: "valhalla-detail-leg",
+        mode: "WALK",
+        distanceMeters: 456,
+        durationSeconds: 321,
+        coordinates: [walkFrom, walkMiddle, walkTo],
+        geometryQuality: "DETAILED",
+        isExerciseSegment: false,
+      }],
+    }));
+    const walkingProvider: WalkingRouteProvider = {
+      source: "VALHALLA",
+      getWalkingRoute: valhallaWalking,
+    };
+    const observations: unknown[] = [];
+    const original = recommendation("valhalla-selected");
+
+    const [result] = await new SelectedRouteGeometryService(
+      mobilityProvider,
+      walkingProvider,
+    ).enrich(
+      [original],
+      undefined,
+      (observation) => observations.push(observation),
+      { includeBus: false },
+    );
+
+    expect(mobilityWalking).not.toHaveBeenCalled();
+    expect(valhallaWalking).toHaveBeenCalledOnce();
+    expect(result?.legs[0]).toMatchObject({
+      coordinates: [walkFrom, walkMiddle, walkTo],
+      distanceMeters: 456,
+      durationSeconds: 321,
+      geometryQuality: "DETAILED",
+    });
+    expect(result).toMatchObject({
+      durationSeconds: original.durationSeconds,
+      walkDistanceMeters: original.walkDistanceMeters,
+      estimatedSteps: original.estimatedSteps,
+    });
+    expect(observations).toEqual([
+      expect.objectContaining({
+        mode: "WALK",
+        outcome: "DETAILED",
+        source: "VALHALLA_WALK",
+      }),
+    ]);
+  });
+
+  it("endpoint 좌표가 없는 WALK도 조용히 건너뛰지 않고 근사 실패로 관측한다", async () => {
+    const getWalkingRoute = vi.fn();
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [],
+      getWalkingRoute,
+    };
+    const withoutEndpoints = recommendation("missing-walk-endpoints");
+    withoutEndpoints.legs[0] = {
+      ...withoutEndpoints.legs[0]!,
+      coordinates: [],
+    };
+    const observations: unknown[] = [];
+
+    await new SelectedRouteGeometryService(provider).enrich(
+      [withoutEndpoints],
+      undefined,
+      (observation) => observations.push(observation),
+      { includeBus: false },
+    );
+
+    expect(getWalkingRoute).not.toHaveBeenCalled();
+    expect(observations).toEqual([
+      expect.objectContaining({
+        mode: "WALK",
+        outcome: "APPROXIMATE",
+        reason: "EMPTY_PATH",
+        source: "FALLBACK",
+        inputVertexCount: 0,
+        outputVertexCount: 0,
       }),
     ]);
   });

@@ -72,10 +72,16 @@ import {
   runWithRecommendationContext,
   runWithRequestContext,
 } from "./monitoring/request-context.js";
-import { CachedMobilityProvider } from "./providers/cached-provider.js";
+import {
+  CachedMobilityProvider,
+  CachedWalkingProvider,
+} from "./providers/cached-provider.js";
 import { KakaoMobilityProvider } from "./providers/kakao-provider.js";
 import { NaverGeocodingClient } from "./providers/naver-geocoding-client.js";
 import { TagoTransitMobilityProvider } from "./providers/tago-transit-provider.js";
+import type { WalkingRouteProvider } from "./providers/types.js";
+import { ValhallaClient } from "./providers/valhalla/valhalla-client.js";
+import { ValhallaWalkingProvider } from "./providers/valhalla/valhalla-walking-provider.js";
 import { ParkRouteCandidateService } from "./parks/park-route-candidate-service.js";
 import { ParkRouteImportService } from "./parks/park-route-import-service.js";
 import { ParkRouteRepository } from "./parks/park-route-repository.js";
@@ -289,6 +295,7 @@ function createProviders(
   observeRouteProvider: (observation: RouteProviderObservation) => void,
 ): {
   mobility: CachedMobilityProvider;
+  walking: WalkingRouteProvider;
   places: PlaceLookupService;
 } {
   if (config.kakaoRestApiKey === undefined) {
@@ -303,6 +310,31 @@ function createProviders(
     transitService,
     config,
   });
+  const mobility = new CachedMobilityProvider(provider);
+  let walking: WalkingRouteProvider;
+  if (config.walking.router === "VALHALLA") {
+    if (config.walking.valhallaBaseUrl === undefined) {
+      throw new Error("Valhalla 도보 라우터 endpoint가 필요합니다.");
+    }
+    const valhallaClient = new ValhallaClient({
+      baseUrl: config.walking.valhallaBaseUrl,
+      timeoutMs: config.walking.timeoutMs,
+      retryCount: config.walking.retryCount,
+    });
+    valhallaClient.setRouteProviderObserver(observeRouteProvider);
+    walking = new CachedWalkingProvider(
+      new ValhallaWalkingProvider(valhallaClient, {
+        maxSnapDistanceMeters: config.walking.maxSnapDistanceMeters,
+        maxDetourRatio: config.walking.maxDetourRatio,
+      }),
+      config.walking.cacheTtlSeconds * 1_000,
+    );
+  } else {
+    walking = {
+      source: "KAKAO",
+      getWalkingRoute: (request) => mobility.getWalkingRoute(request),
+    };
+  }
   const naver =
     config.naverMapNcpKeyId === undefined ||
     config.naverMapNcpKey === undefined
@@ -312,7 +344,8 @@ function createProviders(
           config.naverMapNcpKey,
         );
   return {
-    mobility: new CachedMobilityProvider(provider),
+    mobility,
+    walking,
     places: new PlaceLookupService({
       kakao: baseProvider.local,
       ...(naver === undefined ? {} : { naver }),
@@ -403,6 +436,9 @@ export function createApp(options: CreateAppOptions): Express {
       outcome: observation.outcome,
       timeoutOrigin: observation.timeoutOrigin,
       providerDurationMilliseconds: observation.durationMilliseconds,
+      ...(observation.httpStatus === undefined
+        ? {}
+        : { httpStatus: observation.httpStatus }),
     });
   };
   transitService.setSubwayMetricsObserver?.((input) =>
@@ -428,6 +464,16 @@ export function createApp(options: CreateAppOptions): Express {
     observeRouteProvider,
   );
   const provider = providers.mobility;
+  const walkingProvider = providers.walking;
+  app.locals.walkingRouter = walkingProvider.source;
+  logger.info({
+    event: "walking.provider_configured",
+    provider: walkingProvider.source,
+    cacheTtlSeconds:
+      options.config.walking.router === "VALHALLA"
+        ? options.config.walking.cacheTtlSeconds
+        : 30 * 60,
+  });
   const placeLookup = providers.places;
   const parkRouteRepository = new ParkRouteRepository(
     transitService.repository.pool,
@@ -437,13 +483,13 @@ export function createApp(options: CreateAppOptions): Express {
     parkRouteRepository,
   );
   const recommendationService = new RecommendationService({
-    candidateGenerator: new CandidateGenerator(provider),
+    candidateGenerator: new CandidateGenerator(provider, walkingProvider),
     parkRoutes: new ParkRouteCandidateService({
       enabled: options.config.parkRoutes.integrationEnabled,
       radiusMeters: options.config.parkRoutes.searchRadiusMeters,
       maxCandidates: options.config.parkRoutes.maxCandidates,
       repository: parkRouteRepository,
-      provider,
+      provider: walkingProvider,
       logger,
     }),
     logger,
@@ -1040,7 +1086,9 @@ export function createApp(options: CreateAppOptions): Express {
             metrics.observeRouteGeometry(observation);
             if (
               observation.mode === "BUS" &&
-              observation.source !== "KAKAO_WALK"
+              (observation.source === "KAKAO_ROAD" ||
+                observation.source === "PRECOMPUTED" ||
+                observation.source === "FALLBACK")
             ) {
               metrics.observeBusGeometryQuality({
                 algorithmVersion:
