@@ -48,6 +48,51 @@ export type TagoSubwaySchedule = {
   direction: "U" | "D";
 };
 
+export type RouteProviderTimeoutOrigin =
+  | "NONE"
+  | "CLIENT"
+  | "PLANNING"
+  | "GEOMETRY"
+  | "PROVIDER"
+  | "QUEUE";
+
+export type TagoRouteProviderOperation =
+  | "CITY_CODES"
+  | "SUBWAY_STATIONS"
+  | "SUBWAY_SCHEDULE"
+  | "NEARBY_STOPS"
+  | "STOP_ROUTES"
+  | "ROUTE_SEARCH"
+  | "ROUTE_INFO"
+  | "ROUTE_STOPS"
+  | "ARRIVALS"
+  | "ROUTE_ARRIVALS"
+  | "VEHICLES"
+  | "OTHER";
+
+export type TagoRouteProviderObservation = {
+  provider: "TAGO";
+  operation: TagoRouteProviderOperation;
+  outcome:
+    | "SUCCESS"
+    | "ERROR"
+    | "TIMEOUT"
+    | "ABORTED"
+    | "RATE_LIMIT"
+    | "HTTP_4XX"
+    | "HTTP_5XX";
+  timeoutOrigin: RouteProviderTimeoutOrigin;
+  durationMilliseconds: number;
+};
+
+export type TagoRequestOptions = {
+  retryCount?: number;
+};
+
+type RouteProviderObserver = (
+  observation: TagoRouteProviderObservation,
+) => void;
+
 const SERVICE_PATHS: Record<TagoServiceKind, string> = {
   stop: "BusSttnInfoInqireService",
   route: "BusRouteInfoInqireService",
@@ -58,6 +103,52 @@ const SERVICE_PATHS: Record<TagoServiceKind, string> = {
 
 const SUCCESS_RESULT_CODES = new Set(["00", "0", "0000"]);
 const RETRYABLE_HTTP_STATUSES = new Set([500, 502, 503, 504]);
+const ROUTE_PROVIDER_OPERATIONS: Readonly<Record<string, TagoRouteProviderOperation>> = {
+  getCtyCodeList: "CITY_CODES",
+  GetKwrdFndSubwaySttnList: "SUBWAY_STATIONS",
+  GetSubwaySttnAcctoSchdulList: "SUBWAY_SCHEDULE",
+  getCrdntPrxmtSttnList: "NEARBY_STOPS",
+  getSttnThrghRouteList: "STOP_ROUTES",
+  getRouteNoList: "ROUTE_SEARCH",
+  getRouteInfoIem: "ROUTE_INFO",
+  getRouteAcctoThrghSttnList: "ROUTE_STOPS",
+  getSttnAcctoArvlPrearngeInfoList: "ARRIVALS",
+  getSttnAcctoSpcifyRouteBusArvlPrearngeInfoList: "ROUTE_ARRIVALS",
+  getRouteAcctoBusLcList: "VEHICLES",
+};
+const ROUTE_PROVIDER_TIMEOUT_ORIGINS = new Set<RouteProviderTimeoutOrigin>([
+  "NONE",
+  "CLIENT",
+  "PLANNING",
+  "GEOMETRY",
+  "PROVIDER",
+  "QUEUE",
+]);
+
+function routeProviderOperation(operation: string): TagoRouteProviderOperation {
+  return ROUTE_PROVIDER_OPERATIONS[operation] ?? "OTHER";
+}
+
+function timeoutOriginFromSignal(
+  signal: AbortSignal | undefined,
+): RouteProviderTimeoutOrigin {
+  const reason = signal?.reason;
+  if (
+    typeof reason === "object" &&
+    reason !== null &&
+    "chimapTimeoutOrigin" in reason &&
+    typeof reason.chimapTimeoutOrigin === "string" &&
+    ROUTE_PROVIDER_TIMEOUT_ORIGINS.has(
+      reason.chimapTimeoutOrigin as RouteProviderTimeoutOrigin,
+    )
+  ) {
+    return reason.chimapTimeoutOrigin as RouteProviderTimeoutOrigin;
+  }
+  if (reason instanceof DOMException && reason.name === "TimeoutError") {
+    return "PROVIDER";
+  }
+  return "CLIENT";
+}
 
 function retryableProviderResult(code: string, message: string): boolean {
   return (
@@ -273,6 +364,7 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
 export class TagoClient {
   readonly #config: AppConfig;
   readonly #fetch: typeof fetch;
+  #routeProviderObserver: RouteProviderObserver | undefined;
 
   public constructor(config: AppConfig, fetchImplementation = fetch) {
     this.#config = config;
@@ -284,6 +376,20 @@ export class TagoClient {
       this.#config.tagoServiceKeys[service] !== undefined ||
       this.#config.dataGoKrServiceKey !== undefined
     );
+  }
+
+  public setRouteProviderObserver(observer: RouteProviderObserver): void {
+    this.#routeProviderObserver = observer;
+  }
+
+  #observeRouteProvider(
+    observation: TagoRouteProviderObservation,
+  ): void {
+    try {
+      this.#routeProviderObserver?.(observation);
+    } catch {
+      // Observability must never change an upstream request result.
+    }
   }
 
   #serviceKey(service: TagoServiceKind, operation: string): string {
@@ -324,10 +430,68 @@ export class TagoClient {
     operation: string,
     parameters: TagoParameters,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
+  ): Promise<TagoResponsePage> {
+    const startedAt = performance.now();
+    try {
+      const page = await this.#requestPageUnobserved(
+        service,
+        operation,
+        parameters,
+        signal,
+        options,
+      );
+      this.#observeRouteProvider({
+        provider: "TAGO",
+        operation: routeProviderOperation(operation),
+        outcome: "SUCCESS",
+        timeoutOrigin: "NONE",
+        durationMilliseconds: performance.now() - startedAt,
+      });
+      return page;
+    } catch (error) {
+      const timeoutOrigin =
+        error instanceof TagoApiError && error.resultCode === "TIMEOUT"
+          ? "PROVIDER"
+          : error instanceof TagoApiError && error.resultCode === "ABORTED"
+            ? timeoutOriginFromSignal(signal)
+            : "NONE";
+      this.#observeRouteProvider({
+        provider: "TAGO",
+        operation: routeProviderOperation(operation),
+        outcome:
+          error instanceof TagoApiError && error.resultCode === "HTTP_429"
+            ? "RATE_LIMIT"
+            : error instanceof TagoApiError &&
+                /^HTTP_5\d\d$/u.test(error.resultCode)
+              ? "HTTP_5XX"
+              : error instanceof TagoApiError &&
+                  /^HTTP_4\d\d$/u.test(error.resultCode)
+                ? "HTTP_4XX"
+                : timeoutOrigin === "PROVIDER" ||
+                    timeoutOrigin === "PLANNING" ||
+                    timeoutOrigin === "GEOMETRY"
+                  ? "TIMEOUT"
+                  : timeoutOrigin === "CLIENT" || timeoutOrigin === "QUEUE"
+                    ? "ABORTED"
+                    : "ERROR",
+        timeoutOrigin,
+        durationMilliseconds: performance.now() - startedAt,
+      });
+      throw error;
+    }
+  }
+
+  async #requestPageUnobserved(
+    service: TagoServiceKind,
+    operation: string,
+    parameters: TagoParameters,
+    signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<TagoResponsePage> {
     const key = this.#serviceKey(service, operation);
     const url = this.#buildUrl(service, operation, parameters, key);
-    const maxAttempts = this.#config.tagoHttpRetryCount + 1;
+    const maxAttempts = (options.retryCount ?? this.#config.tagoHttpRetryCount) + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const timeoutSignal = AbortSignal.timeout(
@@ -426,6 +590,7 @@ export class TagoClient {
     operation: string,
     parameters: TagoParameters,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<JsonRecord[]> {
     const numOfRows = 1000;
     const first = await this.#requestPage(
@@ -433,6 +598,7 @@ export class TagoClient {
       operation,
       { ...parameters, pageNo: 1, numOfRows },
       signal,
+      options,
     );
     const result = [...first.items];
     const pageCount = Math.min(100, Math.ceil(first.totalCount / numOfRows));
@@ -442,6 +608,7 @@ export class TagoClient {
         operation,
         { ...parameters, pageNo, numOfRows },
         signal,
+        options,
       );
       result.push(...page.items);
     }
@@ -577,6 +744,7 @@ export class TagoClient {
   public async getNearbyStops(
     coordinate: Coordinate,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusStop[]> {
     const items = await this.#requestAllPages(
       "stop",
@@ -586,6 +754,7 @@ export class TagoClient {
         gpsLong: coordinate.lng,
       },
       signal,
+      options,
     );
     return items
       .map((item): BusStop => {
@@ -792,6 +961,7 @@ export class TagoClient {
     cityCode: string,
     nodeId: string,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusArrival[]> {
     return this.#getArrivalsByOperation(
       "getSttnAcctoArvlPrearngeInfoList",
@@ -799,6 +969,7 @@ export class TagoClient {
       nodeId,
       undefined,
       signal,
+      options,
     );
   }
 
@@ -807,6 +978,7 @@ export class TagoClient {
     nodeId: string,
     routeId: string,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusArrival[]> {
     return this.#getArrivalsByOperation(
       "getSttnAcctoSpcifyRouteBusArvlPrearngeInfoList",
@@ -814,6 +986,7 @@ export class TagoClient {
       nodeId,
       routeId,
       signal,
+      options,
     );
   }
 
@@ -823,6 +996,7 @@ export class TagoClient {
     nodeId: string,
     routeId?: string,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusArrival[]> {
     const fetchedAt = operationTimestamp();
     const items = await this.#requestAllPages(
@@ -830,6 +1004,7 @@ export class TagoClient {
       operation,
       { cityCode, nodeId, routeId },
       signal,
+      options,
     );
     return items.flatMap((item): BusArrival[] => {
       const itemRouteId = textValue(item, "routeid", "routeId");

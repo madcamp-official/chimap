@@ -108,6 +108,143 @@ describe("환경변수 보안 경계", () => {
     }).transit.geometryV2Enabled).toBe(true);
   });
 
+  it("추천 timeout·선택 geometry·버스 pair v3는 서로 독립적인 feature flag다", () => {
+    const defaults = loadConfig({ NODE_ENV: "test" });
+    expect(defaults.recommendation).toEqual({
+      phasedTimeoutsEnabled: false,
+      selectedGeometryEnabled: false,
+    });
+    expect(defaults.transit.busGeometryPairV3Enabled).toBe(false);
+
+    const enabled = loadConfig({
+      NODE_ENV: "test",
+      RECOMMENDATION_PHASED_TIMEOUTS_ENABLED: "1",
+      RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+      BUS_GEOMETRY_PAIR_V3_ENABLED: "1",
+    });
+    expect(enabled.recommendation).toEqual({
+      phasedTimeoutsEnabled: true,
+      selectedGeometryEnabled: true,
+    });
+    expect(enabled.transit.busGeometryPairV3Enabled).toBe(true);
+  });
+
+  it("Valhalla 도보 라우터 설정과 허용 범위를 검증한다", () => {
+    expect(loadConfig({ NODE_ENV: "test" }).walking).toEqual({
+      router: "KAKAO",
+      timeoutMs: 3_500,
+      retryCount: 1,
+      cacheTtlSeconds: 1_800,
+      maxSnapDistanceMeters: 100,
+      maxDetourRatio: 5,
+    });
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        WALKING_ROUTER: "VALHALLA",
+      }),
+    ).toThrow(/VALHALLA_BASE_URL/u);
+
+    expect(loadConfig({
+      NODE_ENV: "test",
+      WALKING_ROUTER: "VALHALLA",
+      VALHALLA_BASE_URL: "http://10.0.0.8:8002/internal/valhalla",
+      TRANSIT_GEOMETRY_V2_ENABLED: "1",
+      RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+      VALHALLA_HTTP_TIMEOUT_MS: "10000",
+      VALHALLA_HTTP_RETRY_COUNT: "3",
+      VALHALLA_WALK_CACHE_TTL_SECONDS: "1",
+      VALHALLA_MAX_SNAP_DISTANCE_METERS: "500",
+      VALHALLA_MAX_DETOUR_RATIO: "20",
+    }).walking).toEqual({
+      router: "VALHALLA",
+      valhallaBaseUrl: "http://10.0.0.8:8002/internal/valhalla",
+      timeoutMs: 10_000,
+      retryCount: 3,
+      cacheTtlSeconds: 1,
+      maxSnapDistanceMeters: 500,
+      maxDetourRatio: 20,
+    });
+
+    for (const valhallaBaseUrl of [
+      "ftp://10.0.0.8:8002",
+      "http://router:secret@10.0.0.8:8002",
+      "https://valhalla.internal:8002?token=secret",
+      "https://valhalla.internal:8002#route",
+    ]) {
+      expect(() =>
+        loadConfig({
+          NODE_ENV: "test",
+          WALKING_ROUTER: "VALHALLA",
+          VALHALLA_BASE_URL: valhallaBaseUrl,
+          TRANSIT_GEOMETRY_V2_ENABLED: "1",
+          RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+        }),
+      ).toThrow(/HTTP\(S\)/u);
+    }
+
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        WALKING_ROUTER: "VALHALLA",
+        VALHALLA_BASE_URL: "http://valhalla.internal:8002",
+        RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+      }),
+    ).toThrow(/TRANSIT_GEOMETRY_V2_ENABLED=1/u);
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        WALKING_ROUTER: "VALHALLA",
+        VALHALLA_BASE_URL: "http://valhalla.internal:8002",
+        TRANSIT_GEOMETRY_V2_ENABLED: "1",
+      }),
+    ).toThrow(/RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1/u);
+
+    for (const invalid of [
+      { VALHALLA_HTTP_TIMEOUT_MS: "499" },
+      { VALHALLA_HTTP_TIMEOUT_MS: "10001" },
+      { VALHALLA_HTTP_RETRY_COUNT: "-1" },
+      { VALHALLA_HTTP_RETRY_COUNT: "4" },
+      { VALHALLA_WALK_CACHE_TTL_SECONDS: "0" },
+      { VALHALLA_MAX_SNAP_DISTANCE_METERS: "9" },
+      { VALHALLA_MAX_SNAP_DISTANCE_METERS: "501" },
+      { VALHALLA_MAX_DETOUR_RATIO: "0.9" },
+      { VALHALLA_MAX_DETOUR_RATIO: "21" },
+    ]) {
+      expect(() => loadConfig({ NODE_ENV: "test", ...invalid })).toThrow();
+    }
+  });
+
+  it("공원 Import token과 추천 조회 범위를 검증한다", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        PARK_ROUTE_IMPORT_ENABLED: "1",
+        PARK_ROUTE_IMPORT_TOKEN: "short",
+      }),
+    ).toThrow(/32자/u);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      PARK_ROUTE_IMPORT_ENABLED: "1",
+      PARK_ROUTE_IMPORT_TOKEN: "p".repeat(32),
+      PARK_ROUTE_INTEGRATION_ENABLED: "1",
+      PARK_ROUTE_SEARCH_RADIUS_METERS: "1000",
+      PARK_ROUTE_MAX_CANDIDATES: "5",
+    });
+    expect(config.parkRoutes).toMatchObject({
+      importEnabled: true,
+      integrationEnabled: true,
+      searchRadiusMeters: 1000,
+      maxCandidates: 5,
+    });
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        PARK_ROUTE_SEARCH_RADIUS_METERS: "99",
+      }),
+    ).toThrow();
+  });
+
   it("추천 경로 탐색 상한이 기본 반경보다 작으면 거절한다", () => {
     expect(() =>
       loadConfig({

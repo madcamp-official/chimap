@@ -36,6 +36,7 @@
     "subway:sync-stations": "pnpm --filter @chimap/api subway:sync-stations",
     "subway:test-departures": "pnpm --filter @chimap/api subway:test-departures",
     "subway:stats": "pnpm --filter @chimap/api subway:stats",
+    "valhalla:smoke-test": "pnpm --filter @chimap/api exec tsx src/cli/valhalla-smoke-test.ts --timeout-ms 3500",
     "test": "pnpm boundaries:check && pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present test",
     "test:coverage": "pnpm --filter @chimap/contracts build && pnpm --filter @chimap/app-core build && pnpm --filter @chimap/design-tokens build && pnpm -r --if-present test:coverage",
     "test:e2e": "pnpm --filter @chimap/web test:e2e",

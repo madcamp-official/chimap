@@ -63,15 +63,35 @@ import {
   ProviderError,
 } from "./errors.js";
 import { createLogger } from "./logger.js";
-import { AppMetrics } from "./monitoring/metrics.js";
-import { CachedMobilityProvider } from "./providers/cached-provider.js";
+import {
+  AppMetrics,
+  type RouteProviderObservation,
+} from "./monitoring/metrics.js";
+import {
+  currentRequestLogContext,
+  runWithRecommendationContext,
+  runWithRequestContext,
+} from "./monitoring/request-context.js";
+import {
+  CachedMobilityProvider,
+  CachedWalkingProvider,
+} from "./providers/cached-provider.js";
 import { KakaoMobilityProvider } from "./providers/kakao-provider.js";
 import { NaverGeocodingClient } from "./providers/naver-geocoding-client.js";
 import { TagoTransitMobilityProvider } from "./providers/tago-transit-provider.js";
+import type { WalkingRouteProvider } from "./providers/types.js";
+import { ValhallaClient } from "./providers/valhalla/valhalla-client.js";
+import { ValhallaWalkingProvider } from "./providers/valhalla/valhalla-walking-provider.js";
+import { ParkRouteCandidateService } from "./parks/park-route-candidate-service.js";
+import { ParkRouteImportService } from "./parks/park-route-import-service.js";
+import { ParkRouteRepository } from "./parks/park-route-repository.js";
 import { CandidateGenerator } from "./services/candidate-generator.js";
 import { PlaceLookupService } from "./services/place-lookup-service.js";
 import type { Clock } from "./services/recommendation-service.js";
-import { RecommendationService } from "./services/recommendation-service.js";
+import {
+  RecommendationService,
+  RECOMMENDATION_HARD_DEADLINE_MILLISECONDS,
+} from "./services/recommendation-service.js";
 import { TagoApiError } from "./transit/tago-client.js";
 import { TransitService } from "./transit/transit-service.js";
 
@@ -143,6 +163,13 @@ function bearerToken(request: Request): string | undefined {
   const authorization = request.get("authorization");
   const match = authorization?.match(/^Bearer ([A-Za-z0-9_-]{32,512})$/u);
   return match?.[1];
+}
+
+function importBearerToken(request: Request): string | undefined {
+  const authorization = request.get("authorization");
+  return authorization?.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length)
+    : undefined;
 }
 
 function requestId(response: Response): string {
@@ -218,9 +245,16 @@ function bodyParserError(error: unknown): AppError | undefined {
   }
   const type = "type" in error ? error.type : undefined;
   if (type === "entity.too.large") {
+    const limit =
+      "limit" in error && typeof error.limit === "number"
+        ? error.limit
+        : 32 * 1024;
     return new AppError({
       code: "VALIDATION_ERROR",
-      message: "요청 본문은 32KB를 넘을 수 없어요.",
+      message:
+        limit > 32 * 1024
+          ? "공원 경로 Import 요청 본문은 25MB를 넘을 수 없습니다."
+          : "요청 본문은 32KB를 넘을 수 없어요.",
       status: 413,
       cause: error,
     });
@@ -258,8 +292,10 @@ function rateLimiter(max: number, windowMs: number) {
 function createProviders(
   config: AppConfig,
   transitService: TransitService,
+  observeRouteProvider: (observation: RouteProviderObservation) => void,
 ): {
   mobility: CachedMobilityProvider;
+  walking: WalkingRouteProvider;
   places: PlaceLookupService;
 } {
   if (config.kakaoRestApiKey === undefined) {
@@ -268,11 +304,37 @@ function createProviders(
     );
   }
   const baseProvider = new KakaoMobilityProvider(config.kakaoRestApiKey);
+  baseProvider.setRouteProviderObserver(observeRouteProvider);
   const provider = new TagoTransitMobilityProvider({
     baseProvider,
     transitService,
     config,
   });
+  const mobility = new CachedMobilityProvider(provider);
+  let walking: WalkingRouteProvider;
+  if (config.walking.router === "VALHALLA") {
+    if (config.walking.valhallaBaseUrl === undefined) {
+      throw new Error("Valhalla 도보 라우터 endpoint가 필요합니다.");
+    }
+    const valhallaClient = new ValhallaClient({
+      baseUrl: config.walking.valhallaBaseUrl,
+      timeoutMs: config.walking.timeoutMs,
+      retryCount: config.walking.retryCount,
+    });
+    valhallaClient.setRouteProviderObserver(observeRouteProvider);
+    walking = new CachedWalkingProvider(
+      new ValhallaWalkingProvider(valhallaClient, {
+        maxSnapDistanceMeters: config.walking.maxSnapDistanceMeters,
+        maxDetourRatio: config.walking.maxDetourRatio,
+      }),
+      config.walking.cacheTtlSeconds * 1_000,
+    );
+  } else {
+    walking = {
+      source: "KAKAO",
+      getWalkingRoute: (request) => mobility.getWalkingRoute(request),
+    };
+  }
   const naver =
     config.naverMapNcpKeyId === undefined ||
     config.naverMapNcpKey === undefined
@@ -282,7 +344,8 @@ function createProviders(
           config.naverMapNcpKey,
         );
   return {
-    mobility: new CachedMobilityProvider(provider),
+    mobility,
+    walking,
     places: new PlaceLookupService({
       kakao: baseProvider.local,
       ...(naver === undefined ? {} : { naver }),
@@ -358,9 +421,30 @@ export function createApp(options: CreateAppOptions): Express {
       config: options.config,
       repository: transitService.repository,
     });
+  const observeRouteProvider = (observation: RouteProviderObservation) => {
+    metrics.observeRouteProvider(observation);
+    const context = currentRequestLogContext();
+    logger.info({
+      event: "route.provider",
+      requestId: context?.requestId ?? null,
+      phase: context?.phase ?? "BACKGROUND",
+      elapsedMilliseconds: context?.elapsedMilliseconds ?? null,
+      remainingBudgetMilliseconds:
+        context?.remainingBudgetMilliseconds ?? null,
+      provider: observation.provider,
+      operation: observation.operation,
+      outcome: observation.outcome,
+      timeoutOrigin: observation.timeoutOrigin,
+      providerDurationMilliseconds: observation.durationMilliseconds,
+      ...(observation.httpStatus === undefined
+        ? {}
+        : { httpStatus: observation.httpStatus }),
+    });
+  };
   transitService.setSubwayMetricsObserver?.((input) =>
     metrics.observeTagoSubway(input),
   );
+  transitService.setRouteProviderMetricsObserver?.(observeRouteProvider);
   app.locals.metrics = metrics;
   const authRepository = new AuthRepository(transitService.repository.pool);
   const authService =
@@ -374,12 +458,62 @@ export function createApp(options: CreateAppOptions): Express {
       new MobileAuthRepository(transitService.repository.pool),
     );
   app.locals.mobileAuthService = mobileAuthService;
-  const providers = createProviders(options.config, transitService);
+  const providers = createProviders(
+    options.config,
+    transitService,
+    observeRouteProvider,
+  );
   const provider = providers.mobility;
+  const walkingProvider = providers.walking;
+  app.locals.walkingRouter = walkingProvider.source;
+  logger.info({
+    event: "walking.provider_configured",
+    provider: walkingProvider.source,
+    cacheTtlSeconds:
+      options.config.walking.router === "VALHALLA"
+        ? options.config.walking.cacheTtlSeconds
+        : 30 * 60,
+  });
   const placeLookup = providers.places;
+  const parkRouteRepository = new ParkRouteRepository(
+    transitService.repository.pool,
+  );
+  const parkRouteImportService = new ParkRouteImportService(
+    options.config.parkRoutes,
+    parkRouteRepository,
+  );
   const recommendationService = new RecommendationService({
-    candidateGenerator: new CandidateGenerator(provider),
+    candidateGenerator: new CandidateGenerator(provider, walkingProvider),
+    parkRoutes: new ParkRouteCandidateService({
+      enabled: options.config.parkRoutes.integrationEnabled,
+      radiusMeters: options.config.parkRoutes.searchRadiusMeters,
+      maxCandidates: options.config.parkRoutes.maxCandidates,
+      repository: parkRouteRepository,
+      provider: walkingProvider,
+      logger,
+    }),
     logger,
+    observePhase: (observation) => {
+      metrics.observeRecommendationPhase(observation);
+      const context = currentRequestLogContext();
+      logger.info({
+        event: "recommendation.phase",
+        requestId: context?.requestId ?? null,
+        phase: observation.phase,
+        outcome: observation.outcome,
+        timeoutOrigin: observation.timeoutOrigin,
+        phaseDurationMilliseconds: observation.durationMilliseconds,
+        elapsedMilliseconds: context?.elapsedMilliseconds ?? null,
+        remainingBudgetMilliseconds:
+          context?.remainingBudgetMilliseconds ?? null,
+      });
+    },
+    observeGeometrySkipped: (observation) =>
+      metrics.observeGeometrySkipped(observation),
+    phasedTimeoutsEnabled:
+      options.config.recommendation.phasedTimeoutsEnabled,
+    selectedGeometryEnabled:
+      options.config.recommendation.selectedGeometryEnabled,
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
   const rateLimitWindow = options.rateLimits?.windowMs ?? 60_000;
@@ -408,7 +542,10 @@ export function createApp(options: CreateAppOptions): Express {
         durationSeconds: durationMilliseconds / 1000,
       });
     });
-    next();
+    runWithRequestContext(
+      { requestId: id, startedAtMilliseconds: startedAt },
+      next,
+    );
   });
   app.use(
     options.config.webDistPath === undefined
@@ -438,11 +575,67 @@ export function createApp(options: CreateAppOptions): Express {
         "X-Client-Platform",
         "X-Contract-Version",
         "X-Route-Geometry",
+        "Idempotency-Key",
       ],
       credentials: true,
     }),
   );
   app.use(compression());
+  const parkImportRouter = express.Router();
+  parkImportRouter.use((request, _response, next) => {
+    parkRouteImportService.authenticate(importBearerToken(request));
+    next();
+  });
+  parkImportRouter.post(
+    "/import",
+    express.json({ limit: "25mb", strict: true }),
+    async (request, response) => {
+      const startedAt = performance.now();
+      const { snapshot, result } = await parkRouteImportService.import({
+        body: request.body,
+        idempotencyKey: request.get("idempotency-key"),
+      });
+      const activated = result.status === "ACTIVATED";
+      const payload = {
+        requestId: requestId(response),
+        datasetId: snapshot.datasetId,
+        status: result.status,
+        receivedRouteCount: snapshot.routes.length,
+        insertedRouteCount: activated ? snapshot.routes.length : 0,
+        unchangedRouteCount: activated ? 0 : snapshot.routes.length,
+        rejectedRouteCount: 0,
+        ...(activated
+          ? {
+              previousDatasetId: result.previousDatasetId,
+              activatedAt: result.activatedAt,
+            }
+          : {}),
+        datasetChecksum: snapshot.datasetChecksum,
+      };
+      logger.info({
+        event: "park-route.import",
+        requestId: requestId(response),
+        datasetId: snapshot.datasetId,
+        datasetChecksum: snapshot.datasetChecksum,
+        routeCount: snapshot.routes.length,
+        insertedCount: payload.insertedRouteCount,
+        status: result.status,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      response.status(activated ? 201 : 200).json(payload);
+    },
+  );
+  parkImportRouter.get("/status", async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      requestId: requestId(response),
+      importEnabled: options.config.parkRoutes.importEnabled,
+      integrationEnabled:
+        options.config.parkRoutes.integrationEnabled,
+      activeDataset: await parkRouteRepository.activeDataset(),
+    });
+  });
+  app.use("/api/v1/internal/park-routes", parkImportRouter);
   app.use(express.json({ limit: "32kb", strict: true }));
 
   app.use("/api/v1", (request, _response, next) => {
@@ -876,26 +1069,79 @@ export function createApp(options: CreateAppOptions): Express {
         : geometryHeader === "track-v1" || geometryHeader === "transit-v2"
           ? "TRACK_V1" as const
           : undefined;
-      const result = await recommendationService.createRecommendations({
-        request: parsedRequest,
-        requestId: requestId(response),
-        signal: abortController.signal,
-        ...(geometryProfile === undefined ? {} : { geometryProfile }),
-        observeSubwayGeometry: (observation) =>
-          metrics.observeSubwayTrackGeometry(observation),
-        observeRouteGeometry: (observation) => {
-          metrics.observeRouteGeometry(observation);
-          logger.info({
-            event: "route.geometry",
-            requestId: requestId(response),
-            ...observation,
-          });
+      const result = await runWithRecommendationContext(
+        {
+          requestId: requestId(response),
+          startedAtMilliseconds: startedAt,
+          budgetMilliseconds: RECOMMENDATION_HARD_DEADLINE_MILLISECONDS,
         },
-      });
+        () => recommendationService.createRecommendations({
+          request: parsedRequest,
+          requestId: requestId(response),
+          signal: abortController.signal,
+          ...(geometryProfile === undefined ? {} : { geometryProfile }),
+          observeSubwayGeometry: (observation) =>
+            metrics.observeSubwayTrackGeometry(observation),
+          observeRouteGeometry: (observation) => {
+            metrics.observeRouteGeometry(observation);
+            if (
+              observation.mode === "BUS" &&
+              (observation.source === "KAKAO_ROAD" ||
+                observation.source === "PRECOMPUTED" ||
+                observation.source === "FALLBACK")
+            ) {
+              metrics.observeBusGeometryQuality({
+                algorithmVersion:
+                  observation.geometryVersion === "transit-v2" ||
+                  observation.geometryVersion === "kakao-road-pair-v3"
+                    ? observation.geometryVersion
+                    : "unknown",
+                source: observation.source,
+                cacheState: observation.cacheState,
+                outcome:
+                  observation.outcome === "DETAILED" ? "ACCEPTED" : "REJECTED",
+                ...(observation.startSnapDistanceMeters === undefined
+                  ? {}
+                  : {
+                      startSnapDistanceMeters:
+                        observation.startSnapDistanceMeters,
+                    }),
+                ...(observation.endSnapDistanceMeters === undefined
+                  ? {}
+                  : { endSnapDistanceMeters: observation.endSnapDistanceMeters }),
+                ...(observation.detourRatio === undefined
+                  ? {}
+                  : { detourRatio: observation.detourRatio }),
+                ...(observation.outAndBack === undefined
+                  ? {}
+                  : { outAndBack: observation.outAndBack }),
+              });
+            }
+            const context = currentRequestLogContext();
+            logger.info({
+              event: "route.geometry",
+              requestId: requestId(response),
+              phase: context?.phase ?? "HTTP_REQUEST",
+              elapsedMilliseconds: context?.elapsedMilliseconds ?? null,
+              remainingBudgetMilliseconds:
+                context?.remainingBudgetMilliseconds ?? null,
+              ...observation,
+            });
+          },
+        }),
+      );
       metrics.observeRecommendation({
         outcome: "success",
         durationSeconds: (performance.now() - startedAt) / 1000,
         resultCount: result.recommendations.length,
+        degradedLegCount: result.recommendations.reduce(
+          (count, recommendation) =>
+            count +
+            recommendation.legs.filter(
+              (leg) => leg.geometryQuality === "APPROXIMATE",
+            ).length,
+          0,
+        ),
       });
       if (geometryProfile !== undefined) {
         metrics.observeSubwayTrackResponseBytes(

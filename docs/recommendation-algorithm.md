@@ -314,3 +314,22 @@ TAGO 실시간 도착이 없으면 `REALTIME_UNAVAILABLE`, 주변 정류장 갱�
 `HAN_2026_V1` 연구는 건강한 성인 252명, 만 18~90세와 BMI 30 미만을
 중심으로 내부 교차검증됐습니다. CHIMap의 값은 의료 진단이나 실측값이
 아니며 연구 범위 밖 사용자는 오차가 더 클 수 있습니다.
+# Park-assisted GOAL candidates
+
+When `PARK_ROUTE_INTEGRATION_ENABLED=1`, the API searches only the active
+reviewed dataset near eligible access walks: origin/access, final
+alighting/destination, or an all-walking trip. Transfer walks are excluded.
+PostGIS and stored distance shortlist candidates before external calls.
+
+A candidate replaces one eligible walk with Kakao access walking, the stored
+park geometry, and Kakao egress walking. `FORWARD_ONLY` is never reversed;
+`BOTH` can create an in-memory reversed view (entry/exit, coordinates, and
+path waypoint IDs) without changing the row. The park leg is a detailed,
+exercise `PARK_DETOUR` leg. It is selected only when its absolute difference
+from remaining target steps improves and the existing automatic/legacy time
+policy still passes.
+
+FAST and BALANCED selection is unchanged. Park lookup, database, geometry, or
+connector failures are fail-open and retain the existing recommendations.
+The existing total route-provider call ceiling is preserved; park connectors
+run only when two calls remain.

@@ -219,6 +219,9 @@ const environmentSchema = z
       .enum(["legacy", "shadow", "multimodal"])
       .default("multimodal"),
     TRANSIT_GEOMETRY_V2_ENABLED: z.enum(["0", "1"]).default("0"),
+    RECOMMENDATION_PHASED_TIMEOUTS_ENABLED: z.enum(["0", "1"]).default("0"),
+    RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: z.enum(["0", "1"]).default("0"),
+    BUS_GEOMETRY_PAIR_V3_ENABLED: z.enum(["0", "1"]).default("0"),
     TRANSIT_WALK_SPEED_KMH: z.coerce.number().positive().default(4.5),
     TRANSIT_BUS_AVERAGE_SPEED_KMH: z.coerce.number().positive().default(20),
     TRANSIT_STOP_DWELL_SECONDS: z.coerce
@@ -226,6 +229,50 @@ const environmentSchema = z
       .int()
       .nonnegative()
       .default(25),
+    WALKING_ROUTER: z.enum(["KAKAO", "VALHALLA"]).default("KAKAO"),
+    VALHALLA_BASE_URL: optionalUrl,
+    VALHALLA_HTTP_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(10_000)
+      .default(3_500),
+    VALHALLA_HTTP_RETRY_COUNT: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(3)
+      .default(1),
+    VALHALLA_WALK_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(1_800),
+    VALHALLA_MAX_SNAP_DISTANCE_METERS: z.coerce
+      .number()
+      .min(10)
+      .max(500)
+      .default(100),
+    VALHALLA_MAX_DETOUR_RATIO: z.coerce
+      .number()
+      .min(1)
+      .max(20)
+      .default(5),
+    PARK_ROUTE_IMPORT_ENABLED: z.enum(["0", "1"]).default("0"),
+    PARK_ROUTE_IMPORT_TOKEN: optionalSecret,
+    PARK_ROUTE_INTEGRATION_ENABLED: z.enum(["0", "1"]).default("0"),
+    PARK_ROUTE_SEARCH_RADIUS_METERS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(2000)
+      .default(800),
+    PARK_ROUTE_MAX_CANDIDATES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .default(3),
     PORT: z.coerce.number().int().min(1).max(65_535).default(8080),
     WEB_ORIGIN: z.url().default("http://localhost:5173"),
     WEB_DIST_PATH: optionalSecret,
@@ -362,6 +409,68 @@ const environmentSchema = z
         message:
           "추천 경로 정류장 탐색 상한은 기본 주변 정류장 반경보다 작을 수 없습니다.",
       });
+    }
+    if (
+      environment.PARK_ROUTE_IMPORT_ENABLED === "1" &&
+      (environment.PARK_ROUTE_IMPORT_TOKEN === undefined ||
+        environment.PARK_ROUTE_IMPORT_TOKEN.length < 32)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["PARK_ROUTE_IMPORT_TOKEN"],
+        message:
+          "공원 경로 Import API를 활성화하려면 32자 이상의 서버 전용 token이 필요합니다.",
+      });
+    }
+    if (
+      environment.WALKING_ROUTER === "VALHALLA" &&
+      environment.VALHALLA_BASE_URL === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["VALHALLA_BASE_URL"],
+        message: "Valhalla 도보 라우터에는 VALHALLA_BASE_URL이 필요합니다.",
+      });
+    }
+    if (
+      environment.WALKING_ROUTER === "VALHALLA" &&
+      environment.TRANSIT_GEOMETRY_V2_ENABLED !== "1"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["TRANSIT_GEOMETRY_V2_ENABLED"],
+        message:
+          "Valhalla 상세 도보 라우터에는 TRANSIT_GEOMETRY_V2_ENABLED=1이 필요합니다.",
+      });
+    }
+    if (
+      environment.WALKING_ROUTER === "VALHALLA" &&
+      environment.RECOMMENDATION_SELECTED_GEOMETRY_ENABLED !== "1"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["RECOMMENDATION_SELECTED_GEOMETRY_ENABLED"],
+        message:
+          "Valhalla 상세 도보 라우터에는 RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1이 필요합니다.",
+      });
+    }
+    if (environment.VALHALLA_BASE_URL !== undefined) {
+      const valhallaUrl = new URL(environment.VALHALLA_BASE_URL);
+      if (
+        (valhallaUrl.protocol !== "http:" &&
+          valhallaUrl.protocol !== "https:") ||
+        valhallaUrl.username !== "" ||
+        valhallaUrl.password !== "" ||
+        valhallaUrl.search !== "" ||
+        valhallaUrl.hash !== ""
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["VALHALLA_BASE_URL"],
+          message:
+            "Valhalla URL은 HTTP(S) endpoint여야 하며 인증정보, query, fragment를 포함할 수 없습니다.",
+        });
+      }
     }
     if (
       environment.SEOUL_SUBWAY_ENABLED === "1" &&
@@ -510,9 +619,30 @@ export type AppConfig = {
     maxTransferCount: 0 | 1 | 2;
     routerMode: "legacy" | "shadow" | "multimodal";
     geometryV2Enabled: boolean;
+    busGeometryPairV3Enabled: boolean;
     walkSpeedKmh: number;
     busAverageSpeedKmh: number;
     stopDwellSeconds: number;
+  };
+  recommendation: {
+    phasedTimeoutsEnabled: boolean;
+    selectedGeometryEnabled: boolean;
+  };
+  walking: {
+    router: "KAKAO" | "VALHALLA";
+    valhallaBaseUrl?: string;
+    timeoutMs: number;
+    retryCount: number;
+    cacheTtlSeconds: number;
+    maxSnapDistanceMeters: number;
+    maxDetourRatio: number;
+  };
+  parkRoutes: {
+    importEnabled: boolean;
+    importToken?: string;
+    integrationEnabled: boolean;
+    searchRadiusMeters: number;
+    maxCandidates: number;
   };
 };
 
@@ -683,9 +813,37 @@ export function loadConfig(
       maxTransferCount: parsed.TRANSIT_MAX_TRANSFER_COUNT as 0 | 1 | 2,
       routerMode: parsed.TRANSIT_ROUTER_MODE,
       geometryV2Enabled: parsed.TRANSIT_GEOMETRY_V2_ENABLED === "1",
+      busGeometryPairV3Enabled: parsed.BUS_GEOMETRY_PAIR_V3_ENABLED === "1",
       walkSpeedKmh: parsed.TRANSIT_WALK_SPEED_KMH,
       busAverageSpeedKmh: parsed.TRANSIT_BUS_AVERAGE_SPEED_KMH,
       stopDwellSeconds: parsed.TRANSIT_STOP_DWELL_SECONDS,
+    },
+    recommendation: {
+      phasedTimeoutsEnabled:
+        parsed.RECOMMENDATION_PHASED_TIMEOUTS_ENABLED === "1",
+      selectedGeometryEnabled:
+        parsed.RECOMMENDATION_SELECTED_GEOMETRY_ENABLED === "1",
+    },
+    walking: {
+      router: parsed.WALKING_ROUTER,
+      ...(parsed.VALHALLA_BASE_URL === undefined
+        ? {}
+        : { valhallaBaseUrl: parsed.VALHALLA_BASE_URL }),
+      timeoutMs: parsed.VALHALLA_HTTP_TIMEOUT_MS,
+      retryCount: parsed.VALHALLA_HTTP_RETRY_COUNT,
+      cacheTtlSeconds: parsed.VALHALLA_WALK_CACHE_TTL_SECONDS,
+      maxSnapDistanceMeters: parsed.VALHALLA_MAX_SNAP_DISTANCE_METERS,
+      maxDetourRatio: parsed.VALHALLA_MAX_DETOUR_RATIO,
+    },
+    parkRoutes: {
+      importEnabled: parsed.PARK_ROUTE_IMPORT_ENABLED === "1",
+      ...(parsed.PARK_ROUTE_IMPORT_TOKEN === undefined
+        ? {}
+        : { importToken: parsed.PARK_ROUTE_IMPORT_TOKEN }),
+      integrationEnabled:
+        parsed.PARK_ROUTE_INTEGRATION_ENABLED === "1",
+      searchRadiusMeters: parsed.PARK_ROUTE_SEARCH_RADIUS_METERS,
+      maxCandidates: parsed.PARK_ROUTE_MAX_CANDIDATES,
     },
   };
 }

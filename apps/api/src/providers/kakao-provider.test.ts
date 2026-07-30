@@ -1,14 +1,67 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  KakaoMobilityProvider,
   isPlausibleRoadSection,
   roadGeometryForWaypoints,
 } from "./kakao-provider.js";
+import type { KakaoRouteProviderObservation } from "./kakao-rest-client.js";
 
 const emart = { lat: 36.355156, lng: 127.37922 };
 const galleria = { lat: 36.35272, lng: 127.37907 };
 
 describe("Kakao 버스 도로 구간 검증", () => {
+  it("2-point 요청은 자동차 경유지 없이 독립 인접쌍 body로 전송한다", async () => {
+    let body: Record<string, unknown> | undefined;
+    const observations: KakaoRouteProviderObservation[] = [];
+    const provider = new KakaoMobilityProvider(
+      "server-key",
+      async (_url, options) => {
+        body = JSON.parse(String(options?.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({
+          routes: [{
+            result_code: 0,
+            result_msg: "길찾기 성공",
+            sections: [{
+              roads: [{
+                vertexes: [emart.lng, emart.lat, galleria.lng, galleria.lat],
+              }],
+            }],
+          }],
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
+    provider.setRouteProviderObserver((observation) =>
+      observations.push(observation),
+    );
+
+    const result = await provider.getRoadRouteSections({
+      points: [emart, galleria],
+    });
+
+    expect(result.sections).toHaveLength(1);
+    expect(body).toMatchObject({
+      origin: { x: emart.lng, y: emart.lat },
+      destination: { x: galleria.lng, y: galleria.lat },
+      waypoints: [],
+      priority: "RECOMMEND",
+    });
+    expect(observations).toEqual([
+      expect.objectContaining({
+        provider: "KAKAO",
+        operation: "ROAD_GEOMETRY",
+        outcome: "SUCCESS",
+        timeoutOrigin: "NONE",
+      }),
+    ]);
+    expect(JSON.stringify(observations)).not.toContain("server-key");
+    expect(JSON.stringify(observations)).not.toContain(String(emart.lng));
+    expect(JSON.stringify(observations)).not.toContain(String(emart.lat));
+  });
+
   it("가까운 정류장 사이의 과도한 블록 우회를 거부한다", () => {
     const detour = [
       emart,

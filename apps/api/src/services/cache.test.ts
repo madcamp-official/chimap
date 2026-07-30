@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from "vitest";
 import { MemoryCache } from "./cache.js";
 
 describe("MemoryCache", () => {
+  it("새 요청·공유 중·완료 캐시 상태를 구분한다", async () => {
+    const cache = new MemoryCache(1024);
+    let resolveLoad!: (value: string) => void;
+    const loader = () => new Promise<string>((resolve) => {
+      resolveLoad = resolve;
+    });
+
+    expect(cache.getLoadState("route")).toBe("MISS");
+    const pending = cache.getOrLoad("route", 1_000, loader);
+    expect(cache.getLoadState("route")).toBe("SHARED");
+    resolveLoad("loaded");
+    await expect(pending).resolves.toBe("loaded");
+    expect(cache.getLoadState("route")).toBe("FRESH");
+  });
+
   it("동일 cache miss를 single-flight로 한 번만 불러온다", async () => {
     const cache = new MemoryCache(1024);
     const loader = vi.fn(async () => {

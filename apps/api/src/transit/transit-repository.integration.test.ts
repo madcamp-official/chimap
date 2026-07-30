@@ -104,7 +104,7 @@ describe.skipIf(databaseUrl === undefined)(
       }
     });
 
-    it("migration 11 버스 구간 형상을 저장·단순화 조회하고 해시로 무효화한다", async () => {
+    it("migration 13 v3 형상은 legacy v2와 함께 저장·조회한다", async () => {
       const repository = new TransitRepository({
         url: databaseUrl!,
         poolMax: 2,
@@ -149,6 +149,48 @@ describe.skipIf(databaseUrl === undefined)(
         });
         expect(stored[0]?.coordinates.length).toBeGreaterThanOrEqual(2);
 
+        const versionedSourceHash = "c".repeat(64);
+        await repository.upsertVersionedBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+          [{
+            fromNodeOrder: 1,
+            toNodeOrder: 2,
+            coordinates: [
+              { lat: 36.26708, lng: 127.47931 },
+              { lat: 36.26788, lng: 127.47852 },
+              { lat: 36.26878, lng: 127.47773 },
+            ],
+            distanceMeters: 235,
+            geometrySource: "KAKAO_ROAD",
+            geometryVersion: "kakao-road-pair-v3",
+            sourceHash: versionedSourceHash,
+            startSnapDistanceMeters: 4.2,
+            endSnapDistanceMeters: 3.8,
+            detourRatio: 1.08,
+            outAndBack: false,
+            freshUntil: new Date(Date.now() + 60_000),
+            expiresAt: new Date(Date.now() + 120_000),
+          }],
+        );
+        const versioned = await repository.getVersionedBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+          "kakao-road-pair-v3",
+        );
+        expect(versioned[0]).toMatchObject({
+          fromNodeOrder: 1,
+          toNodeOrder: 2,
+          geometryVersion: "kakao-road-pair-v3",
+          sourceHash: versionedSourceHash,
+          startSnapDistanceMeters: 4.2,
+          endSnapDistanceMeters: 3.8,
+          detourRatio: 1.08,
+          outAndBack: false,
+          cacheState: "FRESH",
+        });
+        expect(versioned[0]?.coordinates.length).toBeGreaterThanOrEqual(2);
+
         await repository.removeMismatchedBusSegmentGeometries(
           actualRoute.cityCode,
           actualRoute.routeId,
@@ -158,6 +200,43 @@ describe.skipIf(databaseUrl === undefined)(
           actualRoute.cityCode,
           actualRoute.routeId,
         )).resolves.toEqual([]);
+        await expect(repository.getVersionedBusSegmentGeometries(
+          actualRoute.cityCode,
+          actualRoute.routeId,
+          "kakao-road-pair-v3",
+        )).resolves.toHaveLength(1);
+      } finally {
+        await repository.close();
+      }
+    });
+
+    it("노선 연결 정류장만 DB에서 거리순으로 조회한다", async () => {
+      const repository = new TransitRepository({
+        url: databaseUrl!,
+        poolMax: 2,
+        connectTimeoutMs: 3000,
+        statementTimeoutMs: 5000,
+        sslMode: "disable",
+      });
+      try {
+        await repository.migrate();
+        await repository.replaceRouteStops(actualRoute, actualRouteStops);
+
+        const nearby = await repository.findNearbyRoutableStops(
+          actualRouteStops[0]!.latitude,
+          actualRouteStops[0]!.longitude,
+          300,
+        );
+
+        expect(nearby.some(
+          (stop) => stop.nodeId === actualRouteStops[0]!.nodeId,
+        )).toBe(true);
+        expect(nearby.every(
+          (stop, index) =>
+            index === 0 ||
+            (nearby[index - 1]?.distanceMeters ?? 0) <=
+              (stop.distanceMeters ?? 0),
+        )).toBe(true);
       } finally {
         await repository.close();
       }
@@ -324,6 +403,61 @@ describe.skipIf(databaseUrl === undefined)(
             [originalChecksum],
           );
         }
+        await repository.close();
+      }
+    });
+
+    it("status는 알 수 없는 상위 migration을 허용하고 알려진 checksum 불일치는 거절한다", async () => {
+      const repository = new TransitRepository({
+        url: databaseUrl!,
+        poolMax: 2,
+        connectTimeoutMs: 3000,
+        statementTimeoutMs: 5000,
+        sslMode: "disable",
+      });
+      const unknownVersion = 9_000_000_001;
+      let originalChecksum: string | undefined;
+      try {
+        await repository.migrate();
+        const applied = await repository.pool.query<{ checksum: string }>(
+          "SELECT checksum FROM schema_migrations WHERE version = 1",
+        );
+        originalChecksum = applied.rows[0]?.checksum;
+        expect(originalChecksum).toBeDefined();
+        await repository.pool.query(
+          `INSERT INTO schema_migrations(version, name, checksum)
+           VALUES ($1, 'future_additive_test', repeat('f', 64))
+           ON CONFLICT(version) DO UPDATE SET
+             name = EXCLUDED.name,
+             checksum = EXCLUDED.checksum`,
+          [unknownVersion],
+        );
+
+        await expect(repository.status()).resolves.toMatchObject({
+          connected: true,
+          postgis: true,
+          migrationsCurrent: true,
+        });
+
+        await repository.pool.query(
+          "UPDATE schema_migrations SET checksum = repeat('0', 64) WHERE version = 1",
+        );
+        await expect(repository.status()).resolves.toMatchObject({
+          connected: true,
+          postgis: true,
+          migrationsCurrent: false,
+        });
+      } finally {
+        if (originalChecksum !== undefined) {
+          await repository.pool.query(
+            "UPDATE schema_migrations SET checksum = $1 WHERE version = 1",
+            [originalChecksum],
+          );
+        }
+        await repository.pool.query(
+          "DELETE FROM schema_migrations WHERE version = $1",
+          [unknownVersion],
+        );
         await repository.close();
       }
     });

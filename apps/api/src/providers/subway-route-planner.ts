@@ -459,13 +459,21 @@ export class SubwayRoutePlanner {
     const walkingSignal = request.signal === undefined
       ? budgetSignal
       : AbortSignal.any([request.signal, budgetSignal]);
+    const startedAt = performance.now();
+    let queueWaitMilliseconds = 0;
+    let queueStartedCount = 0;
+    let queueAbortedBeforeStartCount = 0;
     try {
       const route = await withWalkingGeometryLimit(() => this.#baseProvider.getWalkingRoute({
         origin: from,
         destination: to,
         routeMode: "BROAD_FIRST",
         signal: walkingSignal,
-      }), walkingSignal);
+      }), walkingSignal, (observation) => {
+        queueWaitMilliseconds = observation.queueWaitMilliseconds;
+        queueStartedCount = observation.started ? 1 : 0;
+        queueAbortedBeforeStartCount = observation.abortedBeforeStart ? 1 : 0;
+      });
       const legs = accessLegs(route, id).map((leg) => ({
         ...leg,
         ...(request.geometryProfile === "TRANSIT_V2"
@@ -478,12 +486,15 @@ export class SubwayRoutePlanner {
         reason: "NONE",
         source: "KAKAO_WALK",
         cacheState: "NONE",
-        durationMilliseconds: 0,
+        durationMilliseconds: performance.now() - startedAt,
         inputVertexCount: 2,
         outputVertexCount: legs.reduce((total, leg) => total + leg.coordinates.length, 0),
         successfulSectionCount: 1,
         failedSectionCount: 0,
         walkingRole: "ACCESS",
+        queueWaitMilliseconds,
+        queueStartedCount,
+        queueAbortedBeforeStartCount,
       });
       return legs;
     } catch (error) {
@@ -493,12 +504,15 @@ export class SubwayRoutePlanner {
         reason: classifyGeometryError(error),
         source: "FALLBACK",
         cacheState: "MISS",
-        durationMilliseconds: 0,
+        durationMilliseconds: performance.now() - startedAt,
         inputVertexCount: 2,
         outputVertexCount: 2,
         successfulSectionCount: 0,
         failedSectionCount: 1,
         walkingRole: "ACCESS",
+        queueWaitMilliseconds,
+        queueStartedCount,
+        queueAbortedBeforeStartCount,
       });
       return [
         {

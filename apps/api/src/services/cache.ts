@@ -7,6 +7,39 @@ type CacheItem = {
   value: unknown;
 };
 
+export function waitForSharedLoad<T>(
+  pending: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal === undefined) return pending;
+  if (signal.aborted) {
+    return Promise.reject(
+      signal.reason ?? new DOMException("요청이 취소되었습니다.", "AbortError"),
+    );
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(
+        signal.reason ??
+          new DOMException("요청이 취소되었습니다.", "AbortError"),
+      );
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
 function approximateSize(item: CacheItem): number {
   try {
     return Math.max(1, Buffer.byteLength(JSON.stringify(item.value)));
@@ -28,6 +61,11 @@ export class MemoryCache {
 
   public get<T>(key: string): T | undefined {
     return this.#cache.get(key)?.value as T | undefined;
+  }
+
+  public getLoadState(key: string): "FRESH" | "SHARED" | "MISS" {
+    if (this.get(key) !== undefined) return "FRESH";
+    return this.#inFlight.has(key) ? "SHARED" : "MISS";
   }
 
   public set<T>(key: string, value: T, ttlMilliseconds: number): void {

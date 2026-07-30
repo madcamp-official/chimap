@@ -73,18 +73,48 @@ mobile binary에 넣지 않습니다. Web/API Compose 승격은 App Store·Play 
 TRANSIT_GEOMETRY_V2_ENABLED=0
 ```
 
-staging 검증 시 `1`로 바꾸고 514번은 아래처럼 quota 상한과 dry-run을 먼저
-확인한 뒤 warm-up합니다. 전국 일괄 warm-up은 수행하지 않습니다.
+staging 검증 시 `1`로 바꾸고 legacy v2 cache를 갱신할 때는 알고리즘을
+명시합니다. 전국 일괄 warm-up은 수행하지 않습니다.
 
 ```bash
 docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
-  --cityCode 25 --routeId DJB30300067 --maxApiCalls 5 --dryRun
+  --cityCode 25 --routeId DJB30300067 --algorithm transit-v2 \
+  --maxApiCalls 5 --dryRun
 docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
-  --cityCode 25 --routeId DJB30300067 --maxApiCalls 5
+  --cityCode 25 --routeId DJB30300067 --algorithm transit-v2 \
+  --maxApiCalls 5
 ```
 
 rollback은 flag를 `0`으로 되돌린 뒤 API를 재기동합니다. migration 11 테이블은
 기존 `track-v1` 및 헤더 없는 요청에서 참조되지 않으므로 삭제하지 않습니다.
+
+추천 timeout·선택 결과 geometry·버스 stop-pair v3는 서로 독립적인 flag로
+배포합니다. 새 이미지를 세 flag 모두 `0`으로 먼저 기동해 기존 동작과 신규
+Prometheus 지표 수집을 확인한 뒤, staging에서 아래 순서대로 하나씩 켭니다.
+
+```dotenv
+RECOMMENDATION_PHASED_TIMEOUTS_ENABLED=0
+RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=0
+BUS_GEOMETRY_PAIR_V3_ENABLED=0
+```
+
+각 단계 사이에는 추천 phase timeout 비율, provider timeout origin, geometry
+skip, 버스 snap 거리·detour ratio·out-and-back 지표를 확인합니다. production도
+`phased timeouts → selected geometry → bus pair v3` 순서로 승격하며, 이상이 생긴
+기능의 flag만 `0`으로 되돌리고 API를 재기동합니다. 세 flag는 API 응답 계약이나
+DB schema를 바꾸지 않습니다.
+
+v3 cache는 604·108·514 순서로 dry-run 뒤 생성합니다. 기본 algorithm은 v3이며,
+노선 전체를 처리할 때는 실제 인접 정류장 쌍 수보다 큰 호출 상한을 지정합니다.
+
+```bash
+docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
+  --cityCode 25 --routeId DJB30300071 --algorithm kakao-road-pair-v3 \
+  --concurrency 2 --maxApiCalls 100 --dryRun
+# 출력 확인 뒤 --dryRun만 제거합니다. 108(DJB30300043, 88),
+# 514(DJB30300067, 99)도 같은 순서로 실행합니다.
+```
+
 `APP_ENV=staging`에는 staging 전용 API/DB만 연결하고 production host를 대입하지
 않습니다. production 주소는 production profile과 승인된 guest smoke에만 씁니다.
 
@@ -989,3 +1019,84 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
   반환했습니다. local·public health/readiness/mobile-config도 HTTP 200입니다.
 - Prometheus target 3개가 모두 `up`, rule 22개 중 firing 0건이며 API·alert relay
   배포 후 오류 로그 0건을 확인했습니다.
+# Park route import rollout
+
+The review VM sends snapshots over the existing Cloudflare Tunnel HTTPS
+origin. Do not expose VM ports 3000/3001, PostgreSQL, or add another public
+port. The review VM is used only when publishing data and is never a runtime
+recommendation dependency.
+
+1. Deploy code and migration 12.
+2. Set `PARK_ROUTE_IMPORT_ENABLED=1` and a random
+   `PARK_ROUTE_IMPORT_TOKEN` of at least 32 characters; restart staging.
+3. Import and check `/api/v1/internal/park-routes/status` and the route count.
+4. Run recommendation regression checks.
+5. Set `PARK_ROUTE_INTEGRATION_ENABLED=1` and restart staging.
+6. Repeat for production after staging validation.
+
+Staging import:
+
+```bash
+curl --fail-with-body --retry 3 --retry-all-errors \
+  --connect-timeout 5 --max-time 60 -X POST \
+  "https://staging.chimap.madcamp-kaist.org/api/v1/internal/park-routes/import" \
+  -H "Authorization: Bearer ${PARK_ROUTE_IMPORT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: ${DATASET_ID}" \
+  --data-binary "@park_routes_snapshot_v1.json"
+```
+
+For production, change only the host to `chimap.madcamp-kaist.org`. Import and
+integration flags are intentionally separate so data can be validated before
+recommendations use it. Re-sending identical data is a no-op. To roll back,
+disable integration immediately or import the previously validated content
+under a new dataset ID, then verify status; do not delete the active dataset.
+
+# Valhalla walking geometry rollout
+
+Only the CHIMap API calls Valhalla. Use a private or tightly allowlisted
+endpoint and never expose Valhalla TCP 8002 to the public internet. Kakao is
+still required for place lookup and bus road geometry; this setting changes
+only the detailed walking geometry provider.
+
+Verify network access from the API host and the actual API container before
+changing the router:
+
+```bash
+curl --fail-with-body --connect-timeout 3 --max-time 5 \
+  -X POST "${VALHALLA_BASE_URL}/route" \
+  -H 'content-type: application/json' \
+  -d '{"locations":[{"lat":36.3501,"lon":127.3801},{"lat":36.3552,"lon":127.3845}],"costing":"pedestrian","units":"kilometers","directions_options":{"units":"kilometers"}}'
+
+pnpm valhalla:smoke-test \
+  --base-url "${VALHALLA_BASE_URL}" \
+  --from 127.3801,36.3501 \
+  --to 127.3845,36.3552
+```
+
+First deploy with `WALKING_ROUTER=KAKAO`. After the smoke test and staging
+recommendation regression pass, configure and restart the API with:
+
+```dotenv
+TRANSIT_GEOMETRY_V2_ENABLED=1
+RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1
+WALKING_ROUTER=VALHALLA
+VALHALLA_BASE_URL=http://VALHALLA_PRIVATE_OR_ALLOWLISTED_HOST:8002
+VALHALLA_HTTP_TIMEOUT_MS=3500
+VALHALLA_HTTP_RETRY_COUNT=1
+VALHALLA_WALK_CACHE_TTL_SECONDS=1800
+VALHALLA_MAX_SNAP_DISTANCE_METERS=100
+VALHALLA_MAX_DETOUR_RATIO=5
+```
+
+The API rejects a Valhalla configuration unless both geometry flags are set to
+`1`. A base URL path prefix is preserved when the client appends `/route`.
+
+Check `chimap_provider_configured{provider="VALHALLA"} == 1`, then verify
+ordinary, bus-only, bus/subway, subway-only, GOAL, and park connector routes. Successful detailed walking legs must be recorded with source
+`VALHALLA_WALK`. A Valhalla failure is isolated to an approximate walking leg;
+there is no automatic Kakao fallback switch.
+
+To roll back, explicitly set `WALKING_ROUTER=KAKAO` and restart only the API.
+Keep the Kakao credentials in place throughout the rollout. If park connectors
+are also unhealthy, set `PARK_ROUTE_INTEGRATION_ENABLED=0` independently.

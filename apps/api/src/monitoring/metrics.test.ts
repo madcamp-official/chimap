@@ -61,6 +61,10 @@ describe("운영 metrics", () => {
       TAGO_BUS_ROUTE_SERVICE_KEY: "route-key",
       TAGO_BUS_ARRIVAL_SERVICE_KEY: "arrival-key",
       TAGO_BUS_LOCATION_SERVICE_KEY: "location-key",
+      WALKING_ROUTER: "VALHALLA",
+      VALHALLA_BASE_URL: "http://valhalla.internal:8002",
+      TRANSIT_GEOMETRY_V2_ENABLED: "1",
+      RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
       APP_COMMIT_SHA: "3e8684e",
     });
     const metrics = new AppMetrics({
@@ -94,6 +98,33 @@ describe("운영 metrics", () => {
       outcome: "success",
       durationSeconds: 0.35,
     });
+    metrics.observeRecommendation({
+      outcome: "success",
+      durationSeconds: 6.5,
+      resultCount: 3,
+      degradedLegCount: 2,
+    });
+    metrics.observeRecommendationPhase({
+      phase: "SELECTED_GEOMETRY",
+      outcome: "TIMEOUT",
+      timeoutOrigin: "GEOMETRY",
+      durationMilliseconds: 1_500,
+    });
+    metrics.observeRouteProvider({
+      provider: "TAGO",
+      operation: "NEARBY_STOPS",
+      outcome: "TIMEOUT",
+      timeoutOrigin: "PROVIDER",
+      durationMilliseconds: 7_000,
+    });
+    metrics.observeRouteProvider({
+      provider: "VALHALLA",
+      operation: "WALK_GEOMETRY",
+      outcome: "SUCCESS",
+      timeoutOrigin: "NONE",
+      durationMilliseconds: 125,
+      httpStatus: 200,
+    });
     metrics.observePlace("resolve", placeResult);
     metrics.observeSubwayTrackGeometry({
       outcome: "fallback",
@@ -120,6 +151,27 @@ describe("운영 metrics", () => {
       successfulSectionCount: 0,
       failedSectionCount: 4,
       routeId: "DJB30300067",
+    });
+    metrics.observeGeometrySkipped({
+      mode: "WALK",
+      stage: "SELECTED",
+      reason: "BUDGET_EXHAUSTED_BEFORE_START",
+    });
+    metrics.observeBusGeometryQuality({
+      algorithmVersion: "kakao-road-pair-v3",
+      source: "KAKAO_ROAD",
+      cacheState: "MISS",
+      outcome: "REJECTED",
+      startSnapDistanceMeters: 19,
+      endSnapDistanceMeters: 18,
+      detourRatio: 2.97,
+      outAndBack: true,
+    });
+    metrics.observeBusGeometryQuality({
+      algorithmVersion: "kakao-road-pair-v3",
+      source: "FALLBACK",
+      cacheState: "NONE",
+      outcome: "REJECTED",
     });
     metrics.observeUiEvent({
       version: "route-pulse-v1",
@@ -149,6 +201,27 @@ describe("운영 metrics", () => {
       'chimap_tago_subway_requests_total{operation="station_schedule",outcome="success",service="chimap-api"} 1',
     );
     expect(output).toContain(
+      'chimap_recommendation_phase_total{phase="SELECTED_GEOMETRY",outcome="TIMEOUT",timeout_origin="GEOMETRY",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_recommendation_phase_duration_seconds_sum{service="chimap-api",phase="SELECTED_GEOMETRY",outcome="TIMEOUT"} 1.5',
+    );
+    expect(output).toContain(
+      'chimap_route_provider_requests_total{provider="TAGO",operation="NEARBY_STOPS",outcome="TIMEOUT",timeout_origin="PROVIDER",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_route_provider_duration_seconds_sum{service="chimap-api",provider="TAGO",operation="NEARBY_STOPS",outcome="TIMEOUT"} 7',
+    );
+    expect(output).toContain(
+      'chimap_route_provider_requests_total{provider="VALHALLA",operation="WALK_GEOMETRY",outcome="SUCCESS",timeout_origin="NONE",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_provider_configured{provider="VALHALLA",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_recommendation_degraded_legs_sum{service="chimap-api"} 2',
+    );
+    expect(output).toContain(
       'chimap_tago_subway_unmapped_stations{service="chimap-api"} 1075',
     );
     expect(output).not.toContain("query=");
@@ -173,6 +246,24 @@ describe("운영 metrics", () => {
     );
     expect(output).toContain(
       'chimap_route_geometry_cache_total{mode="BUS",outcome="MISS",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_route_geometry_skipped_total{mode="WALK",stage="SELECTED",reason="BUDGET_EXHAUSTED_BEFORE_START",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_bus_geometry_stop_snap_distance_meters_sum{service="chimap-api",endpoint="START",source="KAKAO_ROAD",outcome="REJECTED"} 19',
+    );
+    expect(output).toContain(
+      'chimap_bus_geometry_detour_ratio_sum{service="chimap-api",source="KAKAO_ROAD",outcome="REJECTED"} 2.97',
+    );
+    expect(output).toContain(
+      'chimap_bus_geometry_out_and_back_total{source="KAKAO_ROAD",detected="true",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_bus_geometry_pair_cache_total{algorithm_version="kakao-road-pair-v3",state="MISS",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_bus_geometry_pair_cache_total{algorithm_version="kakao-road-pair-v3",state="NONE",service="chimap-api"} 1',
     );
     expect(output).not.toContain("DJB30300067");
   });

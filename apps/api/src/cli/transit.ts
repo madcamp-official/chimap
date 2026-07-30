@@ -7,6 +7,13 @@ import { loadConfig, type TagoServiceKind } from "../config.js";
 import { createLogger } from "../logger.js";
 import { KakaoMobilityProvider } from "../providers/kakao-provider.js";
 import { RouteGeometryService } from "../providers/route-geometry.js";
+import {
+  buildBusGeometryWarmPlan,
+  busGeometryWarmPairsPerChunk,
+  chunkBusGeometryWarmStops,
+  parseBusGeometryAlgorithm,
+  parseBusGeometryWarmConcurrency,
+} from "./bus-geometry-warm-options.js";
 import { buildBusSubwayTransferEdges } from "../transit/bus-subway-transfer-builder.js";
 import { importBusStopsFile } from "../transit/csv-importer.js";
 import { importSubwayStationsFile } from "../transit/subway-csv-importer.js";
@@ -50,6 +57,16 @@ function coordinateArgument(name: "lat" | "lng"): number {
   const value = Number(requiredArgument(name));
   if (!Number.isFinite(value)) {
     throw new Error(`--${name}은 숫자여야 합니다.`);
+  }
+  return value;
+}
+
+function optionalIntegerArgument(name: string): number | undefined {
+  const raw = argument(name);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value)) {
+    throw new Error(`--${name}은 정수여야 합니다.`);
   }
   return value;
 }
@@ -321,36 +338,97 @@ async function run(): Promise<void> {
       break;
     }
     case "warm-bus-geometry": {
-      if (config.kakaoRestApiKey === undefined) {
-        throw new Error("KAKAO_REST_API_KEY를 설정해 주세요.");
-      }
       const cityCode = argument("cityCode") ?? config.tagoDefaultCityCode;
       const routeId = requiredArgument("routeId");
-      const stops = await transit.getRouteStops(cityCode, routeId);
-      const estimatedApiCalls = Math.ceil(Math.max(0, stops.length - 1) / 31);
-      const maxApiCalls = Math.max(1, Number(argument("maxApiCalls") ?? 5));
-      if (estimatedApiCalls > maxApiCalls) {
-        throw new Error(`예상 API 호출 ${estimatedApiCalls}건이 --maxApiCalls ${maxApiCalls}건을 초과합니다.`);
-      }
+      const algorithmVersion = parseBusGeometryAlgorithm(argument("algorithm"));
+      const fromNodeOrder = optionalIntegerArgument("fromNodeOrder");
+      const toNodeOrder = optionalIntegerArgument("toNodeOrder");
+      const concurrency = parseBusGeometryWarmConcurrency(
+        argument("concurrency"),
+      );
+      const routeStops = await transit.getRouteStops(cityCode, routeId);
+      const plan = buildBusGeometryWarmPlan(routeStops, {
+        algorithmVersion,
+        ...(fromNodeOrder === undefined ? {} : { fromNodeOrder }),
+        ...(toNodeOrder === undefined ? {} : { toNodeOrder }),
+        maxApiCalls: Number(argument("maxApiCalls") ?? 5),
+      });
+      const chunks = algorithmVersion === "transit-v2"
+        ? [plan.stops]
+        : chunkBusGeometryWarmStops(
+            plan.stops,
+            busGeometryWarmPairsPerChunk(concurrency),
+          );
+      const forceRefresh = process.argv.includes("--force");
       if (process.argv.includes("--dryRun")) {
-        printJson({ cityCode, routeId, stopCount: stops.length, estimatedApiCalls, dryRun: true });
+        printJson({
+          cityCode,
+          routeId,
+          algorithmVersion,
+          routeStopCount: routeStops.length,
+          selectedStopCount: plan.stops.length,
+          fromNodeOrder: plan.stops[0]!.nodeOrder,
+          toNodeOrder: plan.stops.at(-1)!.nodeOrder,
+          estimatedApiCalls: plan.estimatedApiCalls,
+          maxApiCalls: plan.maxApiCalls,
+          chunkCount: chunks.length,
+          concurrency,
+          forceRefresh,
+          dryRun: true,
+        });
         break;
+      }
+      if (config.kakaoRestApiKey === undefined) {
+        throw new Error("KAKAO_REST_API_KEY를 설정해 주세요.");
       }
       const service = new RouteGeometryService({
         provider: new KakaoMobilityProvider(config.kakaoRestApiKey),
         repository: transit.repository,
+        algorithmVersion,
       });
-      const result = await service.resolveBusGeometry({ stops });
+      const results = new Array<Awaited<ReturnType<
+        RouteGeometryService["resolveBusGeometry"]
+      >>>(chunks.length);
+      let nextChunk = 0;
+      const workers = Array.from(
+        { length: Math.min(concurrency, chunks.length) },
+        async () => {
+          while (nextChunk < chunks.length) {
+            const chunkIndex = nextChunk;
+            nextChunk += 1;
+            results[chunkIndex] = await service.resolveBusGeometry({
+              stops: chunks[chunkIndex]!,
+              forceRefresh,
+            });
+          }
+        },
+      );
+      await Promise.all(workers);
+      const detailed = results.every((result) => result.quality === "DETAILED");
       printJson({
         cityCode,
         routeId,
-        stopCount: stops.length,
-        estimatedApiCalls,
-        quality: result.quality,
-        reason: result.reason,
-        vertexCount: result.coordinates.length,
+        algorithmVersion,
+        routeStopCount: routeStops.length,
+        selectedStopCount: plan.stops.length,
+        fromNodeOrder: plan.stops[0]!.nodeOrder,
+        toNodeOrder: plan.stops.at(-1)!.nodeOrder,
+        estimatedApiCalls: plan.estimatedApiCalls,
+        maxApiCalls: plan.maxApiCalls,
+        chunkCount: chunks.length,
+        concurrency,
+        forceRefresh,
+        quality: detailed ? "DETAILED" : "APPROXIMATE",
+        chunks: results.map((result, index) => ({
+          index,
+          fromNodeOrder: chunks[index]![0]!.nodeOrder,
+          toNodeOrder: chunks[index]!.at(-1)!.nodeOrder,
+          quality: result.quality,
+          reason: result.reason,
+          vertexCount: result.coordinates.length,
+        })),
       });
-      if (result.quality !== "DETAILED") {
+      if (!detailed) {
         throw new Error("버스 형상 warm-up이 일부 구간에서 실패했습니다.");
       }
       break;

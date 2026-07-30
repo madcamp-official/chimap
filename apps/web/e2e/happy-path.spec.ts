@@ -117,6 +117,9 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     page.getByRole("heading", { name: "역과 다음 출발 시간" }),
   ).toBeVisible();
   await expect(
+    page.locator(".recommendation-list ~ .nearby-subway-panel"),
+  ).toHaveCount(1);
+  await expect(
     page.getByText("TAGO 시간표 기반 예상", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("실시간 지연 미반영")).toBeVisible();

@@ -10,8 +10,10 @@ import {
 
 describe("recommendation geometry cache namespace", () => {
   it("transit-v2 이전 persisted 추천을 재사용하지 않는다", () => {
-    expect(RECOMMENDATION_CACHE_VERSION).toBe("v3-transit-v2");
-    expect(recommendationQueryKey("request-hash")).toContain("v3-transit-v2");
+    expect(RECOMMENDATION_CACHE_VERSION).toBe("v4-bus-geometry-v3");
+    expect(recommendationQueryKey("request-hash")).toContain(
+      "v4-bus-geometry-v3",
+    );
   });
 });
 

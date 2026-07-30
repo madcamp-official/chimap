@@ -17,6 +17,10 @@ import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { SubwayGeometryObservation } from "../providers/subway-track-geometry.js";
 import type { RouteGeometryObservation } from "../providers/route-geometry.js";
+import type {
+  RecommendationPhaseObservation,
+  RecommendationTimeoutOrigin,
+} from "../services/recommendation-service.js";
 import type { TransitRepository } from "../transit/transit-repository.js";
 
 const backupStatusSchema = z.object({
@@ -35,6 +39,57 @@ const transitSyncStatusSchema = z.object({
 });
 
 type UpstreamProvider = "TAGO" | "KAKAO_NAVER" | "KAKAO_TAGO" | "UNKNOWN";
+
+export type RouteProviderObservation = {
+  provider: "TAGO" | "KAKAO" | "VALHALLA" | "NAVER" | "DATABASE";
+  operation:
+    | "CITY_CODES"
+    | "SUBWAY_STATIONS"
+    | "NEARBY_STOPS"
+    | "STOP_ROUTES"
+    | "ROUTE_SEARCH"
+    | "ROUTE_INFO"
+    | "ROUTE_STOPS"
+    | "ARRIVALS"
+    | "ROUTE_ARRIVALS"
+    | "VEHICLES"
+    | "SUBWAY_SCHEDULE"
+    | "ROAD_GEOMETRY"
+    | "WALK_GEOMETRY"
+    | "PARK_ROUTE"
+    | "OTHER";
+  outcome:
+    | "SUCCESS"
+    | "ERROR"
+    | "TIMEOUT"
+    | "ABORTED"
+    | "RATE_LIMIT"
+    | "HTTP_4XX"
+    | "HTTP_5XX";
+  timeoutOrigin: RecommendationTimeoutOrigin;
+  durationMilliseconds: number;
+  httpStatus?: number;
+};
+
+export type GeometrySkippedObservation = {
+  mode: "BUS" | "WALK";
+  stage: "INITIAL" | "SELECTED" | "BUS_PAIR";
+  reason:
+    | "BUDGET_EXHAUSTED_BEFORE_START"
+    | "CALL_LIMIT_REACHED"
+    | "REQUEST_ABORTED";
+};
+
+export type BusGeometryQualityObservation = {
+  algorithmVersion: "transit-v2" | "kakao-road-pair-v3" | "unknown";
+  source: "KAKAO_ROAD" | "PRECOMPUTED" | "FALLBACK";
+  cacheState: "FRESH" | "STALE" | "SHARED" | "MISS" | "NONE";
+  outcome: "ACCEPTED" | "REJECTED";
+  startSnapDistanceMeters?: number;
+  endSnapDistanceMeters?: number;
+  detourRatio?: number;
+  outAndBack?: boolean;
+};
 
 function canonicalRoute(path: string): string {
   const normalized = path.replace(/^\/api\/transit/u, "/api/v1/transit");
@@ -89,6 +144,16 @@ function statusClass(status: number): string {
   return `${Math.floor(status / 100)}xx`;
 }
 
+function nonnegativeFinite(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function qualityMeasurement(value: number, overflowValue: number): number {
+  return value === Number.POSITIVE_INFINITY
+    ? overflowValue
+    : nonnegativeFinite(value);
+}
+
 export class AppMetrics {
   public readonly registry = new Registry();
 
@@ -103,6 +168,11 @@ export class AppMetrics {
   readonly #recommendationRequests: Counter;
   readonly #recommendationDuration: Histogram;
   readonly #recommendationCount: Histogram;
+  readonly #recommendationDegradedLegs: Histogram;
+  readonly #recommendationPhases: Counter;
+  readonly #recommendationPhaseDuration: Histogram;
+  readonly #routeProviderRequests: Counter;
+  readonly #routeProviderDuration: Histogram;
   readonly #uiEvents: Counter;
   readonly #apiErrors: Counter;
   readonly #databaseReady: Gauge;
@@ -120,6 +190,11 @@ export class AppMetrics {
   readonly #routeGeometryCache: Counter;
   readonly #routeGeometryDuration: Histogram;
   readonly #routeGeometryVertices: Histogram;
+  readonly #routeGeometrySkipped: Counter;
+  readonly #busGeometrySnapDistance: Histogram;
+  readonly #busGeometryDetourRatio: Histogram;
+  readonly #busGeometryOutAndBack: Counter;
+  readonly #busGeometryCache: Counter;
   readonly #backupLastSuccess: Gauge;
   readonly #backupBytes: Gauge;
   readonly #transitSyncLastSuccess: Gauge;
@@ -201,6 +276,43 @@ export class AppMetrics {
       name: "chimap_recommendation_result_count",
       help: "추천 한 요청의 경로 수",
       buckets: [0, 1, 2, 3],
+      registers: [this.registry],
+    });
+    this.#recommendationDegradedLegs = new Histogram({
+      name: "chimap_recommendation_degraded_legs",
+      help: "추천 응답에 포함된 근사 geometry leg 수",
+      buckets: [0, 1, 2, 4, 8, 16],
+      registers: [this.registry],
+    });
+    this.#recommendationPhases = new Counter({
+      name: "chimap_recommendation_phase_total",
+      help: "추천 계산 단계별 처리 결과와 timeout 발생 지점",
+      labelNames: ["phase", "outcome", "timeout_origin"] as const,
+      registers: [this.registry],
+    });
+    this.#recommendationPhaseDuration = new Histogram({
+      name: "chimap_recommendation_phase_duration_seconds",
+      help: "추천 계산 단계별 처리시간",
+      labelNames: ["phase", "outcome"] as const,
+      buckets: [0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 8, 10, 15, 20],
+      registers: [this.registry],
+    });
+    this.#routeProviderRequests = new Counter({
+      name: "chimap_route_provider_requests_total",
+      help: "경로 계산 중 외부·내부 provider operation별 처리 결과",
+      labelNames: [
+        "provider",
+        "operation",
+        "outcome",
+        "timeout_origin",
+      ] as const,
+      registers: [this.registry],
+    });
+    this.#routeProviderDuration = new Histogram({
+      name: "chimap_route_provider_duration_seconds",
+      help: "경로 계산 중 provider operation별 처리시간",
+      labelNames: ["provider", "operation", "outcome"] as const,
+      buckets: [0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 7, 10, 15, 20],
       registers: [this.registry],
     });
     this.#uiEvents = new Counter({
@@ -313,6 +425,38 @@ export class AppMetrics {
       buckets: [2, 5, 10, 25, 50, 100, 250, 500, 1_000],
       registers: [this.registry],
     });
+    this.#routeGeometrySkipped = new Counter({
+      name: "chimap_route_geometry_skipped_total",
+      help: "provider 호출 시작 전에 생략된 버스·도보 geometry 수",
+      labelNames: ["mode", "stage", "reason"] as const,
+      registers: [this.registry],
+    });
+    this.#busGeometrySnapDistance = new Histogram({
+      name: "chimap_bus_geometry_stop_snap_distance_meters",
+      help: "버스 stop-pair geometry 끝점과 정류장 사이 거리",
+      labelNames: ["endpoint", "source", "outcome"] as const,
+      buckets: [1, 3, 5, 8, 10, 15, 20, 30, 50, 100],
+      registers: [this.registry],
+    });
+    this.#busGeometryDetourRatio = new Histogram({
+      name: "chimap_bus_geometry_detour_ratio",
+      help: "버스 stop-pair geometry 길이와 정류장 직선거리의 비율",
+      labelNames: ["source", "outcome"] as const,
+      buckets: [1, 1.1, 1.25, 1.5, 2, 2.5, 3, 4, 6, 10],
+      registers: [this.registry],
+    });
+    this.#busGeometryOutAndBack = new Counter({
+      name: "chimap_bus_geometry_out_and_back_total",
+      help: "버스 stop-pair geometry의 동일 도로 왕복 spike 판정 수",
+      labelNames: ["source", "detected"] as const,
+      registers: [this.registry],
+    });
+    this.#busGeometryCache = new Counter({
+      name: "chimap_bus_geometry_pair_cache_total",
+      help: "버스 stop-pair geometry 캐시 coverage 계산용 상태 수",
+      labelNames: ["algorithm_version", "state"] as const,
+      registers: [this.registry],
+    });
     this.#backupLastSuccess = new Gauge({
       name: "chimap_backup_last_success_timestamp_seconds",
       help: "마지막 PostgreSQL 백업 성공 Unix timestamp",
@@ -408,6 +552,7 @@ export class AppMetrics {
     outcome: "success" | "error";
     durationSeconds: number;
     resultCount?: number;
+    degradedLegCount?: number;
   }): void {
     this.#recommendationRequests.inc({ outcome: input.outcome });
     this.#recommendationDuration.observe(
@@ -417,6 +562,44 @@ export class AppMetrics {
     if (input.resultCount !== undefined) {
       this.#recommendationCount.observe(input.resultCount);
     }
+    if (input.degradedLegCount !== undefined) {
+      this.#recommendationDegradedLegs.observe(input.degradedLegCount);
+    }
+  }
+
+  public observeRecommendationPhase(
+    observation: RecommendationPhaseObservation,
+  ): void {
+    const labels = {
+      phase: observation.phase,
+      outcome: observation.outcome,
+      timeout_origin: observation.timeoutOrigin,
+    };
+    this.#recommendationPhases.inc(labels);
+    this.#recommendationPhaseDuration.observe(
+      { phase: observation.phase, outcome: observation.outcome },
+      nonnegativeFinite(observation.durationMilliseconds) / 1_000,
+    );
+  }
+
+  public observeRouteProvider(
+    observation: RouteProviderObservation,
+  ): void {
+    const labels = {
+      provider: observation.provider,
+      operation: observation.operation,
+      outcome: observation.outcome,
+      timeout_origin: observation.timeoutOrigin,
+    };
+    this.#routeProviderRequests.inc(labels);
+    this.#routeProviderDuration.observe(
+      {
+        provider: observation.provider,
+        operation: observation.operation,
+        outcome: observation.outcome,
+      },
+      nonnegativeFinite(observation.durationMilliseconds) / 1_000,
+    );
   }
 
   public observeUiEvent(event: UiEventPayload): void {
@@ -486,6 +669,53 @@ export class AppMetrics {
       { mode: observation.mode, quality: observation.outcome },
       observation.outputVertexCount,
     );
+  }
+
+  public observeGeometrySkipped(
+    observation: GeometrySkippedObservation,
+  ): void {
+    this.#routeGeometrySkipped.inc({
+      mode: observation.mode,
+      stage: observation.stage,
+      reason: observation.reason,
+    });
+  }
+
+  public observeBusGeometryQuality(
+    observation: BusGeometryQualityObservation,
+  ): void {
+    const histogramLabels = {
+      source: observation.source,
+      outcome: observation.outcome,
+    };
+    if (observation.startSnapDistanceMeters !== undefined) {
+      this.#busGeometrySnapDistance.observe(
+        { endpoint: "START", ...histogramLabels },
+        qualityMeasurement(observation.startSnapDistanceMeters, 101),
+      );
+    }
+    if (observation.endSnapDistanceMeters !== undefined) {
+      this.#busGeometrySnapDistance.observe(
+        { endpoint: "END", ...histogramLabels },
+        qualityMeasurement(observation.endSnapDistanceMeters, 101),
+      );
+    }
+    if (observation.detourRatio !== undefined) {
+      this.#busGeometryDetourRatio.observe(
+        histogramLabels,
+        qualityMeasurement(observation.detourRatio, 11),
+      );
+    }
+    if (observation.outAndBack !== undefined) {
+      this.#busGeometryOutAndBack.inc({
+        source: observation.source,
+        detected: String(observation.outAndBack),
+      });
+    }
+    this.#busGeometryCache.inc({
+      algorithm_version: observation.algorithmVersion,
+      state: observation.cacheState,
+    });
   }
 
   async #refreshInfrastructure(): Promise<void> {
@@ -562,6 +792,12 @@ export class AppMetrics {
         ? 1
         : 0,
     );
+    if (this.#config.walking.router === "VALHALLA") {
+      this.#providerConfigured.set(
+        { provider: "VALHALLA" },
+        this.#config.walking.valhallaBaseUrl === undefined ? 0 : 1,
+      );
+    }
 
     if (this.#backupStatusPath === undefined) {
       this.#backupLastSuccess.set(0);
