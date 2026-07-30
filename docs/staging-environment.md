@@ -359,16 +359,18 @@ Valhalla·공원 경로 갱신은 다음 순서를 지킵니다.
 
 ## 9. 2026-07-30 Valhalla·공원 경로 확인 스냅샷
 
-- source/image: `21251280` / `sha256:1b8e8cae…`
+- source/image: `f2332827` /
+  `sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`
 - `chimap-staging-api-1`, `chimap-staging-postgres-1` healthy, restart 0
 - local/external health·readiness·mobile-config HTTP 200, migration 13 current
 - readiness: 정류장 227,230개, 연결 3,658개, 노선 108개,
   노선-정류장 6,801개, route-ready 지하철 segment 2,314개
 - `WALKING_ROUTER=VALHALLA`, park import 비활성, integration 활성
 - 공원 dataset 2개·저장 route 246개, active dataset 선언 route 152개
-- `chimap_provider_configured{provider="VALHALLA"} 1`, Valhalla walking success
-  7건과 `DETAILED/VALHALLA_WALK`, 공원 GOAL 포함 확인
+- `chimap_provider_configured{provider="VALHALLA"} 1`, Valhalla walking success와
+  `DETAILED/VALHALLA_WALK`, 공원 GOAL 포함 확인
 
-이 snapshot은 staging 증거이며 final `main` 또는 production 승격 완료를 뜻하지
-않습니다. production 전에는 private/allowlist 정책, clean release image,
-backup·restore, 전체 회귀와 public E2E를 다시 통과시킵니다.
+이 snapshot과 동일한 immutable image를 production에 승격했습니다. production은
+별도 backup·restore와 public E2E를 다시 통과했으며 두 환경 모두 private 또는
+명시적으로 승인된 endpoint 정책, Valhalla provider metric과 import 비활성을
+유지합니다.

@@ -18,15 +18,12 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-2026-07-30 감사 기준 production 기준선은 code `d268e067`, image
-`sha256:200346ac...`, migration 13입니다. 상세 도보는 아직 Kakao이고 공원
-import endpoint는 활성 상태지만 dataset 0건·integration 비활성입니다. staging은 code `21251280`, image
-`sha256:1b8e8cae...`에서 Valhalla 상세 도보와 active 공원 경로 152건을
-검증했습니다. 최종 통합 `main`의 SHA·image·production 배포 시각은
-아직 확정하지 않았습니다. 2026-07-30 merged tree의 결정적 테스트 450개와
-격리 PostGIS 통합 테스트 12개, typecheck·format·Web/API/Mobile build·native
-config·staging public E2E는 통과했으며, 최종 SHA의 CI와 production gate 통과
-뒤 최종 증거를 append합니다.
+2026-07-30 23:30 KST production은 service release code `f2332827`, image
+`sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`,
+migration 13으로 승격했습니다. production·staging 모두 Valhalla 상세 도보와
+active 공원 경로 152건을 사용하며 import endpoint는 비활성입니다. 결정적 테스트
+450개와 격리 PostGIS 12개, typecheck·format·Web/API/Mobile build·native config,
+GitHub Actions run `30549876265`의 5개 job과 양 환경 public E2E가 통과했습니다.
 
 ## 1. 사전 조건
 
@@ -1079,7 +1076,7 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
 - Prometheus target 3개가 모두 `up`, rule 22개 중 firing 0건이며 API·alert relay
   배포 후 오류 로그 0건을 확인했습니다.
 
-## 25. 2026-07-30 Valhalla·공원 경로 pre-release 절차
+## 25. 2026-07-30 Valhalla·공원 경로 release 절차와 완료 기록
 
 검토 VM은 기존 Cloudflare Tunnel HTTPS origin으로 snapshot을 보낼 때만
 사용하며 runtime 추천 의존성이 아닙니다. VM port 3000/3001, PostgreSQL 또는
@@ -1157,6 +1154,10 @@ API는 두 geometry flag가 모두 `1`이 아니면 Valhalla 설정을 거절해
 확인하고 성공한 상세 도보의 source가 `VALHALLA_WALK`인지 검증합니다.
 Valhalla 실패는 근사 도보 leg로 격리되며 자동 Kakao fallback switch는 없습니다.
 
-2026-07-30 감사 시 staging은 Valhalla success 7건, active 공원 경로 152건과
-공원 GOAL 포함을 확인했습니다. production은 아직 Kakao와 공원 0건이므로 이
-section은 최종 production 배포 완료 기록이 아니라 release 절차와 staging 증거입니다.
+2026-07-30 staging은 Valhalla 상세 도보, active 공원 경로 152건과 공원 GOAL을
+확인했습니다. production은 새 custom-format backup과 SHA-256을 확인하고 별도
+PostGIS 컨테이너 restore에서 migration 13과 교통 통계를 검증한 뒤 같은 순서로
+승격했습니다. import 응답은 152건 `ACTIVATED`였고 재기동 뒤 endpoint 503,
+`WALKING_ROUTER=VALHALLA`, integration 활성과 상세 `VALHALLA_WALK` metric 증가,
+public E2E 3개 통과를 확인했습니다. Prometheus는 최종 25개 rule로 reload했고
+target 3개 `up`, firing 0입니다.

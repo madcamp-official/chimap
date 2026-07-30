@@ -470,17 +470,21 @@ gate입니다.
   warm 5건 HTTP 200(0.84~2.13초)
 - 배포 전후 production custom-format backup 생성과 SHA-256 검증 통과
 
-2026-07-30 pre-release runtime 감사:
+2026-07-30 final release runtime 감사:
 
-- production code `d268e067`, image `sha256:200346ac…`; staging code
-  `21251280`, image `sha256:1b8e8cae…`
+- production·staging service release code `f2332827`, image
+  `sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`
 - 두 환경의 local/public health·readiness·mobile-config HTTP 200, migration 13
 - production Prometheus target 3개 `up`, 25개 rule healthy, firing 0
-- staging Valhalla provider configured, WALK geometry success 7건,
-  `DETAILED/VALHALLA_WALK`와 active 공원 경로 152건 확인
-- production backup과 별도 restore에서 migration 13 및 readiness 교통 통계 확인
+- 양 환경 Valhalla provider configured, `DETAILED/VALHALLA_WALK`와 active 공원
+  경로 152건 확인. staging에서 공원 GOAL 포함 확인
+- 배포 직전 production backup checksum과 별도 restore에서 migration 13 및
+  readiness 교통 통계 확인
 - merged tree 결정적 테스트 450개 통과: API 272, mobile 83,
   web 61, contracts 20, app-core 10, alert-relay 4
 - 격리 PostGIS 18에서 교통·migration 10개와 mobile auth 2개, 총 12개 통과
-- workspace typecheck·format check·Web/API/Mobile build·생성 native config와
-  staging public E2E 통과. 최종 SHA CI와 production public E2E는 아직 미확정
+- workspace typecheck·format check·Web/API/Mobile build·생성 native config,
+  GitHub Actions run `30549876265`의 5개 job과 staging·production public E2E
+  각각 3개 통과
+- production 실제 추천에서 상세 WALK leg 4개와 `VALHALLA_WALK` metric +8 확인;
+  공원 import endpoint 503, integration 활성·active dataset 152건 확인

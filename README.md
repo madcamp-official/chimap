@@ -4,15 +4,20 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production health/readiness 재확인: 2026-07-30 KST
-- 최신 전체 운영 검증 스냅샷: 배포 전 release gate에서 새로 기록 예정
+- production health/readiness 재확인: 2026-07-30 23:30 KST
+- 최신 전체 운영 검증 스냅샷: 2026-07-30 final release gate
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 공개 production 기준선: code `d268e067`, image `sha256:200346ac…`,
-  migration 13. 최종 통합 `main` release는 아직 승격 전입니다.
+- 공개 production: release code `f2332827`, image
+  `sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`,
+  migration 13, `WALKING_ROUTER=VALHALLA`, 공원 import 비활성·integration 활성
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
-  code `21251280`, image `sha256:1b8e8cae…`, health/readiness 200,
-  Valhalla 상세 도보와 active 공원 경로 152건 확인
+  같은 release image, health/readiness 200, Valhalla 상세 도보와 active 공원
+  경로 152건 확인
+
+최종 release는 결정적 테스트 450개와 격리 PostGIS 테스트 12개, GitHub Actions
+5개 job, staging·production public E2E 3개를 모두 통과했습니다. production 실제
+추천에서 상세 `VALHALLA_WALK` 4개와 해당 metric 증가를 확인했습니다.
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.

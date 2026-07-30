@@ -7,25 +7,26 @@
   검토된 공원 경로 snapshot, 선택 결과 geometry와 Valhalla 상세 도보 공급자를
   포함합니다. 2026-07-30 merged tree에서 결정적 테스트 450개와 격리 PostGIS
   통합 테스트 12개, 총 462개가 통과했습니다. workspace typecheck·format
-  check·Web/API/Mobile build·native config와 staging public E2E도 통과했고,
-  최종 SHA의 CI와 production 배포 결과는 아직 release record로 확정하지 않았습니다.
-- **현재 공개 배포**: 2026-07-30 감사 기준 production API는 code
-  `d268e067`, image `sha256:200346ac…`, migration 13입니다.
-  `TRANSIT_ROUTER_MODE=multimodal`, transit geometry·phased timeout·selected
-  geometry·bus pair v3 flag가 활성화되어 있습니다. 상세 도보는 아직 Kakao이고
-  공원 import endpoint는 활성 상태지만 dataset 0건·GOAL integration 비활성입니다.
-- **2026-07-30 운영 점검**: production과 staging의 local·public
-  health/readiness/mobile-config가 모두 HTTP 200이고, production monitoring의
-  target 3개가 `up`, 25개 rule이 healthy, firing alert가 0건임을 확인했습니다.
-  수정된 rate-limit rule 식은 최종 승격 때 Prometheus reload 후 다시 확인합니다.
+  check·Web/API/Mobile build·native config와 staging·production public E2E도
+  통과했습니다.
+- **현재 공개 배포**: 2026-07-30 23:30 KST production API는 release code
+  `f2332827`, image
+  `sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`,
+  migration 13입니다. `WALKING_ROUTER=VALHALLA`, transit geometry·selected
+  geometry·bus pair v3와 공원 integration이 활성이고 import endpoint는
+  비활성입니다. active 공원 dataset은 152건입니다.
+- **2026-07-30 최종 운영 점검**: production과 staging의 local·public
+  health/readiness가 HTTP 200이고, production monitoring target 3개가 `up`,
+  25개 alerting rule이 로드됐으며 firing alert는 0건입니다. rate-limit rule은
+  provider `RATE_LIMIT`을 포함한 최종 파일로 reload했습니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
-  `chimap-staging-postgres` volume에서 code `21251280`, image
-  `sha256:1b8e8cae…`, migration 13을 실행합니다. `WALKING_ROUTER=VALHALLA`,
-  공원 integration 활성, import 비활성 상태이며 active dataset 152건과
-  `VALHALLA_WALK` 상세 도보를 확인했습니다.
-- **최종 `main` release 상태**: 최종 SHA 확정·전체 release 검증·production
-  승격 전입니다. 최종 SHA, image ID, PostGIS/build/CI와 배포 시각은 실제 gate
-  통과 뒤 이 문서에 append하며 pre-release 후보를 배포 완료로 표현하지 않습니다.
+  `chimap-staging-postgres` volume에서 production과 같은 release image를
+  실행합니다. `WALKING_ROUTER=VALHALLA`, 공원 integration 활성·import 비활성,
+  active dataset 152건이며 public E2E 3개와 공원 GOAL 포함을 확인했습니다.
+- **최종 `main` release 상태**: service release commit `f2332827`은
+  `origin/main`에 push됐고 GitHub Actions run `30549876265`의 5개 job이 모두
+  성공했습니다. 이 문서 갱신은 배포 뒤 사실을 기록하는 documentation-only
+  commit이며 service code와 production image 내용은 `f2332827`과 같습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -127,24 +128,24 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:200346ac…`, code `d268e067`), 단일 Node.js 프로세스, healthy |
+| API | `chimap:actual-data` (`sha256:4be33c4f…`, release code `f2332827`), 단일 Node.js 프로세스, healthy |
 | DB | PostgreSQL 18 + PostGIS 3.6, migration 13, healthy |
 | 모니터링 | Prometheus 3.13.1, 3개 target `up`, 25개 경보 규칙 healthy, firing 0 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
 | 장소·주소 | Kakao 우선, NAVER 주소 보완 |
-| 도보 | production Kakao, staging Valhalla. 상세 공급자 실패 시 흐린 점선 근사 경로 |
-| 검토 공원 경로 | production import 활성·0건·integration 비활성, staging import 비활성·active 152건·integration 활성 |
+| 도보 | production·staging Valhalla. 상세 공급자 실패 시 흐린 점선 근사 경로 |
+| 검토 공원 경로 | production·staging 모두 import 비활성·active 152건·integration 활성 |
 | 버스 표시선 | 인접 정류장별 검증·캐시한 Kakao 도로 geometry, 실패 구간 점선 fallback |
 | 지하철 표시선 | migration 10 선로 LineString, `track-v1`·`transit-v2`에서 실제 선형 |
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 최종 통합 후보 | pre-release. 최종 `main` SHA·CI·image·배포 기록은 gate 통과 뒤 확정 |
+| 최종 통합 release | code `f2332827`, CI run `30549876265` 5개 job 성공, production 승격 완료 |
 | 마지막 공개 기준선 CI | PR #5 run `30417960322`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
 | favicon cache 보완 CI | PR #6 run `30419501614`, Web/API·Mobile JS·PostGIS 성공 후 병합 |
-| 공개 웹 asset | 현재 production asset 제공 중. 최종 release bundle·logo hash는 승격 뒤 기록 |
+| 공개 웹 asset | 최종 release image의 Web bundle과 공용 logo 제공 중 |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | staging server는 guest/Kakao enabled·Apple disabled, 현재 iOS 앱 화면은 Kakao session 필수 |
 | 기본 브랜치 | `main`에 Web/API foundation과 iOS staging 구현 통합 |
@@ -353,8 +354,7 @@ Play service account와 App Store Connect ID 연결은 후속 작업입니다.
 
 아래 날짜가 붙은 항목은 당시 release의 역사적 기록입니다. 2026-07-30에는
 현재 production·staging runtime과 운영 자동화를 별도로 감사했고, 최종 통합
-후보의 로컬 전체 검증과 staging E2E까지 완료했습니다. 최종 SHA의 CI와
-production E2E는 승격 후 확정합니다.
+release의 로컬 전체 검증, GitHub CI와 양 환경 public E2E까지 완료했습니다.
 
 | 검증 | 결과 |
 | --- | --- |
@@ -365,7 +365,7 @@ production E2E는 승격 후 확정합니다.
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
 | 2026-07-28 코드 검사 | 전체 결정적 테스트 266개, TypeScript/API/Web/Mobile production build와 migration 11 PostGIS 검증 통과 |
 | 2026-07-30 runtime 감사 | production/staging local·public 3개 상태 endpoint 200, migration 13 current, container healthy |
-| 최종 통합 후보 | 결정적 450개 + 격리 PostGIS 12개 = 462개 통과. typecheck·format·Web/API/Mobile build·native config·staging public E2E 통과, 최종 SHA CI·production E2E는 확정 전 |
+| 최종 통합 release | 결정적 450개 + 격리 PostGIS 12개 = 462개 통과. typecheck·format·Web/API/Mobile build·native config, CI 5개 job, staging·production public E2E 통과 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile, iOS signed device build 통과. 이전 iPhone 설치·NAVER smoke는 확인했으나 현재 Kakao key E2E와 Android Development Build는 대기 |
@@ -467,19 +467,21 @@ SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치�
 초기 commit만 있던 옛 `main`이나 장기 iOS branch가 아니라 갱신된 `main`에서
 책임별 `feat/mobile/*`, `feat/ios/*`, `feat/api/*`, `feat/contracts/*`로 분기합니다.
 
-2026-07-30 최종 통합 작업은 아직 pre-release입니다. merged-tree test·build·
-native config·격리 PostGIS·staging public E2E까지 통과했으며, 최종 `main` push,
-immutable image 식별, staging 재승격, production backup·candidate smoke·승격과
-공개 E2E가 모두 끝난 뒤에만 새 release SHA와 image를 기록합니다.
+2026-07-30 최종 통합은 service release commit `f2332827`로 완료했습니다.
+모든 branch와 dirty tree를 감사해 필요한 이력을 포함했고, 결정적·PostGIS
+테스트, build/native config, GitHub CI, staging 단계별 승격, production
+backup·격리 restore·candidate smoke·공개 E2E를 통과했습니다. immutable image는
+`sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`이며
+기존 production image는 `chimap:rollback-production-pre-f2332827`로 보존합니다.
 
 ## 9. 현재 한계와 확장 조건
 
 - staging은 HTTPS/API/auth, 버스·지하철 seed, readiness 200과 외부 실제 추천까지
   준비됐습니다. TAGO timeout으로 보류된 지하철역 3개는 다음 mapping 실행에서
   재시도하며 iPhone 실기기 E2E는 별도 release gate입니다.
-- staging의 Valhalla와 active 공원 경로 152건은 검증됐지만 production은 아직
-  Kakao 도보이고 공원 dataset이 없습니다. private/overlay 또는 명시적으로 승인된
-  엄격한 allowlist를 확인한 뒤 canonical 단계에 따라 별도로 승격합니다.
+- production·staging의 Valhalla와 active 공원 경로 152건은 검증됐습니다.
+  공원 GOAL은 목표·시간 예산과 실제 경로가 조건을 만족할 때만 반환되며,
+  만족하지 않으면 일반 FAST/BALANCED 추천을 정상 반환합니다.
 - iPhone 12 Pro Development Build 설치와 NAVER 지도 진입은 이전 credential에서
   확인했습니다. 현재 Native App Key의 KakaoTalk→session E2E, HealthKit matrix,
   staging App Store Connect app, EAS store/preview profile과 TestFlight 제출이
