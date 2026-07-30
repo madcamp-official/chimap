@@ -808,6 +808,25 @@ export class RecommendationService {
         generated.baseline,
         generated.baseline,
       );
+      const finalizedFast = recommendations.find(
+        (recommendation) => recommendation.type === "FAST",
+      );
+      const responseBaseline = finalizedFast === undefined
+        ? {
+            durationSeconds: generated.baseline.durationSeconds,
+            arrivalAt: new Date(
+              departureAt.getTime() +
+                generated.baseline.durationSeconds * 1000,
+            ).toISOString(),
+            walkDistanceMeters: generated.baseline.walkDistanceMeters,
+            estimatedSteps: baselineMetrics.baseEstimatedSteps,
+          }
+        : {
+            durationSeconds: finalizedFast.durationSeconds,
+            arrivalAt: finalizedFast.arrivalAt,
+            walkDistanceMeters: finalizedFast.walkDistanceMeters,
+            estimatedSteps: finalizedFast.estimatedSteps,
+          };
       const warnings: ApiWarning[] = [
         {
           code: "ESTIMATED_STEPS",
@@ -874,15 +893,7 @@ export class RecommendationService {
           requestId: input.requestId,
           generatedAt: this.#clock().toISOString(),
           departureAt: departureAt.toISOString(),
-          baseline: {
-            durationSeconds: generated.baseline.durationSeconds,
-            arrivalAt: new Date(
-              departureAt.getTime() +
-                generated.baseline.durationSeconds * 1000,
-            ).toISOString(),
-            walkDistanceMeters: generated.baseline.walkDistanceMeters,
-            estimatedSteps: baselineMetrics.baseEstimatedSteps,
-          },
+          baseline: responseBaseline,
           walkingGoal: {
             remainingSteps: baselineMetrics.remainingSteps,
             targetWalkDistanceMeters: Math.round(

@@ -328,7 +328,23 @@ describe("자동 추천 서비스 경고", () => {
     const loggerInfo = vi.fn();
     const enrichSelectedRouteGeometry = vi.fn(
       async (recommendations: readonly Recommendation[]) =>
-        detailGoalWalking(recommendations),
+        detailGoalWalking(recommendations).map((recommendation) =>
+          recommendation.type !== "FAST"
+            ? recommendation
+            : {
+                ...recommendation,
+                legs: recommendation.legs.map((leg, index) =>
+                  index !== 0
+                    ? leg
+                    : {
+                        ...leg,
+                        distanceMeters: 900,
+                        durationSeconds: 860,
+                        geometryQuality: "DETAILED" as const,
+                      }
+                ),
+              }
+        ),
     );
     const candidateGenerator = {
       generate: vi.fn().mockResolvedValue({
@@ -356,13 +372,29 @@ describe("자동 추천 서비스 경고", () => {
       requestId: "00000000-0000-4000-8000-000000000011",
       geometryProfile: "TRANSIT_V2",
     });
+    const detailedFast = response.recommendations.find(
+      (item) => item.type === "FAST",
+    );
     const goal = response.recommendations.find((item) => item.type === "GOAL");
 
+    expect(detailedFast).toMatchObject({
+      durationSeconds: 3_900,
+      arrivalAt: "2026-07-26T04:05:00.000Z",
+      extraMinutes: 0,
+      walkDistanceMeters: 900,
+      estimatedSteps: 1_286,
+    });
+    expect(response.baseline).toEqual({
+      durationSeconds: 3_900,
+      arrivalAt: "2026-07-26T04:05:00.000Z",
+      walkDistanceMeters: 900,
+      estimatedSteps: 1_286,
+    });
     expect(goal).toMatchObject({
       id: "goal-route",
       durationSeconds: 4_432,
       arrivalAt: "2026-07-26T04:13:52.000Z",
-      extraMinutes: 14,
+      extraMinutes: 9,
       walkDistanceMeters: 1_890,
       estimatedSteps: 2_700,
       stepDifference: -100,

@@ -388,7 +388,25 @@ export function finalizeRecommendations(input: {
   requireDetailedExerciseWalking: boolean;
   candidateKindByRecommendationId?: ReadonlyMap<string, CandidateKind>;
 }): FinalizedRecommendationSelection {
-  const recalculated = recalculateRecommendations(input);
+  // Detailed geometry can change every selected route's duration. Apply the
+  // final time policy against the equally detailed FAST route instead of the
+  // stale generation baseline, or shared geometry increases consume GOAL's
+  // entire extra-time budget.
+  const finalizedFast = input.recommendations.find(
+    (recommendation) => recommendation.type === "FAST",
+  );
+  const finalizedBaselineDurationSeconds = finalizedFast === undefined
+    ? input.baselineDurationSeconds
+    : finalizedFast.legs.reduce(
+        (total, leg) => total + leg.durationSeconds,
+        0,
+      );
+  const recalculated = recalculateRecommendations({
+    recommendations: input.recommendations,
+    request: input.request,
+    departureAt: input.departureAt,
+    baselineDurationSeconds: finalizedBaselineDurationSeconds,
+  });
   const remainingSteps = calculateRemainingSteps(
     input.request.currentSteps,
     input.request.goalSteps,
@@ -402,7 +420,7 @@ export function finalizeRecommendations(input: {
       recommendation,
       ...(candidateKind === undefined ? {} : { candidateKind }),
       departureAt: input.departureAt,
-      baselineDurationSeconds: input.baselineDurationSeconds,
+      baselineDurationSeconds: finalizedBaselineDurationSeconds,
       policy: input.policy,
       requireDetailedExerciseWalking:
         input.requireDetailedExerciseWalking,
