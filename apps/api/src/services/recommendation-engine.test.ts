@@ -1055,6 +1055,71 @@ describe("건강 경로 추천 선정", () => {
     });
   });
 
+  it("상세 FAST가 짧아지면 강화된 추가시간 정책으로 GOAL을 제거한다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const policy = { mode: "AUTO", maxExtraMinutes: 15 } as const;
+    const selected = selectRecommendations({
+      candidates: [
+        candidate(fast),
+        candidate(doubleSteps),
+        candidate(goal, "EARLY_ALIGHT"),
+      ],
+      baseline: fast,
+      request,
+      departureAt,
+      policy,
+    }).recommendations.map((recommendation): Recommendation => {
+      if (recommendation.type === "FAST") {
+        return {
+          ...recommendation,
+          legs: recommendation.legs.map((leg, index) =>
+            index === 0
+              ? { ...leg, durationSeconds: 200, geometryQuality: "DETAILED" }
+              : leg
+          ),
+        };
+      }
+      if (recommendation.type !== "GOAL") return recommendation;
+      return {
+        ...recommendation,
+        legs: recommendation.legs.map((leg, index) =>
+          index === 0
+            ? {
+                ...leg,
+                geometryQuality: "DETAILED",
+                isExerciseSegment: true,
+                walkingRole: "GOAL_EARLY_ALIGHTING",
+              }
+            : leg
+        ),
+      };
+    });
+
+    const finalized = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy,
+      requireDetailedExerciseWalking: true,
+      candidateKindByRecommendationId: new Map([
+        ["actual-fast-108", "BASE"],
+        ["actual-double-102", "BASE"],
+        ["actual-goal-511", "EARLY_ALIGHT"],
+      ]),
+    });
+
+    expect(finalized.recommendations.find((item) => item.type === "FAST"))
+      .toMatchObject({ durationSeconds: 3_240, extraMinutes: 0 });
+    expect(finalized.recommendations.some((item) => item.type === "GOAL"))
+      .toBe(false);
+    expect(finalized.goalDecision).toEqual({
+      outcome: "REMOVED",
+      originalGoalRecommendationId: "actual-goal-511",
+      rejectionReason: "OUTSIDE_POLICY",
+    });
+  });
+
   it("부족한 도보거리로 자동 추가시간을 계산하고 15~90분으로 제한한다", () => {
     expect(
       calculateAutomaticMaxExtraMinutes(
