@@ -961,6 +961,7 @@ export class TagoClient {
     cityCode: string,
     nodeId: string,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusArrival[]> {
     return this.#getArrivalsByOperation(
       "getSttnAcctoArvlPrearngeInfoList",
@@ -968,6 +969,7 @@ export class TagoClient {
       nodeId,
       undefined,
       signal,
+      options,
     );
   }
 
@@ -976,6 +978,7 @@ export class TagoClient {
     nodeId: string,
     routeId: string,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusArrival[]> {
     return this.#getArrivalsByOperation(
       "getSttnAcctoSpcifyRouteBusArvlPrearngeInfoList",
@@ -983,6 +986,7 @@ export class TagoClient {
       nodeId,
       routeId,
       signal,
+      options,
     );
   }
 
@@ -992,6 +996,7 @@ export class TagoClient {
     nodeId: string,
     routeId?: string,
     signal?: AbortSignal,
+    options: TagoRequestOptions = {},
   ): Promise<BusArrival[]> {
     const fetchedAt = operationTimestamp();
     const items = await this.#requestAllPages(
@@ -999,6 +1004,7 @@ export class TagoClient {
       operation,
       { cityCode, nodeId, routeId },
       signal,
+      options,
     );
     return items.flatMap((item): BusArrival[] => {
       const itemRouteId = textValue(item, "routeid", "routeId");

@@ -49,6 +49,13 @@ const ENDPOINT_ROUTE_LIMIT = 12;
 const GRAPH_RESULT_LIMIT = 8;
 const GRAPH_CANDIDATE_LIMIT = 12;
 const MAX_LABELS_PER_STATE = 3;
+const TRANSIT_TIMING_STAGE_BUDGET_MILLISECONDS = 2_000;
+
+function remainingTimingBudget(
+  deadlineAtMilliseconds: number,
+): number {
+  return Math.max(0, deadlineAtMilliseconds - performance.now());
+}
 
 type StopRoutes = { stop: BusStop; routes: BusRoute[] };
 
@@ -1085,6 +1092,7 @@ export class MultimodalRoutePlanner {
     steps: TraversedEdge[],
     index: number,
     signal?: AbortSignal,
+    timingDeadlineAtMilliseconds?: number,
   ): Promise<RouteLeg> {
     const first = steps[0]!;
     const route = first.edge.busRoute!;
@@ -1122,6 +1130,13 @@ export class MultimodalRoutePlanner {
       plannedBoardingAt: new Date(first.startedAtEpochSeconds * 1_000),
       fallbackWaitSeconds: first.boardingWaitSeconds,
       ...(signal === undefined ? {} : { signal }),
+      ...(timingDeadlineAtMilliseconds === undefined
+        ? {}
+        : {
+            softTimeoutMilliseconds: remainingTimingBudget(
+              timingDeadlineAtMilliseconds,
+            ),
+          }),
     });
     const [road, timing] = await Promise.all([roadPromise, timingPromise]);
     const coordinates = road.coordinates.length >= 2
@@ -1172,6 +1187,7 @@ export class MultimodalRoutePlanner {
     steps: TraversedEdge[],
     index: number,
     signal?: AbortSignal,
+    timingDeadlineAtMilliseconds?: number,
   ): Promise<RouteLeg> {
     const first = steps[0]!;
     const stations = [
@@ -1194,6 +1210,13 @@ export class MultimodalRoutePlanner {
       plannedBoardingAt: new Date(first.startedAtEpochSeconds * 1_000),
       fallbackWaitSeconds: first.boardingWaitSeconds,
       ...(signal === undefined ? {} : { signal }),
+      ...(timingDeadlineAtMilliseconds === undefined
+        ? {}
+        : {
+            softTimeoutMilliseconds: remainingTimingBudget(
+              timingDeadlineAtMilliseconds,
+            ),
+          }),
     });
     const { direction, timing } = splitSubwayTiming(resolvedTiming);
     const waitSeconds = timing.waitSeconds;
@@ -1267,6 +1290,7 @@ export class MultimodalRoutePlanner {
     path: RoutePath,
     index: number,
     signal?: AbortSignal,
+    timingDeadlineAtMilliseconds?: number,
   ): Promise<NormalizedRoute> {
     const units: MaterializationUnit[] = [];
     let cursor = 0;
@@ -1311,12 +1335,14 @@ export class MultimodalRoutePlanner {
                   unit.steps,
                   unit.outputIndex,
                   signal,
+                  timingDeadlineAtMilliseconds,
                 )
               : await this.#subwayLeg(
                   graph,
                   unit.steps,
                   unit.outputIndex,
                   signal,
+                  timingDeadlineAtMilliseconds,
                 ),
           ];
         }),
@@ -1386,9 +1412,19 @@ export class MultimodalRoutePlanner {
       this.#config.transit.maxTransferCount,
       departureAt,
     );
+    const timingDeadlineAtMilliseconds =
+      this.#config.recommendation.phasedTimeoutsEnabled
+        ? performance.now() + TRANSIT_TIMING_STAGE_BUDGET_MILLISECONDS
+        : undefined;
     const settled = await Promise.allSettled(
       paths.slice(0, GRAPH_RESULT_LIMIT).map((path, index) =>
-        this.#materialize(graph, path, index, request.signal),
+        this.#materialize(
+          graph,
+          path,
+          index,
+          request.signal,
+          timingDeadlineAtMilliseconds,
+        ),
       ),
     );
     const routes = settled

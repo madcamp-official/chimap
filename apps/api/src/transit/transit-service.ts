@@ -12,7 +12,7 @@ import type {
 import type { Logger } from "pino";
 
 import type { AppConfig, TagoServiceKind } from "../config.js";
-import { MemoryCache } from "../services/cache.js";
+import { MemoryCache, waitForSharedLoad } from "../services/cache.js";
 import { busSegmentSourceHash } from "../providers/route-geometry.js";
 import {
   adjustedSeoulWaitSeconds,
@@ -162,6 +162,49 @@ type SubwayMetricsObserver = (input: {
   durationSeconds: number;
 }) => void;
 
+const RECOMMENDATION_TIMING_SOFT_TIMEOUT_MILLISECONDS = 2_000;
+
+type TimedOperationResult<T> =
+  | { status: "FULFILLED"; value: T }
+  | { status: "REJECTED"; error: unknown }
+  | { status: "TIMED_OUT" };
+
+async function settleWithin<T>(
+  operation: Promise<T>,
+  timeoutMilliseconds: number,
+): Promise<TimedOperationResult<T>> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<TimedOperationResult<T>>((resolve) => {
+    timeout = setTimeout(
+      () => resolve({ status: "TIMED_OUT" }),
+      timeoutMilliseconds,
+    );
+  });
+  try {
+    return await Promise.race([
+      operation.then<TimedOperationResult<T>, TimedOperationResult<T>>(
+        (value) => ({ status: "FULFILLED", value }),
+        (error: unknown) => ({ status: "REJECTED", error }),
+      ),
+      deadline,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+function rethrowClientAbort(signal: AbortSignal | undefined, error: unknown): void {
+  if (
+    signal?.aborted === true &&
+    !(
+      signal.reason instanceof DOMException &&
+      signal.reason.name === "TimeoutError"
+    )
+  ) {
+    throw error;
+  }
+}
+
 export class TransitService {
   public readonly client: TagoClient;
   public readonly seoulSubwayClient: SeoulSubwayClient;
@@ -209,6 +252,26 @@ export class TransitService {
     observer: (observation: TagoRouteProviderObservation) => void,
   ): void {
     this.client.setRouteProviderObserver?.(observer);
+  }
+
+  async #recommendationTimingResult<T>(
+    operation: () => Promise<T>,
+    softTimeoutMilliseconds?: number,
+  ): Promise<T | undefined> {
+    if (!this.#config.recommendation.phasedTimeoutsEnabled) {
+      return operation();
+    }
+    const timeoutMilliseconds = Math.min(
+      RECOMMENDATION_TIMING_SOFT_TIMEOUT_MILLISECONDS,
+      softTimeoutMilliseconds ?? RECOMMENDATION_TIMING_SOFT_TIMEOUT_MILLISECONDS,
+    );
+    if (timeoutMilliseconds <= 0) return undefined;
+    const result = await settleWithin(
+      operation(),
+      timeoutMilliseconds,
+    );
+    if (result.status === "REJECTED") throw result.error;
+    return result.status === "FULFILLED" ? result.value : undefined;
   }
 
   async #removeMismatchedBusGeometry(
@@ -464,6 +527,7 @@ export class TransitService {
     plannedBoardingAt: Date;
     fallbackWaitSeconds: number;
     signal?: AbortSignal;
+    softTimeoutMilliseconds?: number;
   }): Promise<TransitTiming> {
     const now = new Date();
     const futureSeconds = Math.max(
@@ -472,14 +536,17 @@ export class TransitService {
     );
     if (futureSeconds <= 600) {
       try {
-        const arrivals = await this.getArrivalsForRoute(
-          input.cityCode,
-          input.nodeId,
-          input.routeId,
-          input.signal,
+        const arrivals = await this.#recommendationTimingResult(
+          () => this.getArrivalsForRoute(
+            input.cityCode,
+            input.nodeId,
+            input.routeId,
+            input.signal,
+          ),
+          input.softTimeoutMilliseconds,
         );
         const arrival = arrivals
-          .filter((item) => item.routeId === input.routeId)
+          ?.filter((item) => item.routeId === input.routeId)
           .sort((first, second) => first.arrivalSeconds - second.arrivalSeconds)[0];
         if (arrival !== undefined) {
           return {
@@ -491,7 +558,8 @@ export class TransitService {
             stale: false,
           };
         }
-      } catch {
+      } catch (error) {
+        rethrowClientAbort(input.signal, error);
         // 외부 장애는 노선 배차간격 fallback으로 격리한다.
       }
     }
@@ -513,7 +581,20 @@ export class TransitService {
     plannedBoardingAt: Date;
     fallbackWaitSeconds: number;
     signal?: AbortSignal;
+    softTimeoutMilliseconds?: number;
   }): Promise<TransitTiming & { direction: "U" | "D" | "UNKNOWN" }> {
+    const softDeadlineAtMilliseconds =
+      this.#config.recommendation.phasedTimeoutsEnabled
+        ? performance.now() + Math.min(
+            RECOMMENDATION_TIMING_SOFT_TIMEOUT_MILLISECONDS,
+            input.softTimeoutMilliseconds ??
+              RECOMMENDATION_TIMING_SOFT_TIMEOUT_MILLISECONDS,
+          )
+        : undefined;
+    const remainingSoftTimeout = () =>
+      softDeadlineAtMilliseconds === undefined
+        ? input.softTimeoutMilliseconds
+        : Math.max(0, softDeadlineAtMilliseconds - performance.now());
     const context = await this.repository.getSubwayTimingContext(input);
     const fallback = (direction: "U" | "D" | "UNKNOWN") => ({
       waitSeconds: input.fallbackWaitSeconds,
@@ -557,13 +638,16 @@ export class TransitService {
       this.seoulSubwayClient.enabled
     ) {
       try {
-        const arrivals = await this.#cache.getOrLoad(
-          `seoul:subway:arrival:${seoul.queryStationName}:${seoul.externalLineId ?? context.lineName}:${direction}`,
-          this.#config.seoulSubway.arrivalCacheTtlSeconds * 1_000,
-          () => this.seoulSubwayClient.getArrivals(
-            seoul.queryStationName,
-            input.signal,
-          ),
+        const arrivals = await this.#recommendationTimingResult(
+          () => {
+            const pending = this.#cache.getOrLoad(
+              `seoul:subway:arrival:${seoul.queryStationName}:${seoul.externalLineId ?? context.lineName}:${direction}`,
+              this.#config.seoulSubway.arrivalCacheTtlSeconds * 1_000,
+              () => this.seoulSubwayClient.getArrivals(seoul.queryStationName),
+            );
+            return waitForSharedLoad(pending, input.signal);
+          },
+          remainingSoftTimeout(),
         );
         const directionName = context.directionMappings.find(
           (mapping) =>
@@ -572,7 +656,7 @@ export class TransitService {
         const expectedLineId =
           seoul.externalLineId ?? seoulSubwayId(context.lineName);
         const matching = arrivals
-          .filter((arrival) =>
+          ?.filter((arrival) =>
             arrival.directionName.includes(directionName) &&
             expectedLineId !== null && arrival.subwayId === expectedLineId,
           )
@@ -604,7 +688,8 @@ export class TransitService {
             direction,
           };
         }
-      } catch {
+      } catch (error) {
+        rethrowClientAbort(input.signal, error);
         // TAGO 시간표와 정적 headway fallback을 계속 시도한다.
       }
     }
@@ -618,27 +703,32 @@ export class TransitService {
       try {
         const parts = kstParts(input.plannedBoardingAt);
         const dailyTypeCode = parts.day === 0 ? "03" : parts.day === 6 ? "02" : "01";
-        const schedules = await this.#cache.getOrLoadWithTtl(
-          `tago:subway:timetable:${tago.externalStationId}:${dailyTypeCode}:${direction}`,
-          async () => ({
-            value: await this.#observeSubwayRequest("station_schedule", () =>
-              this.client.getSubwaySchedules(
-                tago.externalStationId!,
-                dailyTypeCode,
-                direction,
-                input.signal,
-              )),
-            ttlMilliseconds: Math.min(
-              6 * 60 * 60 * 1_000,
-              Math.max(
-                60_000,
-                Date.parse(`${parts.date}T23:59:59+09:00`) - Date.now(),
-              ),
-            ),
-          }),
+        const schedules = await this.#recommendationTimingResult(
+          () => {
+            const pending = this.#cache.getOrLoadWithTtl(
+              `tago:subway:timetable:${tago.externalStationId}:${dailyTypeCode}:${direction}`,
+              async () => ({
+                value: await this.#observeSubwayRequest("station_schedule", () =>
+                  this.client.getSubwaySchedules(
+                    tago.externalStationId!,
+                    dailyTypeCode,
+                    direction,
+                  )),
+                ttlMilliseconds: Math.min(
+                  6 * 60 * 60 * 1_000,
+                  Math.max(
+                    60_000,
+                    Date.parse(`${parts.date}T23:59:59+09:00`) - Date.now(),
+                  ),
+                ),
+              }),
+            );
+            return waitForSharedLoad(pending, input.signal);
+          },
+          remainingSoftTimeout(),
         );
         const next = schedules
-          .map((schedule) => scheduleTimestamp(
+          ?.map((schedule) => scheduleTimestamp(
             parts.date,
             schedule.departureTime,
             input.plannedBoardingAt,
@@ -659,7 +749,8 @@ export class TransitService {
             direction,
           };
         }
-      } catch {
+      } catch (error) {
+        rethrowClientAbort(input.signal, error);
         // 정적 headway가 최종 fallback이다.
       }
     }
@@ -846,11 +937,12 @@ export class TransitService {
     nodeId: string,
     signal?: AbortSignal,
   ): Promise<BusArrival[]> {
-    return this.#cache.getOrLoad(
+    const pending = this.#cache.getOrLoad(
       `tago:arrivals:${cityCode}:${nodeId}`,
       this.#config.tagoCacheTtlSeconds.arrivals * 1000,
-      () => this.client.getArrivals(cityCode, nodeId, signal),
+      () => this.client.getArrivals(cityCode, nodeId),
     );
+    return waitForSharedLoad(pending, signal);
   }
 
   public getArrivalsForRoute(
@@ -859,7 +951,7 @@ export class TransitService {
     routeId: string,
     signal?: AbortSignal,
   ): Promise<BusArrival[]> {
-    return this.#cache.getOrLoad(
+    const pending = this.#cache.getOrLoad(
       `tago:arrivals:${cityCode}:${nodeId}:${routeId}`,
       this.#config.tagoCacheTtlSeconds.arrivals * 1000,
       () =>
@@ -867,9 +959,11 @@ export class TransitService {
           cityCode,
           nodeId,
           routeId,
-          signal,
+          undefined,
+          { retryCount: 0 },
         ),
     );
+    return waitForSharedLoad(pending, signal);
   }
 
   public getVehiclePositions(

@@ -7,6 +7,39 @@ type CacheItem = {
   value: unknown;
 };
 
+export function waitForSharedLoad<T>(
+  pending: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal === undefined) return pending;
+  if (signal.aborted) {
+    return Promise.reject(
+      signal.reason ?? new DOMException("요청이 취소되었습니다.", "AbortError"),
+    );
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(
+        signal.reason ??
+          new DOMException("요청이 취소되었습니다.", "AbortError"),
+      );
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
 function approximateSize(item: CacheItem): number {
   try {
     return Math.max(1, Buffer.byteLength(JSON.stringify(item.value)));

@@ -1,4 +1,4 @@
-import type { BusStop, SubwayStation } from "@chimap/contracts";
+import type { BusArrival, BusStop, SubwayStation } from "@chimap/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig } from "../config.js";
@@ -195,6 +195,147 @@ describe("TransitService 주변 정류장 보강", () => {
       items: [kaistNorthGate],
       partial: true,
     });
+  });
+});
+
+describe("TransitService 추천 timing 예산", () => {
+  it("느린 버스 도착정보는 계획 신호를 소진하기 전에 배차간격으로 fallback한다", async () => {
+    vi.useFakeTimers();
+    let finishProvider: ((arrivals: BusArrival[]) => void) | undefined;
+    const getArrivalsForRoute = vi.fn(
+      () => new Promise<BusArrival[]>((resolve) => {
+        finishProvider = resolve;
+      }),
+    );
+    const config = loadConfig({
+      NODE_ENV: "test",
+      RECOMMENDATION_PHASED_TIMEOUTS_ENABLED: "1",
+    });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository: {} as TransitRepository,
+      client: { getArrivalsForRoute } as unknown as TagoClient,
+    });
+
+    try {
+      const pending = service.resolveBusTiming({
+        cityCode: "25",
+        nodeId: "DJB8007520",
+        routeId: "DJB30300067",
+        plannedBoardingAt: new Date(),
+        fallbackWaitSeconds: 420,
+      });
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(pending).resolves.toMatchObject({
+        waitSeconds: 420,
+        timingSource: "BUS_INTERVAL_FALLBACK",
+        isRealtime: false,
+      });
+      expect(getArrivalsForRoute).toHaveBeenCalledOnce();
+
+      // Consumer의 soft timeout은 공유 cache fill을 취소하지 않는다.
+      finishProvider?.([{
+        cityCode: "25",
+        nodeId: "DJB8007520",
+        routeId: "DJB30300067",
+        routeNo: "514",
+        routeType: null,
+        remainingStops: 3,
+        arrivalSeconds: 600,
+        arrivalMinutes: 10,
+        vehicleType: null,
+        isRealtime: true,
+        fetchedAt: new Date().toISOString(),
+      }]);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await expect(service.resolveBusTiming({
+        cityCode: "25",
+        nodeId: "DJB8007520",
+        routeId: "DJB30300067",
+        plannedBoardingAt: new Date(),
+        fallbackWaitSeconds: 420,
+      })).resolves.toMatchObject({
+        waitSeconds: 600,
+        timingSource: "TAGO_BUS_ARRIVAL",
+        isRealtime: true,
+      });
+      expect(getArrivalsForRoute).toHaveBeenCalledOnce();
+      expect(getArrivalsForRoute).toHaveBeenCalledWith(
+        "25",
+        "DJB8007520",
+        "DJB30300067",
+        undefined,
+        { retryCount: 0 },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("client abort는 waiter만 중단하고 같은 도착정보 cache fill은 유지한다", async () => {
+    let finishProvider: ((arrivals: BusArrival[]) => void) | undefined;
+    const getArrivalsForRoute = vi.fn(
+      () => new Promise<BusArrival[]>((resolve) => {
+        finishProvider = resolve;
+      }),
+    );
+    const config = loadConfig({
+      NODE_ENV: "test",
+      RECOMMENDATION_PHASED_TIMEOUTS_ENABLED: "1",
+    });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository: {} as TransitRepository,
+      client: { getArrivalsForRoute } as unknown as TagoClient,
+    });
+    const controller = new AbortController();
+    const input = {
+      cityCode: "25",
+      nodeId: "DJB8007520",
+      routeId: "DJB30300067",
+      plannedBoardingAt: new Date(),
+      fallbackWaitSeconds: 420,
+    };
+
+    const cancelled = service.resolveBusTiming({
+      ...input,
+      signal: controller.signal,
+    });
+    const sharedWaiter = service.resolveBusTiming(input);
+    controller.abort(new DOMException("client disconnected", "AbortError"));
+
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    finishProvider?.([{
+      cityCode: "25",
+      nodeId: "DJB8007520",
+      routeId: "DJB30300067",
+      routeNo: "514",
+      routeType: null,
+      remainingStops: 3,
+      arrivalSeconds: 600,
+      arrivalMinutes: 10,
+      vehicleType: null,
+      isRealtime: true,
+      fetchedAt: new Date().toISOString(),
+    }]);
+
+    await expect(sharedWaiter).resolves.toMatchObject({
+      timingSource: "TAGO_BUS_ARRIVAL",
+      isRealtime: true,
+    });
+    expect(getArrivalsForRoute).toHaveBeenCalledOnce();
   });
 });
 

@@ -5,6 +5,7 @@ import {
   fiveMinuteBucket,
   MemoryCache,
   normalizeSearchTerm,
+  waitForSharedLoad,
 } from "../services/cache.js";
 import type {
   BusGeometryRequest,
@@ -18,39 +19,6 @@ import type { ResolvedBusGeometry } from "./route-geometry.js";
 const PLACE_TTL_MS = 60 * 60 * 1000;
 const TRANSIT_TTL_MS = 90 * 1000;
 const WALK_TTL_MS = 30 * 60 * 1000;
-
-function waitForSharedLoad<T>(
-  pending: Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> {
-  if (signal === undefined) return pending;
-  if (signal.aborted) {
-    return Promise.reject(
-      signal.reason ?? new DOMException("요청이 취소되었습니다.", "AbortError"),
-    );
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      cleanup();
-      reject(
-        signal.reason ??
-          new DOMException("요청이 취소되었습니다.", "AbortError"),
-      );
-    };
-    const cleanup = () => signal.removeEventListener("abort", onAbort);
-    signal.addEventListener("abort", onAbort, { once: true });
-    pending.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error: unknown) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
 
 export class CachedMobilityProvider implements MobilityProvider {
   public readonly source: "KAKAO" | "TAGO";
