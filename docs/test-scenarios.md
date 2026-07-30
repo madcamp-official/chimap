@@ -329,9 +329,11 @@ HealthKit 실제·빈 자료, 권한 거부, process eviction을 포함합니다
 - iOS staging build에 production API host나 Android NAVER Client ID가 포함되지 않음
 - `.env`, `.env.staging`, `apps/mobile/.env`가 Git 추적·Docker image·공개 asset에 없음
 
-현재 staging은 버스·지하철 seed, health/readiness 200과 외부 KAIST 본원→대전역
-추천 3건까지 통과했습니다. timeout 난 정류장·역만 격리하고 나머지 seed를 계속하는
-회귀는 API 단위 테스트와 운영 실행 결과를 함께 확인합니다.
+2026-07-30 staging은 버스·지하철 seed, local/public health·readiness 200,
+Valhalla 상세 도보와 active 공원 경로 152건까지 확인했습니다. 이 결과는
+staging runtime 증거이며 final `main`의 전체 release gate를 대체하지 않습니다.
+timeout 난 정류장·역만 격리하고 나머지 seed를 계속하는 회귀는 API 단위 테스트와
+운영 실행 결과를 함께 확인합니다.
 
 ## 12. 배포 보안 검사
 
@@ -348,7 +350,7 @@ HealthKit 실제·빈 자료, 권한 거부, process eviction을 포함합니다
 - 최신 백업을 `template0` 기반 별도 PostGIS 18 DB에 전부 복원
 - restore 후 PostGIS, 현재 migration과 readiness 교통 통계 일치 확인
 - backup·restore·교통 동기화 systemd unit 문법과 timer active 확인
-- Prometheus 설정과 20개 rule을 `promtool`로 검증
+- Prometheus 설정과 25개 rule을 `promtool`로 검증
 - API metrics 9091 host 미노출, Prometheus 9090 loopback 전용
 - API·relay·Alertmanager target `up`, DB/provider/backup/sync 지표 확인
 - Alertmanager 설정을 `amtool`로 검증
@@ -467,3 +469,18 @@ gate입니다.
 - 공개 514번 필수 구간은 `DETAILED`, 25개 좌표. cold HTTP 200(15.1초),
   warm 5건 HTTP 200(0.84~2.13초)
 - 배포 전후 production custom-format backup 생성과 SHA-256 검증 통과
+
+2026-07-30 pre-release runtime 감사:
+
+- production code `d268e067`, image `sha256:200346ac…`; staging code
+  `21251280`, image `sha256:1b8e8cae…`
+- 두 환경의 local/public health·readiness·mobile-config HTTP 200, migration 13
+- production Prometheus target 3개 `up`, 25개 rule healthy, firing 0
+- staging Valhalla provider configured, WALK geometry success 7건,
+  `DETAILED/VALHALLA_WALK`와 active 공원 경로 152건 확인
+- production backup과 별도 restore에서 migration 13 및 readiness 교통 통계 확인
+- merged tree 결정적 테스트 450개 통과: API 272, mobile 83,
+  web 61, contracts 20, app-core 10, alert-relay 4
+- 격리 PostGIS 18에서 교통·migration 10개와 mobile auth 2개, 총 12개 통과
+- workspace typecheck·format check·Web/API/Mobile build·생성 native config와
+  staging public E2E 통과. 최종 SHA CI와 production public E2E는 아직 미확정

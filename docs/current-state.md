@@ -2,24 +2,30 @@
 
 이 문서는 구현, 현재 공개 배포와 마지막 전체 운영 점검 시점을 구분합니다.
 
-- **현재 구현**: Web/API/Mobile 공통 계약과 Expo 앱, migration 11, 요청 범위
+- **현재 구현**: Web/API/Mobile 공통 계약과 Expo 앱, migration 13, 요청 범위
   버스·지하철 멀티모달 그래프, 실제 지하철 선로, 버스 도로 형상 영속 캐시,
-  연속 도보 형상과 `DETAILED/APPROXIMATE` 표시를 포함합니다. 결정적 테스트는
-  API 147개, mobile 56개, web 61개, contracts 15개, app-core 10개,
-  alert-relay 4개이며
-  PostGIS 의존 통합 테스트 10개는 별도 환경에서 실행합니다.
-- **현재 공개 배포**: 2026-07-29 13:24 KST에 `main@f1320ca` 이미지
-  `sha256:4a8c8c55…`로 API/웹/alert relay를 교체했습니다.
-  `TRANSIT_ROUTER_MODE=multimodal`, `TRANSIT_GEOMETRY_V2_ENABLED=1`이며
-  `transit-v2`는 실제 지하철 선로와 검증된 버스·도보 형상을 반환합니다.
-- **마지막 전체 운영 점검**: 2026-07-29 13:26 KST에 컨테이너, PostgreSQL,
-  migration 11, 공개 health/readiness/mobile-config, 검색·`transit-v2` 추천,
-  Prometheus 22개 규칙, 새 브랜드 로고 해시와 공개 번들 비밀값을 확인했습니다.
+  검토된 공원 경로 snapshot, 선택 결과 geometry와 Valhalla 상세 도보 공급자를
+  포함합니다. 2026-07-30 merged tree에서 결정적 테스트 450개와 격리 PostGIS
+  통합 테스트 12개, 총 462개가 통과했습니다. workspace typecheck·format
+  check·Web/API/Mobile build·native config와 staging public E2E도 통과했고,
+  최종 SHA의 CI와 production 배포 결과는 아직 release record로 확정하지 않았습니다.
+- **현재 공개 배포**: 2026-07-30 감사 기준 production API는 code
+  `d268e067`, image `sha256:200346ac…`, migration 13입니다.
+  `TRANSIT_ROUTER_MODE=multimodal`, transit geometry·phased timeout·selected
+  geometry·bus pair v3 flag가 활성화되어 있습니다. 상세 도보는 아직 Kakao이고
+  공원 import endpoint는 활성 상태지만 dataset 0건·GOAL integration 비활성입니다.
+- **2026-07-30 운영 점검**: production과 staging의 local·public
+  health/readiness/mobile-config가 모두 HTTP 200이고, production monitoring의
+  target 3개가 `up`, 25개 rule이 healthy, firing alert가 0건임을 확인했습니다.
+  수정된 rate-limit rule 식은 최종 승격 때 Prometheus reload 후 다시 확인합니다.
 - **현재 staging**: `compose.staging.yml`의 별도 project와
-  `chimap-staging-postgres` volume으로 API/DB를 기동했고 Cloudflare TLS와 local·
-  external health HTTP 200을 확인했습니다. guest/Kakao는 활성, Apple은 비활성입니다.
-  migration 11과 `transit-v2` 격리 이미지를 배포하고 버스·지하철 seed를 완료해
-  readiness HTTP 200과 514번 필수 구간 25개 상세 좌표를 확인했습니다.
+  `chimap-staging-postgres` volume에서 code `21251280`, image
+  `sha256:1b8e8cae…`, migration 13을 실행합니다. `WALKING_ROUTER=VALHALLA`,
+  공원 integration 활성, import 비활성 상태이며 active dataset 152건과
+  `VALHALLA_WALK` 상세 도보를 확인했습니다.
+- **최종 `main` release 상태**: 최종 SHA 확정·전체 release 검증·production
+  승격 전입니다. 최종 SHA, image ID, PostGIS/build/CI와 배포 시각은 실제 gate
+  통과 뒤 이 문서에 append하며 pre-release 후보를 배포 완료로 표현하지 않습니다.
 
 따라서 아래의 “구현 완료”는 코드 상태이고, 공개 동작을 뜻하는 항목은
 명시적으로 공개 검증 시각을 적습니다. 수시로 바뀌는 운영 수치는 새 배포
@@ -121,23 +127,24 @@
 | 항목 | 상태 |
 | --- | --- |
 | 공개 도메인 | `https://chimap.madcamp-kaist.org` 정상 |
-| API | `chimap:actual-data` (`sha256:81d4709d…`, `main@6ef3e8a`), 단일 Node.js 프로세스, healthy |
-| DB | PostgreSQL 18 + PostGIS 3.6, migration 11, healthy |
-| 모니터링 | Prometheus 3.13.1, 3개 target `up`, 22개 경보 규칙 정상 |
+| API | `chimap:actual-data` (`sha256:200346ac…`, code `d268e067`), 단일 Node.js 프로세스, healthy |
+| DB | PostgreSQL 18 + PostGIS 3.6, migration 13, healthy |
+| 모니터링 | Prometheus 3.13.1, 3개 target `up`, 25개 경보 규칙 healthy, firing 0 |
 | 장애 알림 | Alertmanager 0.32.1 + relay healthy, `EXTERNAL_ALERTS_ENABLED=0`으로 외부 전달 명시적 비활성화 |
 | 외부 진입 | Cloudflare Tunnel→`127.0.0.1:3000` |
 | 장소·주소 | Kakao 우선, NAVER 주소 보완 |
-| 도보 | Kakao step 좌표 연속 조립, 장애 시 흐린 점선 근사 경로 |
+| 도보 | production Kakao, staging Valhalla. 상세 공급자 실패 시 흐린 점선 근사 경로 |
+| 검토 공원 경로 | production import 활성·0건·integration 비활성, staging import 비활성·active 152건·integration 활성 |
 | 버스 표시선 | 인접 정류장별 검증·캐시한 Kakao 도로 geometry, 실패 구간 점선 fallback |
 | 지하철 표시선 | migration 10 선로 LineString, `track-v1`·`transit-v2`에서 실제 선형 |
 | 버스 | TAGO + PostgreSQL 정적 교통 데이터 |
 | 서울 지하철 실시간 | 공식 HTTP endpoint 활성화, 도착·위치 API 정상, 추천은 실시간→TAGO 시간표→headway 순서 |
 | 프로세스 관리 | Docker Compose |
 | 자동화 | 일일 백업·월간 restore·일일 TAGO 동기화 timer active |
-| 구현 브랜치 | `main@6ef3e8a` (Web·API·iOS·Android 공용 변경 통합) |
+| 최종 통합 후보 | pre-release. 최종 `main` SHA·CI·image·배포 기록은 gate 통과 뒤 확정 |
 | 마지막 공개 기준선 CI | PR #5 run `30417960322`, Web/API·Mobile JS·iOS·Android·PostGIS 다섯 job 성공 |
 | favicon cache 보완 CI | PR #6 run `30419501614`, Web/API·Mobile JS·PostGIS 성공 후 병합 |
-| 공개 웹 asset | `index-BELtThX5.js`·`index-B5t-EbPr.css`·`/images/logo.png`·`/images/app-icon.png?v=d343336a` |
+| 공개 웹 asset | 현재 production asset 제공 중. 최종 release bundle·logo hash는 승격 뒤 기록 |
 | 카카오 로그인 | 선택형, `/auth/session` available, authorize 302·보안 state cookie 확인 |
 | 모바일 인증 | staging server는 guest/Kakao enabled·Apple disabled, 현재 iOS 앱 화면은 Kakao session 필수 |
 | 기본 브랜치 | `main`에 Web/API foundation과 iOS staging 구현 통합 |
@@ -145,7 +152,7 @@
 
 ## 3. readiness 스냅샷
 
-2026-07-27 21:45 KST 공개 재확인 결과:
+2026-07-30 production 공개 재확인 결과:
 
 ```json
 {
@@ -161,23 +168,24 @@
     "tago": true
   },
   "transit": {
-    "stops": 227308,
-    "linkedStops": 3271,
+    "stops": 227310,
+    "linkedStops": 3369,
     "routes": 156,
-    "routeStops": 6398,
+    "routeStops": 7254,
     "subwayStations": 1097,
     "activeSubwayStations": 1097,
     "mappedSubwayStations": 706,
     "subwayServiceLines": 46,
     "routeReadySubwayLines": 30,
     "providerMappedStations": 697,
-    "busSubwayTransferEdges": 182
+    "busSubwayTransferEdges": 182,
+    "routeReadySubwaySegments": 2314,
+    "subwayTrackGeometrySegments": 2314
   }
 }
 ```
 
-readiness timestamp는 `2026-07-27T12:45:48.159Z`였습니다. 위 JSON에서는
-가독성을 위해 timestamp를 생략했습니다. 필수 교통 통계가 준비되고
+위 JSON에서는 수시로 바뀌는 timestamp를 생략했습니다. 필수 교통 통계가 준비되고
 DB·PostGIS·migration·공급자 키가 준비된 경우에만
 readiness가 HTTP 200을 반환합니다. 추천 요청과 정기 동기화가 새 실제
 노선을 저장하므로 이 수치는 백업 시점보다 증가할 수 있습니다.
@@ -335,7 +343,7 @@ Play service account와 App Store Connect ID 연결은 후속 작업입니다.
 - 15초 간격 수집, 15일·2GiB 보존
 - HTTP 상태·p95, 검색 0건·NAVER 보완, 추천, DB pool, TAGO timeout,
   공급자 설정, 교통 통계, 백업·동기화·알림 전달 상태 지표
-- availability·품질·경로 형상·백업·동기화·알림 전달에 대한 22개 경보 규칙
+- availability·품질·경로 형상·백업·동기화·알림 전달에 대한 25개 경보 규칙
 - Alertmanager가 critical/warning을 묶어 relay로 전달하고 복구 알림도 전송
 - 일일 백업, 월간 restore 검증과 일일 01:30 KST TAGO 동기화 timer
 - 이전 실행 컨테이너와 이전 CHIMap 태그 정리
@@ -343,9 +351,10 @@ Play service account와 App Store Connect ID 연결은 후속 작업입니다.
 
 ## 5. 검증 기록
 
-마지막 전체 로컬·공개 검증은 2026-07-27 code commit `96e2549`와 14:28 KST
-Web/API 이미지를 대상으로 합니다. 이후 `7a99e03` 이미지는 production/staging
-health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snapshot을 기준으로 합니다.
+아래 날짜가 붙은 항목은 당시 release의 역사적 기록입니다. 2026-07-30에는
+현재 production·staging runtime과 운영 자동화를 별도로 감사했고, 최종 통합
+후보의 로컬 전체 검증과 staging E2E까지 완료했습니다. 최종 SHA의 CI와
+production E2E는 승격 후 확정합니다.
 
 | 검증 | 결과 |
 | --- | --- |
@@ -354,11 +363,13 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 운영 Web/API 기준선 계약·API·웹·알림 릴레이·PostGIS 테스트 | 118개 통과(9+63+43+3) |
 | 운영 Web/API 기준선 format check | 통과 |
 | 운영 Web/API 기준선 로컬 Chromium smoke | 1440/768/390/320px 헤더 충돌·검색 폼·가로 overflow 없음 |
-| 최신 현재 코드 검사 | 전체 결정적 테스트 266개, TypeScript/API/Web/Mobile production build와 migration 11 PostGIS 검증 통과 |
+| 2026-07-28 코드 검사 | 전체 결정적 테스트 266개, TypeScript/API/Web/Mobile production build와 migration 11 PostGIS 검증 통과 |
+| 2026-07-30 runtime 감사 | production/staging local·public 3개 상태 endpoint 200, migration 13 current, container healthy |
+| 최종 통합 후보 | 결정적 450개 + 격리 PostGIS 12개 = 462개 통과. typecheck·format·Web/API/Mobile build·native config·staging public E2E 통과, 최종 SHA CI·production E2E는 확정 전 |
 | cross-platform build | Web/API production 및 iOS·Android Hermes bundle export 통과 |
 | native 생성 설정 | iOS/Android identity·key·entitlement·permission·Privacy Manifest 검증 통과 |
 | native compile/실기기 | Android arm64 debug APK compile·v2 서명, GitHub macOS iOS simulator와 Android 전체 ABI compile, iOS signed device build 통과. 이전 iPhone 설치·NAVER smoke는 확인했으나 현재 Kakao key E2E와 Android Development Build는 대기 |
-| PostgreSQL/PostGIS 통합 테스트 | 격리 DB에서 교통·migration 6개와 mobile auth 2개 통과 |
+| PostgreSQL/PostGIS 통합 테스트 | 격리 PostGIS 18에서 교통·migration 10개와 mobile auth 2개 통과 |
 | 공개 strict 지도 E2E | 기본 추천·NAVER 지도·레이아웃 통과. 확장 정류장 1회 upstream 504 후 단독 재실행 통과 |
 | 2026-07-27 14:27 KST 공개 strict E2E | 기본 추천·주변 역·NAVER 지도·버스 갱신·카메라 보존과 4개 viewport 통과. 확장 검색은 upstream 일시 실패 후 단독 재실행 통과 |
 | TAGO 지하철 공개 API | 대전역 검색·근처 역·U/D 다음 출발, `scheduleBased=true`·`realtimeAvailable=false` 확인 |
@@ -375,7 +386,7 @@ health까지 확인했으며 전체 회귀·백업 검증은 아직 앞선 snaps
 | 지도 도보 표현 | 모든 도보 주황색 실선·운동 시작 마커 0·0.18/0.55/0.95 opacity 구현 |
 | NAVER 서버 API | Geocoding 200 1건, Reverse Geocoding 200 4건 |
 | 차량 마커 E2E | ETA 접근·구간 운행 선별, WebP·흰 전광판·검은 번호·상태 title, 10초 갱신 중 카메라 보존 확인 |
-| Prometheus | API/relay/Alertmanager target `up`, 20개 rule healthy |
+| Prometheus 최신 runtime | API/relay/Alertmanager target 3개 `up`, 25개 rule healthy, firing 0. 변경 rule reload는 최종 승격 gate |
 | 교통 정기 동기화 | 45개 성공·0개 실패, 성공 시각과 실패 수 지표 확인 |
 | 정류장 병합 migration | 1,173쌍→0쌍, 관계 유지, migration 2 적용 |
 | 알림 릴레이 형식 | 격리 HTTP 수신처에 Slack 형식 긴급 메시지·상태 버튼 전달 |
@@ -411,6 +422,11 @@ chimap-backup.timer         매일 03:15 KST + 최대 15분 분산
 chimap-backup-verify.timer  매월 1일 04:30 KST + 최대 30분 분산
 chimap-transit-sync.timer   매일 01:30 KST + 최대 30분 분산
 ```
+
+2026-07-30 16:50 KST에는 18,240,361-byte production custom-format backup을
+생성했고 별도 PostGIS 18 restore에서 migration 13과
+`227310/3369/156/7254` 통계를 확인했습니다. 이 기록은 final `main` 배포 전
+rollback 기준선이며 최종 승격 직전 backup·restore를 다시 실행합니다.
 
 ## 7. NAVER 보안·네트워크 검증
 
@@ -451,11 +467,19 @@ SDK 주소 연결이 timeout됐지만 운영 키는 bundle과 `.env`가 일치�
 초기 commit만 있던 옛 `main`이나 장기 iOS branch가 아니라 갱신된 `main`에서
 책임별 `feat/mobile/*`, `feat/ios/*`, `feat/api/*`, `feat/contracts/*`로 분기합니다.
 
+2026-07-30 최종 통합 작업은 아직 pre-release입니다. merged-tree test·build·
+native config·격리 PostGIS·staging public E2E까지 통과했으며, 최종 `main` push,
+immutable image 식별, staging 재승격, production backup·candidate smoke·승격과
+공개 E2E가 모두 끝난 뒤에만 새 release SHA와 image를 기록합니다.
+
 ## 9. 현재 한계와 확장 조건
 
 - staging은 HTTPS/API/auth, 버스·지하철 seed, readiness 200과 외부 실제 추천까지
   준비됐습니다. TAGO timeout으로 보류된 지하철역 3개는 다음 mapping 실행에서
   재시도하며 iPhone 실기기 E2E는 별도 release gate입니다.
+- staging의 Valhalla와 active 공원 경로 152건은 검증됐지만 production은 아직
+  Kakao 도보이고 공원 dataset이 없습니다. private/overlay 또는 명시적으로 승인된
+  엄격한 allowlist를 확인한 뒤 canonical 단계에 따라 별도로 승격합니다.
 - iPhone 12 Pro Development Build 설치와 NAVER 지도 진입은 이전 credential에서
   확인했습니다. 현재 Native App Key의 KakaoTalk→session E2E, HealthKit matrix,
   staging App Store Connect app, EAS store/preview profile과 TestFlight 제출이

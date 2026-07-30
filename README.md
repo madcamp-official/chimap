@@ -4,22 +4,21 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production health/readiness 재확인: 2026-07-29 12:29 KST
-- 전체 운영 검증 스냅샷: 2026-07-29 12:29 KST
+- production health/readiness 재확인: 2026-07-30 KST
+- 최신 전체 운영 검증 스냅샷: 배포 전 release gate에서 새로 기록 예정
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 저장소 기준선: `main` (Web/API cross-platform foundation과 iOS staging 통합)
-- 통합한 upstream 기준: `feat/mobile/cross-platform-foundation` (`1df41a5`)
-- 실제 지하철 선로와 버스·도보 `transit-v2`·migration 11, 정리된 이미지 자산과
-  투명 favicon 운영 배포: 2026-07-29 12:28 KST
+- 공개 production 기준선: code `d268e067`, image `sha256:200346ac…`,
+  migration 13. 최종 통합 `main` release는 아직 승격 전입니다.
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
-  health/readiness 200·guest/Kakao 활성·Apple 비활성, 실제 추천 3건 확인
+  code `21251280`, image `sha256:1b8e8cae…`, health/readiness 200,
+  Valhalla 상세 도보와 active 공원 경로 152건 확인
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
-현재 공개 readiness는 정류장 227,310개, TAGO 연결 정류장 3,325개,
-노선 156개, 노선-정류장 관계 6,907개, 활성 지하철역 1,097개, TAGO 매핑
-706개와 버스↔지하철 보행 연결 182개입니다. 추천 요청과 정기 동기화가 새
+2026-07-30 공개 production readiness는 정류장 227,310개, TAGO 연결 정류장
+3,369개, 노선 156개, 노선-정류장 관계 7,254개, 활성 지하철역 1,097개,
+TAGO 매핑 706개와 버스↔지하철 보행 연결 182개입니다. 추천 요청과 정기 동기화가 새
 지역의 실제 노선을 저장하면 버스 관련 수치는 증가할 수 있습니다.
 
 Route Pulse UI, 안내 밀도·동작 줄이기 설정, 동의 기반 익명 UI 이벤트, 자동
@@ -79,7 +78,7 @@ staging에서는 숨기며 외부 TestFlight 전 별도 E2E를 수행합니다. 
 | 장소 | Kakao Local | 키워드·주소 검색 |
 | 주소 보완 | NAVER Geocoding | Kakao 0건 또는 복구 가능한 장애 시 주소 검색 |
 | 역지오코딩 | Kakao→NAVER | GPS 좌표를 주소로 변환 |
-| 도보 | Kakao Routing | 실제 도보 거리·시간·좌표 |
+| 상세 도보 | 환경별 Kakao 또는 Valhalla | production은 현재 Kakao, staging은 Valhalla의 실제 거리·시간·좌표 |
 | 버스 선 | Kakao Mobility Directions | TAGO 정류장 순서를 보존한 도로 매칭 geometry |
 | 버스 | 국토교통부 TAGO | 정류장·노선·도착·차량 |
 | 지하철 | 서울 열린데이터광장 + 국토교통부 TAGO | 서울 실시간 도착·위치, 그 외 역 검색·시간표 기반 다음 출발 |
@@ -282,10 +281,12 @@ E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-현재 일반 결정적 테스트는 contracts 12개, app-core 4개, alert-relay 4개,
-API 141개, web 57개, mobile 48개로 총 266개입니다. 별도 PostGIS DB가 필요한
-교통·인증 통합 테스트 10개는 일반 실행에서 제외하고 release gate에서 따로
-실행합니다.
+2026-07-30 merged-tree 검증에서 결정적 테스트 450개와 격리 PostGIS 통합
+테스트 12개, 총 462개가 통과했습니다. 결정적 테스트 구성은 API 272, mobile
+83, web 61, contracts 20, app-core 10, alert-relay 4개입니다. workspace
+typecheck·format check·Web/API/Mobile build와 생성된 iOS/Android native config도
+통과했습니다. 이 결과는 아직 최종 SHA의 CI·production 배포 완료를 뜻하지
+않습니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
@@ -304,7 +305,7 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 복구 검증: systemd timer가 월 1회 별도 PostGIS 18에 restore
 - 교통 갱신: systemd timer가 매일 KAIST 1.2km·대전역 500m 노선 동기화
 - 관측: Prometheus 15초 수집, 15일·2GiB 보존, loopback UI `:9090`
-- 경보: API·검색·DB·TAGO·경로 형상·백업·동기화·알림 전달 22개
+- 경보: API·검색·DB·공급자·경로 형상·백업·동기화·알림 전달 25개
 - 전달: 필요할 때만 `EXTERNAL_ALERTS_ENABLED=1`로 Alertmanager→alert-relay→Slack/Discord/일반 webhook
 - 로그 제외: 검색어, 좌표, 키, 외부 원문
 

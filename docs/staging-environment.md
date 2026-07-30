@@ -45,7 +45,7 @@ token family는 복사하지 않습니다.
 | PostgreSQL volume | `chimap-postgres` | `chimap-staging-postgres` |
 | image tag | `chimap:actual-data` | `chimap:staging` |
 | env file | `.env` | `.env.staging` |
-| monitoring | Prometheus·Alertmanager·relay | 현재 미구성 |
+| monitoring | Prometheus·Alertmanager·relay | API 내부 metrics 활성, 전용 Prometheus는 미구성 |
 
 두 PostgreSQL은 host 5432를 공개하지 않습니다. `docker compose` 명령에는 항상
 대상 파일과 env file을 함께 써서 기본 production Compose를 잘못 조작하지 않게
@@ -85,7 +85,28 @@ TAGO_BUS_STOP_SERVICE_KEY=
 TAGO_BUS_ROUTE_SERVICE_KEY=
 TAGO_BUS_ARRIVAL_SERVICE_KEY=
 TAGO_BUS_LOCATION_SERVICE_KEY=
+
+TRANSIT_GEOMETRY_V2_ENABLED=1
+RECOMMENDATION_PHASED_TIMEOUTS_ENABLED=1
+RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1
+BUS_GEOMETRY_PAIR_V3_ENABLED=1
+WALKING_ROUTER=KAKAO
+VALHALLA_BASE_URL=
+VALHALLA_HTTP_TIMEOUT_MS=3500
+VALHALLA_HTTP_RETRY_COUNT=1
+VALHALLA_WALK_CACHE_TTL_SECONDS=1800
+VALHALLA_MAX_SNAP_DISTANCE_METERS=100
+VALHALLA_MAX_DETOUR_RATIO=5
+
+PARK_ROUTE_IMPORT_ENABLED=0
+PARK_ROUTE_IMPORT_TOKEN=
+PARK_ROUTE_INTEGRATION_ENABLED=0
+PARK_ROUTE_SEARCH_RADIUS_METERS=800
+PARK_ROUTE_MAX_CANDIDATES=3
 ```
+
+위 provider·park 값은 새 image를 처음 올릴 때의 안전한 시작값입니다. 현재
+활성화된 staging의 값과 증거는 문서 끝 2026-07-30 snapshot을 기준으로 합니다.
 
 `POSTGRES_PASSWORD`는 URL에 안전한 hex 값을 사용하고 refresh retry key는 정확히
 32바이트를 base64로 인코딩합니다.
@@ -142,6 +163,21 @@ staging이나 부하 시험 전에는 별도 Application을 검토합니다.
 CHIMap release 정책상 native map Client ID는 Web과 분리하고 iOS와 Android도
 서로 다른 Application을 사용합니다. 이 값은 server `.env.staging`이 아니라 Mac
 mobile 환경이나 EAS environment에 둡니다.
+
+### Valhalla·공원 경계
+
+`VALHALLA_BASE_URL`은 API host와 실제 `chimap-staging-api` container에서 접근
+가능한 private/overlay 또는 엄격한 allowlist endpoint만 사용합니다. URL에
+credential, query, fragment를 넣거나 TCP 8002를 인터넷 전체에 공개하지 않습니다.
+Valhalla 활성화 전 `TRANSIT_GEOMETRY_V2_ENABLED=1`과
+`RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1`을 함께 설정해야 합니다. base URL의
+path prefix는 client가 `/route`를 붙여도 보존됩니다.
+
+공원 snapshot import token은 32자 이상의 무작위 서버 전용 값이며 import하는
+짧은 시간에만 `PARK_ROUTE_IMPORT_ENABLED=1`로 엽니다. checksum·152건·active
+dataset을 확인하면 즉시 `0`으로 닫고, 추천 사용 여부는 별도
+`PARK_ROUTE_INTEGRATION_ENABLED`로 제어합니다. snapshot과 network handoff는
+runtime source나 공개 저장소에 넣지 않습니다.
 
 ## 4. 구성 검증과 기동
 
@@ -269,7 +305,8 @@ API만 갱신:
 ```bash
 export APP_COMMIT_SHA="$(git rev-parse HEAD)"
 docker compose --env-file .env.staging -f compose.staging.yml build api
-docker compose --env-file .env.staging -f compose.staging.yml up -d --no-deps api
+docker compose --env-file .env.staging -f compose.staging.yml \
+  up -d --no-deps --force-recreate --wait api
 ```
 
 컨테이너 중지와 network 제거는 DB volume을 보존합니다.
@@ -284,6 +321,22 @@ docker compose --env-file .env.staging -f compose.staging.yml down
 
 production 후보 이미지는 staging이 사용하는 3001과 충돌하지 않도록
 `127.0.0.1:3002`에서 smoke합니다.
+
+Valhalla·공원 경로 갱신은 다음 순서를 지킵니다.
+
+1. `WALKING_ROUTER=KAKAO`, park import/integration `0`으로 새 image의
+   migration·readiness·기존 추천을 확인합니다.
+2. park import만 일시적으로 `1`로 바꾸고 snapshot 검증·적재 후 다시 `0`으로
+   닫습니다.
+3. host와 API container에서 Valhalla smoke를 통과시킵니다.
+4. `WALKING_ROUTER=VALHALLA`로 재기동하고
+   `chimap_provider_configured{provider="VALHALLA"} == 1`, provider success와
+   `VALHALLA_WALK` 상세 leg를 확인합니다.
+5. 마지막으로 park integration을 `1`로 켜고 GOAL 경로를 확인합니다.
+
+장애 시 `WALKING_ROUTER=KAKAO`, `PARK_ROUTE_INTEGRATION_ENABLED=0`,
+`PARK_ROUTE_IMPORT_ENABLED=0`으로 API만 재기동합니다. dataset row를 삭제하지
+않으며 이전 검증 snapshot은 새 dataset ID로 재import합니다.
 
 ## 8. 2026-07-27 17:44 KST 확인 스냅샷
 
@@ -303,3 +356,19 @@ production 후보 이미지는 staging이 사용하는 3001과 충돌하지 않�
 
 따라서 staging API는 iPhone 실제 기기 추천 E2E에 사용할 수 있습니다. 남은
 외부 gate는 NAVER/Kakao/HealthKit 실기기와 eviction 복원입니다.
+
+## 9. 2026-07-30 Valhalla·공원 경로 확인 스냅샷
+
+- source/image: `21251280` / `sha256:1b8e8cae…`
+- `chimap-staging-api-1`, `chimap-staging-postgres-1` healthy, restart 0
+- local/external health·readiness·mobile-config HTTP 200, migration 13 current
+- readiness: 정류장 227,230개, 연결 3,658개, 노선 108개,
+  노선-정류장 6,801개, route-ready 지하철 segment 2,314개
+- `WALKING_ROUTER=VALHALLA`, park import 비활성, integration 활성
+- 공원 dataset 2개·저장 route 246개, active dataset 선언 route 152개
+- `chimap_provider_configured{provider="VALHALLA"} 1`, Valhalla walking success
+  7건과 `DETAILED/VALHALLA_WALK`, 공원 GOAL 포함 확인
+
+이 snapshot은 staging 증거이며 final `main` 또는 production 승격 완료를 뜻하지
+않습니다. production 전에는 private/allowlist 정책, clean release image,
+backup·restore, 전체 회귀와 public E2E를 다시 통과시킵니다.

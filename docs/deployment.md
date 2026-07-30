@@ -18,10 +18,15 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-현재 production 기준선은 2026-07-29 12:28 KST의 `main@6ef3e8a` 이미지
-`sha256:81d4709d...`이며 migration 11, 실제 지하철 선로와 버스·도보
-`transit-v2`가 활성화되어 있습니다. 최신 검증은 문서 끝의 투명 favicon
-승격 기록을 기준으로 합니다.
+2026-07-30 감사 기준 production 기준선은 code `d268e067`, image
+`sha256:200346ac...`, migration 13입니다. 상세 도보는 아직 Kakao이고 공원
+import endpoint는 활성 상태지만 dataset 0건·integration 비활성입니다. staging은 code `21251280`, image
+`sha256:1b8e8cae...`에서 Valhalla 상세 도보와 active 공원 경로 152건을
+검증했습니다. 최종 통합 `main`의 SHA·image·production 배포 시각은
+아직 확정하지 않았습니다. 2026-07-30 merged tree의 결정적 테스트 450개와
+격리 PostGIS 통합 테스트 12개, typecheck·format·Web/API/Mobile build·native
+config·staging public E2E는 통과했으며, 최종 SHA의 CI와 production gate 통과
+뒤 최종 증거를 append합니다.
 
 ## 1. 사전 조건
 
@@ -440,22 +445,34 @@ systemctl list-timers --all \
 
 ## 10. 후보 이미지 smoke
 
-현재 운영 컨테이너를 바꾸기 전에 별도 loopback 포트에서 새 이미지를
-기동할 수 있습니다. 3001은 staging origin이 사용하므로 후보 이미지는 3002를
-고정합니다.
+현재 운영 컨테이너와 mutable `chimap:actual-data` tag를 바꾸기 전에 최종 Git
+SHA로 immutable release image를 만들고 별도 loopback 포트에서 기동합니다.
+3001은 staging origin이 사용하므로 후보 이미지는 3002를 고정합니다.
 
 ```bash
+export RELEASE_SHA="$(git rev-parse HEAD)"
+export RELEASE_TAG="chimap:release-${RELEASE_SHA:0:8}"
+
+test -z "$(git status --porcelain)"
+docker build \
+  --build-arg NAVER_MAP_BROWSER_CLIENT_ID="$VITE_NAVER_MAP_NCP_KEY_ID" \
+  --tag "$RELEASE_TAG" .
+
 docker run --rm -d \
   --name chimap-api-candidate \
   --network chimap_internal \
   --env-file .env \
   -e NODE_ENV=production \
+  -e APP_COMMIT_SHA="$RELEASE_SHA" \
+  -e WALKING_ROUTER=KAKAO \
+  -e PARK_ROUTE_IMPORT_ENABLED=0 \
+  -e PARK_ROUTE_INTEGRATION_ENABLED=0 \
   -e PORT=3000 \
   -e WEB_ORIGIN=http://127.0.0.1:3002 \
   -e WEB_DIST_PATH=/app/web \
   -p 127.0.0.1:3002:3000 \
   --entrypoint sh \
-  chimap:actual-data \
+  "$RELEASE_TAG" \
   -lc 'export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"; exec node dist/server.js'
 
 curl -fsS http://127.0.0.1:3002/api/v1/health
@@ -469,20 +486,37 @@ curl -fsS http://127.0.0.1:3002/api/v1/mobile-config
 `DATABASE_URL`을 그대로 믿지 않고 Compose와 같은 `POSTGRES_*` 값으로 내부
 주소를 만듭니다. 후보의 `WEB_ORIGIN`은 loopback이므로 정적 asset과 로컬 UI를
 검증할 수 있지만 운영 OAuth callback 검증은 공개 승격 뒤 수행합니다.
+`APP_COMMIT_SHA`는 `.env`의 과거 값이 아니라 후보를 만든 정확한 Git SHA를
+주입합니다. staging과 production의 browser NAVER Client ID가 다르면 같은
+image를 재태그하지 말고 같은 Git SHA에서 환경별 image를 각각 빌드합니다.
 
 ## 11. API·모니터링 승격
 
+첫 승격은 `.env`도 `WALKING_ROUTER=KAKAO`, park import/integration `0`으로
+고정합니다. 신규 상세 공급자는 §25의 단계별 gate에서 나중에 활성화합니다.
+
 ```bash
-docker compose up -d --no-build \
+docker tag chimap:actual-data "chimap:rollback-pre-${RELEASE_SHA:0:8}"
+docker tag "$RELEASE_TAG" chimap:actual-data
+
+export APP_COMMIT_SHA="$RELEASE_SHA"
+docker compose up -d --no-build --force-recreate --wait \
   api alert-relay alertmanager prometheus
 docker compose ps
 curl -fsS http://127.0.0.1:3000/api/v1/health
 curl -fsS http://127.0.0.1:3000/api/v1/readiness
 curl -fsS http://127.0.0.1:3000/api/v1/mobile-config
+curl -fsS -X POST http://127.0.0.1:9090/-/reload
+curl -fsS http://127.0.0.1:9090/api/v1/rules
 ```
 
 readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 전환합니다.
+API와 alert relay 모두 같은 `APP_COMMIT_SHA`를 받아야 합니다. bind mount된
+Prometheus rule 파일은 자동 reload되지 않으므로 lifecycle reload 뒤 25개
+rule의 health, 변경한 provider rate-limit 식과 firing alert 0건을 확인합니다.
+API 내부 metrics의 `chimap_build_info{commit="..."}`도 `RELEASE_SHA`와 같아야
+합니다.
 
 공개 smoke:
 
@@ -818,7 +852,25 @@ docker compose up -d --no-build --force-recreate alert-relay
 
 ## 16. 롤백
 
-코드만 문제이고 schema가 호환되면 직전 검증 이미지로 API만 되돌립니다.
+Valhalla 또는 공원 후보만 문제라면 먼저 image와 DB를 바꾸지 않고 다음 flag를
+되돌립니다.
+
+```dotenv
+WALKING_ROUTER=KAKAO
+PARK_ROUTE_INTEGRATION_ENABLED=0
+PARK_ROUTE_IMPORT_ENABLED=0
+```
+
+Kakao credential은 rollout 내내 유지하고 API만 `--no-build --force-recreate`한 뒤
+health, readiness, 일반 추천과 provider metric을 확인합니다. 공원 dataset row는
+삭제하지 않습니다. 이전 검증 dataset으로 돌아가야 하면 동일 dataset ID를
+덮어쓰지 않고 새 dataset ID로 재import합니다.
+
+코드만 문제이고 schema가 호환되면 immutable rollback image를
+`chimap:actual-data`로 재태그하고 해당 image의 정확한 `APP_COMMIT_SHA`로 API와
+alert relay를 함께 재기동합니다. 최종 schema가 계속 migration 13이면 현재
+`chimap:release-d268e06` 기준선으로 돌아갈 수 있습니다. 더 높은 migration이
+추가되면 이전 binary의 readiness가 forward-compatible한지 먼저 확인합니다.
 DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 않고 다음
 순서를 따릅니다.
 
@@ -1019,22 +1071,34 @@ DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 
   반환했습니다. local·public health/readiness/mobile-config도 HTTP 200입니다.
 - Prometheus target 3개가 모두 `up`, rule 22개 중 firing 0건이며 API·alert relay
   배포 후 오류 로그 0건을 확인했습니다.
-# Park route import rollout
 
-The review VM sends snapshots over the existing Cloudflare Tunnel HTTPS
-origin. Do not expose VM ports 3000/3001, PostgreSQL, or add another public
-port. The review VM is used only when publishing data and is never a runtime
-recommendation dependency.
+## 25. 2026-07-30 Valhalla·공원 경로 pre-release 절차
 
-1. Deploy code and migration 12.
-2. Set `PARK_ROUTE_IMPORT_ENABLED=1` and a random
-   `PARK_ROUTE_IMPORT_TOKEN` of at least 32 characters; restart staging.
-3. Import and check `/api/v1/internal/park-routes/status` and the route count.
-4. Run recommendation regression checks.
-5. Set `PARK_ROUTE_INTEGRATION_ENABLED=1` and restart staging.
-6. Repeat for production after staging validation.
+검토 VM은 기존 Cloudflare Tunnel HTTPS origin으로 snapshot을 보낼 때만
+사용하며 runtime 추천 의존성이 아닙니다. VM port 3000/3001, PostgreSQL 또는
+Valhalla TCP 8002를 인터넷 전체에 공개하지 않습니다. Valhalla endpoint는
+private/overlay 또는 명시적으로 승인된 엄격한 allowlist만 사용합니다.
 
-Staging import:
+안전한 활성화 순서는 다음과 같습니다.
+
+1. immutable image를 `WALKING_ROUTER=KAKAO`,
+   `PARK_ROUTE_IMPORT_ENABLED=0`, `PARK_ROUTE_INTEGRATION_ENABLED=0`으로 배포해
+   migration 12·13과 기존 추천 회귀를 확인합니다.
+2. `TRANSIT_GEOMETRY_V2_ENABLED=1`과
+   `RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=1`을 먼저 확인합니다.
+3. import만 일시적으로 활성화하고 32자 이상의 무작위 서버 전용 token으로
+   검증된 snapshot을 보냅니다. checksum, 정확히 152건, active dataset과 DB
+   geometry를 확인한 뒤 `PARK_ROUTE_IMPORT_ENABLED=0`으로 즉시 닫습니다.
+4. API host와 실제 API container network namespace 양쪽에서 Valhalla를
+   smoke합니다.
+5. `WALKING_ROUTER=VALHALLA`로 재기동하고 ordinary, bus-only, bus/subway,
+   subway-only, GOAL 경로를 회귀 검증합니다.
+6. 마지막으로 `PARK_ROUTE_INTEGRATION_ENABLED=1`을 켜고 공원 connector와
+   GOAL 경로를 검증합니다.
+7. staging 전체 gate가 끝난 뒤 production에서 backup·restore를 먼저 수행하고
+   같은 순서를 반복합니다.
+
+Staging import 예시:
 
 ```bash
 curl --fail-with-body --retry 3 --retry-all-errors \
@@ -1046,21 +1110,12 @@ curl --fail-with-body --retry 3 --retry-all-errors \
   --data-binary "@park_routes_snapshot_v1.json"
 ```
 
-For production, change only the host to `chimap.madcamp-kaist.org`. Import and
-integration flags are intentionally separate so data can be validated before
-recommendations use it. Re-sending identical data is a no-op. To roll back,
-disable integration immediately or import the previously validated content
-under a new dataset ID, then verify status; do not delete the active dataset.
+production에서는 host만 production으로 바꾸며 import와 integration flag를
+분리합니다. 같은 snapshot 재전송은 no-op이어야 합니다. snapshot 원본은 release
+artifact로 별도 보관하고 network handoff, 실제 endpoint, credential과 token은
+Git에 넣지 않습니다.
 
-# Valhalla walking geometry rollout
-
-Only the CHIMap API calls Valhalla. Use a private or tightly allowlisted
-endpoint and never expose Valhalla TCP 8002 to the public internet. Kakao is
-still required for place lookup and bus road geometry; this setting changes
-only the detailed walking geometry provider.
-
-Verify network access from the API host and the actual API container before
-changing the router:
+Valhalla 통신 확인:
 
 ```bash
 curl --fail-with-body --connect-timeout 3 --max-time 5 \
@@ -1074,8 +1129,7 @@ pnpm valhalla:smoke-test \
   --to 127.3845,36.3552
 ```
 
-First deploy with `WALKING_ROUTER=KAKAO`. After the smoke test and staging
-recommendation regression pass, configure and restart the API with:
+smoke와 staging 회귀가 끝난 뒤에만 다음 값을 함께 설정합니다.
 
 ```dotenv
 TRANSIT_GEOMETRY_V2_ENABLED=1
@@ -1089,14 +1143,13 @@ VALHALLA_MAX_SNAP_DISTANCE_METERS=100
 VALHALLA_MAX_DETOUR_RATIO=5
 ```
 
-The API rejects a Valhalla configuration unless both geometry flags are set to
-`1`. A base URL path prefix is preserved when the client appends `/route`.
+API는 두 geometry flag가 모두 `1`이 아니면 Valhalla 설정을 거절해야 합니다.
+`VALHALLA_BASE_URL`에 path prefix가 있으면 client가 `/route`를 붙일 때 그 prefix를
+보존해야 합니다. `chimap_provider_configured{provider="VALHALLA"} == 1`과
+`chimap_route_provider_requests_total{provider="VALHALLA",operation="WALK_GEOMETRY",outcome="SUCCESS"}`를
+확인하고 성공한 상세 도보의 source가 `VALHALLA_WALK`인지 검증합니다.
+Valhalla 실패는 근사 도보 leg로 격리되며 자동 Kakao fallback switch는 없습니다.
 
-Check `chimap_provider_configured{provider="VALHALLA"} == 1`, then verify
-ordinary, bus-only, bus/subway, subway-only, GOAL, and park connector routes. Successful detailed walking legs must be recorded with source
-`VALHALLA_WALK`. A Valhalla failure is isolated to an approximate walking leg;
-there is no automatic Kakao fallback switch.
-
-To roll back, explicitly set `WALKING_ROUTER=KAKAO` and restart only the API.
-Keep the Kakao credentials in place throughout the rollout. If park connectors
-are also unhealthy, set `PARK_ROUTE_INTEGRATION_ENABLED=0` independently.
+2026-07-30 감사 시 staging은 Valhalla success 7건, active 공원 경로 152건과
+공원 GOAL 포함을 확인했습니다. production은 아직 Kakao와 공원 0건이므로 이
+section은 최종 production 배포 완료 기록이 아니라 release 절차와 staging 증거입니다.
