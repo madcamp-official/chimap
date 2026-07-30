@@ -13,6 +13,7 @@ import {
   type WalkingRole,
 } from "@chimap/contracts";
 import { createHash } from "node:crypto";
+import pLimit, { type LimitFunction } from "p-limit";
 
 import type { AppConfig } from "../config.js";
 import { MemoryCache } from "../services/cache.js";
@@ -37,6 +38,7 @@ import {
   classifyGeometryError,
   RouteGeometryService,
   withWalkingGeometryLimit,
+  type ResolvedBusGeometry,
 } from "./route-geometry.js";
 import type { RouteGeometryObservation } from "./route-geometry.js";
 
@@ -102,6 +104,10 @@ type RoutePath = {
   durationSeconds: number;
   transferCount: number;
 };
+
+type MaterializationUnit =
+  | { kind: "WALK"; edge: GraphEdge; outputIndex: number }
+  | { kind: "RIDE"; steps: TraversedEdge[]; outputIndex: number };
 
 type SearchLabel = {
   nodeId: string;
@@ -397,6 +403,7 @@ export class MultimodalRoutePlanner {
   readonly #subwayGraphCache = new MemoryCache(48 * 1024 * 1024);
   readonly #walkingCache = new MemoryCache(32 * 1024 * 1024);
   readonly #routeGeometryService: RouteGeometryService;
+  readonly #materializationLimit: LimitFunction = pLimit(4);
 
   public constructor(options: {
     baseProvider: MobilityProvider & RoadGeometryProvider;
@@ -465,12 +472,10 @@ export class MultimodalRoutePlanner {
       800,
       this.#config.transit.routeSearchMaxDistanceMeters,
     ].filter((value, index, values) => values.indexOf(value) === index);
-    for (const radius of radii.sort((a, b) => a - b)) {
-      const nearby = await this.#transitService.getNearbyStops(
-        coordinate,
-        radius,
-        signal,
-      );
+    const loadNearby = async (nearby: {
+      items: BusStop[];
+      partial: boolean;
+    }): Promise<void> => {
       partial ||= nearby.partial;
       const candidates = nearby.items
         .filter(
@@ -484,16 +489,18 @@ export class MultimodalRoutePlanner {
         checked.add(`${stop.cityCode}:${stop.nodeId}`),
       );
       const loaded = await Promise.allSettled(
-        candidates.map(async (stop): Promise<StopRoutes> => ({
-          stop,
-          routes: (
-            await this.#transitService.getRoutesByStop(
-              stop.cityCode!,
-              stop.nodeId!,
-              signal,
-            )
-          ).items,
-        })),
+        candidates.map((stop) =>
+          this.#materializationLimit(async (): Promise<StopRoutes> => ({
+            stop,
+            routes: (
+              await this.#transitService.getRoutesByStop(
+                stop.cityCode!,
+                stop.nodeId!,
+                signal,
+              )
+            ).items,
+          })),
+        ),
       );
       entries.push(
         ...loaded.flatMap((result) =>
@@ -502,8 +509,45 @@ export class MultimodalRoutePlanner {
             : [],
         ),
       );
+    };
+    for (const radius of radii.sort((a, b) => a - b)) {
+      const nearby = await this.#transitService.getNearbyStops(
+        coordinate,
+        radius,
+        signal,
+        this.#config.recommendation.phasedTimeoutsEnabled
+          ? { mode: "DATABASE_ONLY", routableOnly: true }
+          : undefined,
+      );
+      await loadNearby(nearby);
       if (entries.length >= 8) {
         break;
+      }
+    }
+    if (
+      this.#config.recommendation.phasedTimeoutsEnabled &&
+      entries.length === 0
+    ) {
+      const maximumRadius = Math.max(...radii);
+      try {
+        await loadNearby(
+          await this.#transitService.getNearbyStops(
+            coordinate,
+            maximumRadius,
+            signal,
+            {
+              mode: "FORCE_ONLINE",
+              onlineTimeoutMilliseconds: 2_000,
+              routableOnly: true,
+              reconcileOnline: false,
+            },
+          ),
+        );
+      } catch (error) {
+        if (signal?.aborted === true) {
+          throw error;
+        }
+        partial = true;
       }
     }
     return {
@@ -612,18 +656,25 @@ export class MultimodalRoutePlanner {
       routeMap.set(routeKey(route), route);
     }
     const loadedRoutes = await Promise.allSettled(
-      [...routeMap.values()].map(async (route) => ({
-        route: await this.#transitService.getRoute(
-          route.cityCode,
-          route.routeId,
-          request.signal,
-        ),
-        stops: await this.#transitService.getRouteStops(
-          route.cityCode,
-          route.routeId,
-          request.signal,
-        ),
-      })),
+      [...routeMap.values()].map(async (route) => {
+        const [detailedRoute, stops] = await Promise.all([
+          this.#materializationLimit(() =>
+            this.#transitService.getRoute(
+              route.cityCode,
+              route.routeId,
+              request.signal,
+            ),
+          ),
+          this.#materializationLimit(() =>
+            this.#transitService.getRouteStops(
+              route.cityCode,
+              route.routeId,
+              request.signal,
+            ),
+          ),
+        ]);
+        return { route: detailedRoute, stops };
+      }),
     );
     const busNodesByStopId = new Map<string, string>();
     for (const loaded of loadedRoutes) {
@@ -931,17 +982,29 @@ export class MultimodalRoutePlanner {
     const walkingSignal = signal === undefined
       ? budgetSignal
       : AbortSignal.any([signal, budgetSignal]);
+    let queueWaitMilliseconds = 0;
+    let queueStartedCount = 0;
+    let queueAbortedBeforeStartCount = 0;
     try {
       const route = await this.#walkingCache.getOrLoad(
         cacheKey,
         30 * 60 * 1_000,
-        () =>
-          withWalkingGeometryLimit(() => this.#baseProvider.getWalkingRoute({
+        () => withWalkingGeometryLimit(
+          () => this.#baseProvider.getWalkingRoute({
             origin: from,
             destination: to,
             routeMode: "BROAD_FIRST",
             signal: walkingSignal,
-          }), walkingSignal),
+          }),
+          walkingSignal,
+          (observation) => {
+            queueWaitMilliseconds = observation.queueWaitMilliseconds;
+            queueStartedCount = observation.started ? 1 : 0;
+            queueAbortedBeforeStartCount = observation.abortedBeforeStart
+              ? 1
+              : 0;
+          },
+        ),
       );
       const legs = route.legs.map((leg, legIndex) => ({
         ...leg,
@@ -973,6 +1036,9 @@ export class MultimodalRoutePlanner {
         successfulSectionCount: 1,
         failedSectionCount: 0,
         walkingRole: role,
+        queueWaitMilliseconds,
+        queueStartedCount,
+        queueAbortedBeforeStartCount,
       });
       return legs;
     } catch (error) {
@@ -988,6 +1054,9 @@ export class MultimodalRoutePlanner {
         successfulSectionCount: 0,
         failedSectionCount: 1,
         walkingRole: role,
+        queueWaitMilliseconds,
+        queueStartedCount,
+        queueAbortedBeforeStartCount,
       });
       return [{
         id: `multimodal-walk-${index}`,
@@ -1031,28 +1100,36 @@ export class MultimodalRoutePlanner {
       (total, step) => total + step.edge.durationSeconds,
       0,
     );
-    const fallbackWaitSeconds = first.boardingWaitSeconds;
-    const road = await this.#routeGeometryService.resolveBusGeometry({
-      stops,
+    const roadPromise: Promise<ResolvedBusGeometry> =
+      graph.geometryProfile === "TRANSIT_V2" &&
+        this.#config.recommendation.selectedGeometryEnabled
+        ? Promise.resolve({
+            coordinates: stops.map(stopCoordinate),
+            quality: "APPROXIMATE",
+            reason: "NONE",
+          })
+        : this.#routeGeometryService.resolveBusGeometry({
+            stops,
+            ...(signal === undefined ? {} : { signal }),
+            ...(graph.observeRouteGeometry === undefined
+              ? {}
+              : { observe: graph.observeRouteGeometry }),
+          });
+    const timingPromise = this.#transitService.resolveBusTiming({
+      cityCode: route.cityCode,
+      nodeId: stops[0]!.nodeId,
+      routeId: route.routeId,
+      plannedBoardingAt: new Date(first.startedAtEpochSeconds * 1_000),
+      fallbackWaitSeconds: first.boardingWaitSeconds,
       ...(signal === undefined ? {} : { signal }),
-      ...(graph.observeRouteGeometry === undefined
-        ? {}
-        : { observe: graph.observeRouteGeometry }),
     });
+    const [road, timing] = await Promise.all([roadPromise, timingPromise]);
     const coordinates = road.coordinates.length >= 2
       ? road.coordinates
       : stops.map(stopCoordinate);
     const roadMatched = road.quality === "DETAILED";
     const boarding = stops[0]!;
     const alighting = stops.at(-1)!;
-    const timing = await this.#transitService.resolveBusTiming({
-      cityCode: route.cityCode,
-      nodeId: boarding.nodeId,
-      routeId: route.routeId,
-      plannedBoardingAt: new Date(first.startedAtEpochSeconds * 1_000),
-      fallbackWaitSeconds,
-      ...(signal === undefined ? {} : { signal }),
-    });
     const waitSeconds = timing.waitSeconds;
     const bus: TransitBusLeg = {
       routeId: route.routeId,
@@ -1191,12 +1268,12 @@ export class MultimodalRoutePlanner {
     index: number,
     signal?: AbortSignal,
   ): Promise<NormalizedRoute> {
-    const legs: RouteLeg[] = [];
+    const units: MaterializationUnit[] = [];
     let cursor = 0;
     while (cursor < path.steps.length) {
       const step = path.steps[cursor]!;
       if (step.edge.kind === "WALK") {
-        legs.push(...(await this.#walkingLegs(graph, step.edge, cursor, signal)));
+        units.push({ kind: "WALK", edge: step.edge, outputIndex: cursor });
         cursor += 1;
         continue;
       }
@@ -1210,17 +1287,42 @@ export class MultimodalRoutePlanner {
         group.push(path.steps[cursor]!);
         cursor += 1;
       }
-      legs.push(
-        group[0]!.edge.mode === "BUS"
-          ? await this.#busLeg(graph, group, index * 100 + cursor, signal)
-          : await this.#subwayLeg(
-              graph,
-              group,
-              index * 100 + cursor,
-              signal,
-            ),
-      );
+      units.push({
+        kind: "RIDE",
+        steps: group,
+        outputIndex: index * 100 + cursor,
+      });
     }
+    const materialized = await Promise.all(
+      units.map((unit) =>
+        this.#materializationLimit(async (): Promise<RouteLeg[]> => {
+          if (unit.kind === "WALK") {
+            return this.#walkingLegs(
+              graph,
+              unit.edge,
+              unit.outputIndex,
+              signal,
+            );
+          }
+          return [
+            unit.steps[0]!.edge.mode === "BUS"
+              ? await this.#busLeg(
+                  graph,
+                  unit.steps,
+                  unit.outputIndex,
+                  signal,
+                )
+              : await this.#subwayLeg(
+                  graph,
+                  unit.steps,
+                  unit.outputIndex,
+                  signal,
+                ),
+          ];
+        }),
+      ),
+    );
+    const legs = materialized.flat();
     const distanceMeters = legs.reduce(
       (total, leg) => total + leg.distanceMeters,
       0,

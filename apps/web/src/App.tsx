@@ -898,10 +898,6 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
                 </details>
               )}
 
-              {origin === undefined || destination === undefined ? null : (
-                <NearbySubwayPanel origin={origin} destination={destination} />
-              )}
-
               <div className="recommendation-list">
                 {result.recommendations.map((recommendation, index) => {
                   const detailsId = `route-details-${recommendation.id}`;
@@ -945,6 +941,10 @@ function PlannerApp({ reverseAddress, authEnabled }: Required<AppProps>) {
                     </p>
                   ) : null}
                 </>
+              )}
+
+              {origin === undefined || destination === undefined ? null : (
+                <NearbySubwayPanel origin={origin} destination={destination} />
               )}
 
               </div>

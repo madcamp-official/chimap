@@ -602,4 +602,55 @@ export const TRANSIT_MIGRATIONS: ReadonlyArray<{
         ON bus_segment_geometries(expires_at);
     `,
   },
+  {
+    version: 13,
+    name: "bus_segment_geometry_versions",
+    sql: `
+      CREATE TABLE IF NOT EXISTS bus_segment_geometry_versions (
+        route_internal_id bigint NOT NULL
+          REFERENCES bus_routes(id) ON DELETE CASCADE,
+        from_node_order integer NOT NULL CHECK (from_node_order >= 0),
+        to_node_order integer NOT NULL CHECK (to_node_order > from_node_order),
+        geometry_version varchar(80) NOT NULL
+          CHECK (length(trim(geometry_version)) > 0),
+        road_geometry geometry(LineString, 4326) NOT NULL,
+        distance_meters integer NOT NULL CHECK (distance_meters > 0),
+        geometry_source varchar(60) NOT NULL,
+        source_hash char(64) NOT NULL,
+        start_snap_distance_meters double precision NOT NULL
+          CHECK (
+            start_snap_distance_meters >= 0
+            AND start_snap_distance_meters < 1000000
+          ),
+        end_snap_distance_meters double precision NOT NULL
+          CHECK (
+            end_snap_distance_meters >= 0
+            AND end_snap_distance_meters < 1000000
+          ),
+        detour_ratio double precision NOT NULL
+          CHECK (detour_ratio > 0 AND detour_ratio < 1000000),
+        out_and_back boolean NOT NULL DEFAULT false,
+        fresh_until timestamptz NOT NULL,
+        expires_at timestamptz NOT NULL,
+        last_used_at timestamptz NOT NULL DEFAULT now(),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY(
+          route_internal_id,
+          from_node_order,
+          to_node_order,
+          geometry_version
+        ),
+        CHECK (expires_at > fresh_until),
+        CHECK (
+          ST_SRID(road_geometry) = 4326
+          AND GeometryType(road_geometry) = 'LINESTRING'
+          AND ST_NPoints(road_geometry) >= 2
+          AND ST_IsValid(road_geometry)
+        )
+      );
+      CREATE INDEX IF NOT EXISTS bus_segment_geometry_versions_expiry_index
+        ON bus_segment_geometry_versions(geometry_version, expires_at);
+    `,
+  },
 ];

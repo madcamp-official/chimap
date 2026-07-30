@@ -8,6 +8,7 @@ import {
   parseTagoResponsePage,
   TagoApiError,
   TagoClient,
+  type TagoRouteProviderObservation,
 } from "./tago-client.js";
 
 const source = JSON.parse(
@@ -263,5 +264,161 @@ describe("TAGO 지하철 client", () => {
     expect(error).toBeInstanceOf(TagoApiError);
     expect((error as TagoApiError).safeMessage).toContain("[REDACTED]");
     expect((error as TagoApiError).safeMessage).not.toContain(rawKey);
+  });
+});
+
+describe("TAGO route provider 관측", () => {
+  const config = loadConfig({
+    NODE_ENV: "test",
+    DATA_GO_KR_SERVICE_KEY: "route-provider-key",
+    TAGO_HTTP_RETRY_COUNT: "0",
+  });
+
+  it("고정 operation enum과 결과만 기록하고 요청 좌표는 기록하지 않는다", async () => {
+    const observations: TagoRouteProviderObservation[] = [];
+    const client = new TagoClient(config, async () =>
+      new Response(
+        JSON.stringify({
+          response: {
+            header: { resultCode: "00", resultMsg: "NORMAL SERVICE." },
+            body: {
+              items: { item: { citycode: "25", cityname: "대전" } },
+              totalCount: 1,
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    client.setRouteProviderObserver((observation) =>
+      observations.push(observation),
+    );
+
+    await client.getCityCodes();
+
+    expect(observations).toHaveLength(1);
+    expect(observations[0]).toMatchObject({
+      provider: "TAGO",
+      operation: "CITY_CODES",
+      outcome: "SUCCESS",
+      timeoutOrigin: "NONE",
+    });
+    expect(observations[0]?.durationMilliseconds).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(observations)).not.toContain("serviceKey");
+  });
+
+  it("tagged planning abort를 provider timeout과 구분한다", async () => {
+    const observations: TagoRouteProviderObservation[] = [];
+    const client = new TagoClient(config, async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted === true) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }));
+    client.setRouteProviderObserver((observation) =>
+      observations.push(observation),
+    );
+    const controller = new AbortController();
+    const pending = client.getNearbyStops(
+      { lat: 36.35, lng: 127.37 },
+      controller.signal,
+    );
+    controller.abort({ chimapTimeoutOrigin: "PLANNING" });
+
+    await expect(pending).rejects.toMatchObject({ resultCode: "ABORTED" });
+    expect(observations).toEqual([
+      expect.objectContaining({
+        provider: "TAGO",
+        operation: "NEARBY_STOPS",
+        outcome: "TIMEOUT",
+        timeoutOrigin: "PLANNING",
+      }),
+    ]);
+  });
+
+  it("provider 호출에 건 timeout signal을 provider timeout으로 기록한다", async () => {
+    const observations: TagoRouteProviderObservation[] = [];
+    const client = new TagoClient(config, async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted === true) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }));
+    client.setRouteProviderObserver((observation) =>
+      observations.push(observation),
+    );
+
+    await expect(client.getNearbyStops(
+      { lat: 36.35, lng: 127.37 },
+      AbortSignal.timeout(1),
+    )).rejects.toMatchObject({ resultCode: "ABORTED" });
+
+    expect(observations).toEqual([
+      expect.objectContaining({
+        provider: "TAGO",
+        operation: "NEARBY_STOPS",
+        outcome: "TIMEOUT",
+        timeoutOrigin: "PROVIDER",
+      }),
+    ]);
+  });
+
+  it("추천 hot path의 nearby 조회는 명시된 retry 0회를 지킨다", async () => {
+    let requestCount = 0;
+    const observations: TagoRouteProviderObservation[] = [];
+    const client = new TagoClient(config, async () => {
+      requestCount += 1;
+      return new Response("unavailable", { status: 503 });
+    });
+    client.setRouteProviderObserver((observation) =>
+      observations.push(observation),
+    );
+
+    await expect(client.getNearbyStops(
+      { lat: 36.35, lng: 127.37 },
+      undefined,
+      { retryCount: 0 },
+    )).rejects.toMatchObject({ resultCode: "HTTP_503" });
+
+    expect(requestCount).toBe(1);
+    expect(observations).toEqual([
+      expect.objectContaining({
+        provider: "TAGO",
+        operation: "NEARBY_STOPS",
+        outcome: "HTTP_5XX",
+        timeoutOrigin: "NONE",
+      }),
+    ]);
+  });
+
+  it("HTTP 429를 일반 provider 오류와 분리한다", async () => {
+    const observations: TagoRouteProviderObservation[] = [];
+    const client = new TagoClient(config, async () =>
+      new Response("rate limited", { status: 429 }));
+    client.setRouteProviderObserver((observation) =>
+      observations.push(observation),
+    );
+
+    await expect(client.getNearbyStops(
+      { lat: 36.35, lng: 127.37 },
+    )).rejects.toMatchObject({ resultCode: "HTTP_429" });
+
+    expect(observations).toEqual([
+      expect.objectContaining({
+        provider: "TAGO",
+        operation: "NEARBY_STOPS",
+        outcome: "RATE_LIMIT",
+        timeoutOrigin: "NONE",
+      }),
+    ]);
   });
 });

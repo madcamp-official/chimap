@@ -19,15 +19,16 @@ import type {
   RouteGeometryProfile,
   SubwayGeometryObservation,
 } from "../providers/subway-track-geometry.js";
-import {
-  classifyGeometryError,
-  withWalkingGeometryLimit,
-  type RouteGeometryObservation,
-} from "../providers/route-geometry.js";
+import type { RouteGeometryObservation } from "../providers/route-geometry.js";
 import {
   calculateRemainingSteps,
   calculateTargetWalkDistanceMeters,
 } from "./calculations.js";
+import {
+  SelectedRouteGeometryService,
+  type GeometrySkippedObservation,
+  type SelectedRouteGeometryPlan,
+} from "./selected-route-geometry-service.js";
 
 export type CandidateKind =
   | "BASE"
@@ -45,6 +46,7 @@ export type CandidateGenerationResult = {
   candidates: RouteCandidate[];
   candidateFailureCount: number;
   routeApiCallCount: number;
+  planningTimedOut?: boolean;
 };
 
 type AdjustmentSpec = {
@@ -57,9 +59,6 @@ type AdjustmentSpec = {
   estimatedWalkDistanceMeters: number;
   fit: number;
 };
-
-const FINAL_WALK_GEOMETRY_BUDGET_MILLISECONDS = 8_000;
-const FINAL_WALK_GEOMETRY_CALL_LIMIT = 8;
 
 function approximateWalkingRoute(
   source: MobilityProvider["source"],
@@ -99,36 +98,46 @@ function approximateWalkingRoute(
   });
 }
 
-type ResolvedWalkingGeometry = {
-  coordinates: Coordinate[] | null;
-  reason: ReturnType<typeof classifyGeometryError> | "NONE" | "EMPTY_PATH";
-  durationMilliseconds: number;
-};
-
-function walkingGeometryKey(from: Coordinate, to: Coordinate): string {
-  return [
-    from.lng.toFixed(5),
-    from.lat.toFixed(5),
-    to.lng.toFixed(5),
-    to.lat.toFixed(5),
-  ].join(":");
+function isDeadlineAbort(signal?: AbortSignal): boolean {
+  return signal?.aborted === true &&
+    signal.reason instanceof DOMException &&
+    signal.reason.name === "TimeoutError";
 }
 
-function joinedWalkingCoordinates(route: NormalizedRoute): Coordinate[] {
-  const coordinates: Coordinate[] = [];
-  for (const leg of route.legs) {
-    for (const point of leg.coordinates) {
-      const previous = coordinates.at(-1);
-      if (
-        previous === undefined ||
-        previous.lat !== point.lat ||
-        previous.lng !== point.lng
-      ) {
-        coordinates.push(point);
-      }
-    }
-  }
-  return coordinates;
+function abortedProviderError(signal: AbortSignal): ProviderError {
+  const timedOut = isDeadlineAbort(signal);
+  return new ProviderError({
+    kind: timedOut ? "TIMEOUT" : "ABORTED",
+    message: timedOut
+      ? "후보 경로 생성 시간이 초과되었습니다."
+      : "후보 경로 생성이 취소되었습니다.",
+    retryable: timedOut,
+    cause: signal.reason,
+  });
+}
+
+function withAbortSignal<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal === undefined) return operation;
+  if (signal.aborted) return Promise.reject(abortedProviderError(signal));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", handleAbort);
+      callback();
+    };
+    const handleAbort = () =>
+      settle(() => reject(abortedProviderError(signal)));
+    signal.addEventListener("abort", handleAbort, { once: true });
+    operation.then(
+      (value) => settle(() => resolve(value)),
+      (error: unknown) => settle(() => reject(error)),
+    );
+  });
 }
 
 class RouteCallBudget {
@@ -257,46 +266,6 @@ function polylineDistanceMeters(coordinates: readonly Coordinate[]): number {
     );
   }
   return Math.round(distance);
-}
-
-function closestCoordinateIndex(
-  coordinates: readonly Coordinate[],
-  target: Coordinate,
-): number {
-  let bestIndex = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  coordinates.forEach((coordinate, index) => {
-    const distance = haversineDistanceMeters(coordinate, target);
-    if (distance < bestDistance) {
-      bestIndex = index;
-      bestDistance = distance;
-    }
-  });
-  return bestIndex;
-}
-
-function sliceBusPolyline(
-  coordinates: readonly Coordinate[],
-  firstStop: BusRouteStop,
-  lastStop: BusRouteStop,
-): Coordinate[] {
-  const fallback = [stopCoordinate(firstStop), stopCoordinate(lastStop)];
-  if (coordinates.length < 2) {
-    return fallback;
-  }
-  const startIndex = closestCoordinateIndex(
-    coordinates,
-    stopCoordinate(firstStop),
-  );
-  const endIndex = closestCoordinateIndex(
-    coordinates,
-    stopCoordinate(lastStop),
-  );
-  if (endIndex <= startIndex) {
-    return fallback;
-  }
-  const result = coordinates.slice(startIndex, endIndex + 1);
-  return result.length >= 2 ? result : fallback;
 }
 
 function busLegIndexes(route: NormalizedRoute): {
@@ -494,7 +463,7 @@ function walkingLegs(
   }));
 }
 
-function adjustedBusLeg(
+export function adjustedBusLeg(
   leg: RouteLeg,
   startIndex: number,
   endIndex: number,
@@ -510,16 +479,13 @@ function adjustedBusLeg(
   if (boarding === undefined || alighting === undefined || stops.length < 2) {
     throw new RangeError("조정한 버스 구간에는 두 개 이상의 정류장이 필요합니다.");
   }
-  const polyline = sliceBusPolyline(
-    leg.coordinates.length >= 2 ? leg.coordinates : bus.polyline,
-    boarding,
-    alighting,
-  );
+  const polyline = stops.map(stopCoordinate);
   const distanceMeters = Math.max(1, polylineDistanceMeters(polyline));
-  const distanceRatio =
-    leg.distanceMeters <= 0
-      ? stops.length / bus.stops.length
-      : distanceMeters / leg.distanceMeters;
+  const fullStopDistanceMeters = Math.max(
+    1,
+    polylineDistanceMeters(bus.stops.map(stopCoordinate)),
+  );
+  const distanceRatio = distanceMeters / fullStopDistanceMeters;
   const expectedRideSeconds = Math.max(
     60,
     Math.round(bus.expectedRideSeconds * Math.min(distanceRatio, 1)),
@@ -545,6 +511,9 @@ function adjustedBusLeg(
       adjustedBus.expectedArrivalSeconds + adjustedBus.expectedRideSeconds,
     stops: stops.map((stop) => stop.stopName),
     coordinates: polyline,
+    ...(leg.geometryQuality === undefined
+      ? {}
+      : { geometryQuality: "APPROXIMATE" as const }),
     bus: adjustedBus,
   };
 }
@@ -747,142 +716,60 @@ function withinGoalTolerance(
 
 export class CandidateGenerator {
   readonly #provider: MobilityProvider;
+  readonly #selectedRouteGeometry: SelectedRouteGeometryService;
 
   public constructor(provider: MobilityProvider) {
     this.#provider = provider;
+    this.#selectedRouteGeometry = new SelectedRouteGeometryService(provider);
   }
 
-  public async enrichWalkingGeometry(
+  public enrichSelectedRouteGeometry(
     recommendations: readonly Recommendation[],
     signal?: AbortSignal,
     observe?: (observation: RouteGeometryObservation) => void,
+    observeSkipped?: (observation: GeometrySkippedObservation) => void,
   ): Promise<Recommendation[]> {
-    const targets = new Map<
-      string,
-      { from: Coordinate; to: Coordinate }
-    >();
-    for (const recommendation of recommendations) {
-      for (const leg of recommendation.legs) {
-        const from = leg.coordinates[0];
-        const to = leg.coordinates.at(-1);
-        if (
-          leg.mode !== "WALK" ||
-          leg.geometryQuality === "DETAILED" ||
-          leg.distanceMeters <= 20 ||
-          from === undefined ||
-          to === undefined
-        ) {
-          continue;
-        }
-        const key = walkingGeometryKey(from, to);
-        if (!targets.has(key)) targets.set(key, { from, to });
-      }
-    }
-    if (targets.size === 0) return [...recommendations];
-
-    const budgetSignal = AbortSignal.timeout(
-      FINAL_WALK_GEOMETRY_BUDGET_MILLISECONDS,
+    return this.#selectedRouteGeometry.enrich(
+      recommendations,
+      signal,
+      observe,
+      observeSkipped === undefined ? {} : { observeSkipped },
     );
+  }
+
+  public prepareSelectedRouteGeometry(
+    recommendations: readonly Recommendation[],
+    signal?: AbortSignal,
+    observe?: (observation: RouteGeometryObservation) => void,
+    observeSkipped?: (observation: GeometrySkippedObservation) => void,
+  ): SelectedRouteGeometryPlan {
+    return this.#selectedRouteGeometry.prepare(
+      recommendations,
+      signal,
+      observe,
+      observeSkipped === undefined ? {} : { observeSkipped },
+    );
+  }
+
+  public enrichWalkingGeometry(
+    recommendations: readonly Recommendation[],
+    signal?: AbortSignal,
+    observe?: (observation: RouteGeometryObservation) => void,
+    observeSkipped?: (observation: GeometrySkippedObservation) => void,
+  ): Promise<Recommendation[]> {
+    const budgetSignal = AbortSignal.timeout(8_000);
     const walkingSignal = signal === undefined
       ? budgetSignal
       : AbortSignal.any([signal, budgetSignal]);
-    const resolutions = new Map<
-      string,
-      Promise<ResolvedWalkingGeometry>
-    >();
-    let callCount = 0;
-    for (const [key, target] of targets) {
-      if (callCount >= FINAL_WALK_GEOMETRY_CALL_LIMIT) {
-        resolutions.set(key, Promise.resolve({
-          coordinates: null,
-          reason: "UPSTREAM",
-          durationMilliseconds: 0,
-        }));
-        continue;
-      }
-      callCount += 1;
-      const startedAt = performance.now();
-      resolutions.set(
-        key,
-        withWalkingGeometryLimit(
-          () => this.#provider.getWalkingRoute({
-            origin: target.from,
-            destination: target.to,
-            routeMode: "BROAD_FIRST",
-            signal: walkingSignal,
-          }),
-          walkingSignal,
-        ).then((route): ResolvedWalkingGeometry => {
-          const coordinates = joinedWalkingCoordinates(route);
-          return coordinates.length >= 2
-            ? {
-                coordinates,
-                reason: "NONE",
-                durationMilliseconds: performance.now() - startedAt,
-              }
-            : {
-                coordinates: null,
-                reason: "EMPTY_PATH",
-                durationMilliseconds: performance.now() - startedAt,
-              };
-        }).catch((error: unknown): ResolvedWalkingGeometry => ({
-          coordinates: null,
-          reason: classifyGeometryError(error),
-          durationMilliseconds: performance.now() - startedAt,
-        })),
-      );
-    }
-    const resolved = new Map<string, ResolvedWalkingGeometry>();
-    await Promise.all(
-      [...resolutions].map(async ([key, resolution]) => {
-        resolved.set(key, await resolution);
-      }),
+    return this.#selectedRouteGeometry.enrich(
+      recommendations,
+      walkingSignal,
+      observe,
+      {
+        includeBus: false,
+        ...(observeSkipped === undefined ? {} : { observeSkipped }),
+      },
     );
-
-    return recommendations.map((recommendation) => ({
-      ...recommendation,
-      legs: recommendation.legs.map((leg) => {
-        const from = leg.coordinates[0];
-        const to = leg.coordinates.at(-1);
-        if (
-          leg.mode !== "WALK" ||
-          leg.geometryQuality === "DETAILED" ||
-          leg.distanceMeters <= 20 ||
-          from === undefined ||
-          to === undefined
-        ) {
-          return leg;
-        }
-        const geometry = resolved.get(walkingGeometryKey(from, to)) ?? {
-          coordinates: null,
-          reason: "UPSTREAM" as const,
-          durationMilliseconds: 0,
-        };
-        const detailed = geometry.coordinates !== null;
-        observe?.({
-          mode: "WALK",
-          outcome: detailed ? "DETAILED" : "APPROXIMATE",
-          reason: detailed ? "NONE" : geometry.reason,
-          source: detailed ? "KAKAO_WALK" : "FALLBACK",
-          cacheState: "NONE",
-          durationMilliseconds: geometry.durationMilliseconds,
-          inputVertexCount: 2,
-          outputVertexCount: geometry.coordinates?.length ?? leg.coordinates.length,
-          successfulSectionCount: detailed ? 1 : 0,
-          failedSectionCount: detailed ? 0 : 1,
-          ...(leg.walkingRole === undefined
-            ? {}
-            : { walkingRole: leg.walkingRole }),
-        });
-        return detailed
-          ? {
-              ...leg,
-              coordinates: geometry.coordinates!,
-              geometryQuality: "DETAILED" as const,
-            }
-          : leg;
-      }),
-    }));
   }
 
   public async generate(
@@ -890,6 +777,7 @@ export class CandidateGenerator {
     signal?: AbortSignal,
     options: {
       geometryProfile?: RouteGeometryProfile;
+      allowPartialOnTimeout?: boolean;
       observeSubwayGeometry?: (
         observation: SubwayGeometryObservation,
       ) => void;
@@ -905,9 +793,12 @@ export class CandidateGenerator {
       options.observeSubwayGeometry,
       options.observeRouteGeometry,
     );
-    const baselineRoutes = await budget.transit(
-      request.origin,
-      request.destination,
+    const baselineRoutes = await withAbortSignal(
+      budget.transit(
+        request.origin,
+        request.destination,
+        signal,
+      ),
       signal,
     );
     const sortedBaselineRoutes = [...baselineRoutes].sort(
@@ -924,6 +815,21 @@ export class CandidateGenerator {
       route,
       kind: "BASE",
     }));
+    const allowPartialOnTimeout = options.allowPartialOnTimeout === true;
+    let candidateFailureCount = 0;
+    const result = (): CandidateGenerationResult => ({
+      baseline,
+      candidates,
+      candidateFailureCount,
+      routeApiCallCount: budget.totalCalls,
+      ...(allowPartialOnTimeout && isDeadlineAbort(signal)
+        ? { planningTimedOut: true }
+        : {}),
+    });
+    if (signal?.aborted === true) {
+      if (allowPartialOnTimeout && isDeadlineAbort(signal)) return result();
+      throw abortedProviderError(signal);
+    }
     const remainingSteps = calculateRemainingSteps(
       request.currentSteps,
       request.goalSteps,
@@ -958,11 +864,13 @@ export class CandidateGenerator {
       request,
       targetWalkDistanceMeters,
     );
-    let candidateFailureCount = 0;
     const buildBatch = async (batch: AdjustmentSpec[]) => {
       const settled = await Promise.allSettled(
         batch.map((spec) =>
-          buildAdjustedCandidate(spec, request, budget, signal),
+          withAbortSignal(
+            buildAdjustedCandidate(spec, request, budget, signal),
+            signal,
+          ),
         ),
       );
       const built = settled.flatMap((result) => {
@@ -972,37 +880,41 @@ export class CandidateGenerator {
         candidateFailureCount += 1;
         if (
           result.reason instanceof ProviderError &&
-          result.reason.kind === "ABORTED"
+          (result.reason.kind === "ABORTED" ||
+            result.reason.kind === "TIMEOUT") &&
+          !(allowPartialOnTimeout && isDeadlineAbort(signal))
         ) {
           throw result.reason;
         }
         return [];
       });
       candidates.push(...built);
-      return built;
+      return {
+        built,
+        deadlineExpired:
+          allowPartialOnTimeout && isDeadlineAbort(signal),
+      };
     };
 
     const early = await buildBatch(specs.early.slice(0, 4));
+    if (early.deadlineExpired) return result();
     if (
-      !early.some((candidate) =>
+      !early.built.some((candidate) =>
         withinGoalTolerance(candidate.route, targetWalkDistanceMeters),
       )
     ) {
       const late = await buildBatch(specs.late.slice(0, 2));
+      if (late.deadlineExpired) return result();
       if (
-        !late.some((candidate) =>
+        !late.built.some((candidate) =>
           withinGoalTolerance(candidate.route, targetWalkDistanceMeters),
         )
       ) {
-        await buildBatch(specs.combined.slice(0, 1));
+        const combined = await buildBatch(specs.combined.slice(0, 1));
+        if (combined.deadlineExpired) return result();
       }
     }
 
-    return {
-      baseline,
-      candidates,
-      candidateFailureCount,
-      routeApiCallCount: budget.totalCalls,
-    };
+    return result();
   }
 }

@@ -6,12 +6,54 @@ const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 export type KakaoRequestOptions = {
   timeoutMilliseconds: number;
   signal?: AbortSignal;
+  operation?: KakaoRouteProviderOperation;
 };
+
+export type KakaoRouteProviderOperation =
+  | "ROUTE_SEARCH"
+  | "ROAD_GEOMETRY"
+  | "WALK_GEOMETRY";
+
+export type KakaoRouteProviderObservation = {
+  provider: "KAKAO";
+  operation: KakaoRouteProviderOperation;
+  outcome:
+    | "SUCCESS"
+    | "ERROR"
+    | "TIMEOUT"
+    | "ABORTED"
+    | "RATE_LIMIT"
+    | "HTTP_4XX"
+    | "HTTP_5XX";
+  timeoutOrigin:
+    | "NONE"
+    | "CLIENT"
+    | "PLANNING"
+    | "GEOMETRY"
+    | "PROVIDER"
+    | "QUEUE";
+  durationMilliseconds: number;
+};
+
+type KakaoRouteProviderObserver = (
+  observation: KakaoRouteProviderObservation,
+) => void;
 
 type KakaoRequestBody = {
   method: "POST";
   value: unknown;
 };
+
+function providerHttpStatus(error: unknown): number | undefined {
+  if (!(error instanceof ProviderError)) return undefined;
+  const cause = error.cause;
+  return typeof cause === "object" &&
+      cause !== null &&
+      "httpStatus" in cause &&
+      typeof cause.httpStatus === "number"
+    ? cause.httpStatus
+    : undefined;
+}
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -30,6 +72,7 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
 export class KakaoRestClient {
   readonly #restApiKey: string;
   readonly #fetch: typeof fetch;
+  #routeProviderObserver: KakaoRouteProviderObserver | undefined;
 
   public constructor(restApiKey: string, fetchImplementation = fetch) {
     if (restApiKey.trim().length === 0) {
@@ -37,6 +80,18 @@ export class KakaoRestClient {
     }
     this.#restApiKey = restApiKey;
     this.#fetch = fetchImplementation;
+  }
+
+  public setRouteProviderObserver(observer: KakaoRouteProviderObserver): void {
+    this.#routeProviderObserver = observer;
+  }
+
+  #observeRouteProvider(observation: KakaoRouteProviderObservation): void {
+    try {
+      this.#routeProviderObserver?.(observation);
+    } catch {
+      // Observability must never change a provider request result.
+    }
   }
 
   public async requestJson(
@@ -61,6 +116,68 @@ export class KakaoRestClient {
   }
 
   async #requestJson(
+    url: URL,
+    options: KakaoRequestOptions,
+    body?: KakaoRequestBody,
+  ): Promise<unknown> {
+    if (options.operation === undefined) {
+      return this.#requestJsonUnobserved(url, options, body);
+    }
+    const startedAt = performance.now();
+    try {
+      const result = await this.#requestJsonUnobserved(url, options, body);
+      this.#observeRouteProvider({
+        provider: "KAKAO",
+        operation: options.operation,
+        outcome: "SUCCESS",
+        timeoutOrigin: "NONE",
+        durationMilliseconds: performance.now() - startedAt,
+      });
+      return result;
+    } catch (error) {
+      const taggedTimeoutOrigin = (() => {
+        const reason = options.signal?.reason;
+        if (
+          typeof reason === "object" &&
+          reason !== null &&
+          "chimapTimeoutOrigin" in reason &&
+          (reason.chimapTimeoutOrigin === "PLANNING" ||
+            reason.chimapTimeoutOrigin === "GEOMETRY")
+        ) {
+          return reason.chimapTimeoutOrigin;
+        }
+        return undefined;
+      })();
+      const timeoutOrigin =
+        error instanceof ProviderError && error.kind === "TIMEOUT"
+          ? taggedTimeoutOrigin ?? "PROVIDER"
+          : error instanceof ProviderError && error.kind === "ABORTED"
+            ? taggedTimeoutOrigin ?? "CLIENT"
+            : "NONE";
+      const httpStatus = providerHttpStatus(error);
+      this.#observeRouteProvider({
+        provider: "KAKAO",
+        operation: options.operation,
+        outcome:
+          error instanceof ProviderError && error.kind === "RATE_LIMIT"
+            ? "RATE_LIMIT"
+            : httpStatus !== undefined && httpStatus >= 500
+              ? "HTTP_5XX"
+              : httpStatus !== undefined && httpStatus >= 400
+                ? "HTTP_4XX"
+                : error instanceof ProviderError && error.kind === "TIMEOUT"
+                  ? "TIMEOUT"
+                  : error instanceof ProviderError && error.kind === "ABORTED"
+                    ? "ABORTED"
+                    : "ERROR",
+        timeoutOrigin,
+        durationMilliseconds: performance.now() - startedAt,
+      });
+      throw error;
+    }
+  }
+
+  async #requestJsonUnobserved(
     url: URL,
     options: KakaoRequestOptions,
     body?: KakaoRequestBody,
@@ -103,6 +220,7 @@ export class KakaoRestClient {
             kind: "CONFIGURATION",
             message:
               "Kakao Map 사용 설정, REST API 키, 호출 허용 IP를 확인해 주세요.",
+            cause: { httpStatus: response.status },
           });
         }
         if (response.status === 429) {
@@ -110,12 +228,14 @@ export class KakaoRestClient {
             kind: "RATE_LIMIT",
             message: "Kakao API 사용량 한도를 초과했습니다.",
             retryable: true,
+            cause: { httpStatus: response.status },
           });
         }
         throw new ProviderError({
           kind: "UPSTREAM",
           message: `Kakao API HTTP ${response.status}`,
           retryable: RETRYABLE_STATUSES.has(response.status),
+          cause: { httpStatus: response.status },
         });
       } catch (error) {
         if (error instanceof ProviderError) {

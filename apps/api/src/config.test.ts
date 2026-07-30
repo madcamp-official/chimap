@@ -108,6 +108,27 @@ describe("환경변수 보안 경계", () => {
     }).transit.geometryV2Enabled).toBe(true);
   });
 
+  it("추천 timeout·선택 geometry·버스 pair v3는 서로 독립적인 feature flag다", () => {
+    const defaults = loadConfig({ NODE_ENV: "test" });
+    expect(defaults.recommendation).toEqual({
+      phasedTimeoutsEnabled: false,
+      selectedGeometryEnabled: false,
+    });
+    expect(defaults.transit.busGeometryPairV3Enabled).toBe(false);
+
+    const enabled = loadConfig({
+      NODE_ENV: "test",
+      RECOMMENDATION_PHASED_TIMEOUTS_ENABLED: "1",
+      RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: "1",
+      BUS_GEOMETRY_PAIR_V3_ENABLED: "1",
+    });
+    expect(enabled.recommendation).toEqual({
+      phasedTimeoutsEnabled: true,
+      selectedGeometryEnabled: true,
+    });
+    expect(enabled.transit.busGeometryPairV3Enabled).toBe(true);
+  });
+
   it("공원 Import token과 추천 조회 범위를 검증한다", () => {
     expect(() =>
       loadConfig({

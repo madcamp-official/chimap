@@ -219,6 +219,9 @@ const environmentSchema = z
       .enum(["legacy", "shadow", "multimodal"])
       .default("multimodal"),
     TRANSIT_GEOMETRY_V2_ENABLED: z.enum(["0", "1"]).default("0"),
+    RECOMMENDATION_PHASED_TIMEOUTS_ENABLED: z.enum(["0", "1"]).default("0"),
+    RECOMMENDATION_SELECTED_GEOMETRY_ENABLED: z.enum(["0", "1"]).default("0"),
+    BUS_GEOMETRY_PAIR_V3_ENABLED: z.enum(["0", "1"]).default("0"),
     TRANSIT_WALK_SPEED_KMH: z.coerce.number().positive().default(4.5),
     TRANSIT_BUS_AVERAGE_SPEED_KMH: z.coerce.number().positive().default(20),
     TRANSIT_STOP_DWELL_SECONDS: z.coerce
@@ -537,9 +540,14 @@ export type AppConfig = {
     maxTransferCount: 0 | 1 | 2;
     routerMode: "legacy" | "shadow" | "multimodal";
     geometryV2Enabled: boolean;
+    busGeometryPairV3Enabled: boolean;
     walkSpeedKmh: number;
     busAverageSpeedKmh: number;
     stopDwellSeconds: number;
+  };
+  recommendation: {
+    phasedTimeoutsEnabled: boolean;
+    selectedGeometryEnabled: boolean;
   };
   parkRoutes: {
     importEnabled: boolean;
@@ -717,9 +725,16 @@ export function loadConfig(
       maxTransferCount: parsed.TRANSIT_MAX_TRANSFER_COUNT as 0 | 1 | 2,
       routerMode: parsed.TRANSIT_ROUTER_MODE,
       geometryV2Enabled: parsed.TRANSIT_GEOMETRY_V2_ENABLED === "1",
+      busGeometryPairV3Enabled: parsed.BUS_GEOMETRY_PAIR_V3_ENABLED === "1",
       walkSpeedKmh: parsed.TRANSIT_WALK_SPEED_KMH,
       busAverageSpeedKmh: parsed.TRANSIT_BUS_AVERAGE_SPEED_KMH,
       stopDwellSeconds: parsed.TRANSIT_STOP_DWELL_SECONDS,
+    },
+    recommendation: {
+      phasedTimeoutsEnabled:
+        parsed.RECOMMENDATION_PHASED_TIMEOUTS_ENABLED === "1",
+      selectedGeometryEnabled:
+        parsed.RECOMMENDATION_SELECTED_GEOMETRY_ENABLED === "1",
     },
     parkRoutes: {
       importEnabled: parsed.PARK_ROUTE_IMPORT_ENABLED === "1",

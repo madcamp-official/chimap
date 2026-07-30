@@ -216,12 +216,16 @@ export class ParkRouteRepository {
     }
   }
 
-  public async findNearSegment(input: {
-    start: Coordinate;
-    end: Coordinate;
+  public async findNearRoute(input: {
+    coordinates: Coordinate[];
     radiusMeters: number;
     limit: number;
   }): Promise<ParkRouteDirection[]> {
+    if (input.coordinates.length < 2) return [];
+    const routeGeoJson = JSON.stringify({
+      type: "LineString",
+      coordinates: input.coordinates.map(({ lng, lat }) => [lng, lat]),
+    });
     const result = await this.pool.query<{
       dataset_id: string;
       route_id: string;
@@ -237,7 +241,10 @@ export class ParkRouteRepository {
       distance_meters: number;
       duration_seconds: number;
     }>(
-      `SELECT r.dataset_id, r.route_id, r.official_park_id, r.park_name,
+      `WITH requested_route AS (
+         SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)::geography AS geometry
+       )
+       SELECT r.dataset_id, r.route_id, r.official_park_id, r.park_name,
               r.direction_policy,
               ST_X(r.entry_location::geometry) AS entry_lng,
               ST_Y(r.entry_location::geometry) AS entry_lat,
@@ -245,36 +252,22 @@ export class ParkRouteRepository {
               ST_Y(r.exit_location::geometry) AS exit_lat,
               ST_AsGeoJSON(r.route_geometry, 15)::json AS coordinates,
               r.path_waypoint_ids, r.distance_meters, r.duration_seconds
-       FROM active_park_route_dataset AS active
+       FROM requested_route
+       CROSS JOIN active_park_route_dataset AS active
        JOIN park_route_datasets AS d
          ON d.dataset_id = active.dataset_id AND d.status = 'ACTIVE'
        JOIN reviewed_park_routes AS r ON r.dataset_id = d.dataset_id
        WHERE active.singleton = true
          AND (
-           ST_DWithin(r.entry_location,
-             ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $5)
-           OR ST_DWithin(r.exit_location,
-             ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $5)
-           OR ST_DWithin(r.entry_location,
-             ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography, $5)
-           OR ST_DWithin(r.exit_location,
-             ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography, $5)
+           ST_DWithin(r.entry_location, requested_route.geometry, $2)
+           OR ST_DWithin(r.exit_location, requested_route.geometry, $2)
          )
        ORDER BY LEAST(
-         ST_Distance(r.entry_location,
-           ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography),
-         ST_Distance(r.exit_location,
-           ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography)
+         ST_Distance(r.entry_location, requested_route.geometry),
+         ST_Distance(r.exit_location, requested_route.geometry)
        ), r.distance_meters DESC
-       LIMIT $6`,
-      [
-        input.start.lng,
-        input.start.lat,
-        input.end.lng,
-        input.end.lat,
-        input.radiusMeters,
-        input.limit,
-      ],
+       LIMIT $3`,
+      [routeGeoJson, input.radiusMeters, input.limit],
     );
     return result.rows.flatMap((row) => {
       const entry = { lng: Number(row.entry_lng), lat: Number(row.entry_lat) };

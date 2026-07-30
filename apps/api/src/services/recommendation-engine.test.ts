@@ -289,12 +289,23 @@ describe("건강 경로 추천 선정", () => {
     ).toBe(90);
   });
 
-  it("노선·시간·도보·형상이 같은 경로는 하나만 유지한다", () => {
+  it("노선 topology·시간·도보가 같은 경로는 표시 형상과 무관하게 하나만 유지한다", () => {
     const sameRoute = {
       ...fast,
       id: "actual-fast-108-nearby",
       durationSeconds: fast.durationSeconds + 60,
       walkDistanceMeters: fast.walkDistanceMeters + 100,
+      legs: fast.legs.map((leg) => ({
+        ...leg,
+        coordinates:
+          leg.mode === "BUS"
+            ? [
+                leg.coordinates[0]!,
+                { lng: 127.39, lat: 36.35 },
+                leg.coordinates.at(-1)!,
+              ]
+            : leg.coordinates,
+      })),
     };
 
     expect(

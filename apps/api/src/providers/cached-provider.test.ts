@@ -64,4 +64,35 @@ describe("대중교통 geometry profile cache", () => {
     expect(trackAgain).toBe(track);
     expect(getTransitRoutes).toHaveBeenCalledTimes(2);
   });
+
+  it("첫 waiter 취소가 공유 cache fill과 다른 waiter를 취소하지 않는다", async () => {
+    let resolveLoad: ((routes: NormalizedRoute[]) => void) | undefined;
+    const getTransitRoutes = vi.fn(
+      () => new Promise<NormalizedRoute[]>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const provider = {
+      source: "TAGO",
+      getTransitRoutes,
+    } as unknown as MobilityProvider;
+    const cached = new CachedMobilityProvider(provider, new MemoryCache());
+    const firstController = new AbortController();
+
+    const first = cached.getTransitRoutes({
+      origin,
+      destination,
+      signal: firstController.signal,
+    });
+    const second = cached.getTransitRoutes({ origin, destination });
+    firstController.abort();
+    resolveLoad?.([route("shared")]);
+
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await expect(second).resolves.toEqual([route("shared")]);
+    await expect(
+      cached.getTransitRoutes({ origin, destination }),
+    ).resolves.toEqual([route("shared")]);
+    expect(getTransitRoutes).toHaveBeenCalledOnce();
+  });
 });

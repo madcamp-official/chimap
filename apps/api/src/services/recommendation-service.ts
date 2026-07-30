@@ -2,8 +2,10 @@ import {
   haversineDistanceMeters,
   recommendationResponseSchema,
   type ApiWarning,
+  type Recommendation,
   type RecommendationRequest,
   type RecommendationResponse,
+  type RouteLeg,
 } from "@chimap/contracts";
 import type { Logger } from "pino";
 
@@ -21,25 +23,219 @@ import type {
 } from "../providers/subway-track-geometry.js";
 import type { RouteGeometryObservation } from "../providers/route-geometry.js";
 import type { ParkRouteCandidateService } from "../parks/park-route-candidate-service.js";
+import { runWithRecommendationPhase } from "../monitoring/request-context.js";
+import type { GeometrySkippedObservation } from "./selected-route-geometry-service.js";
 
 export type Clock = () => Date;
+
+export const RECOMMENDATION_PHASES = [
+  "CANDIDATE_GENERATION",
+  "SELECTION",
+  "SELECTED_GEOMETRY",
+  "PARK_ROUTE",
+  "RESPONSE_VALIDATION",
+] as const;
+
+export type RecommendationPhase = (typeof RECOMMENDATION_PHASES)[number];
+export type RecommendationPhaseOutcome =
+  | "SUCCESS"
+  | "ERROR"
+  | "TIMEOUT"
+  | "SKIPPED";
+export type RecommendationTimeoutOrigin =
+  | "NONE"
+  | "CLIENT"
+  | "PLANNING"
+  | "GEOMETRY"
+  | "PROVIDER"
+  | "QUEUE";
+export type RecommendationPhaseObservation = {
+  phase: RecommendationPhase;
+  outcome: RecommendationPhaseOutcome;
+  timeoutOrigin: RecommendationTimeoutOrigin;
+  durationMilliseconds: number;
+};
+
+export const RECOMMENDATION_HARD_DEADLINE_MILLISECONDS = 20_000;
+const PLANNING_DEADLINE_MILLISECONDS = 8_000;
+const FINAL_PHASE_BUDGET_MILLISECONDS = 8_000;
+const FINAL_PHASE_CUTOFF_MILLISECONDS = 18_000;
+
+type TaggedTimeoutReason = DOMException & {
+  chimapTimeoutOrigin: "PLANNING" | "GEOMETRY";
+};
+
+function deadlineSignal(
+  milliseconds: number,
+  timeoutOrigin: TaggedTimeoutReason["chimapTimeoutOrigin"],
+): AbortSignal {
+  const controller = new AbortController();
+  const abort = () => {
+    const reason = new DOMException(
+      `${timeoutOrigin.toLowerCase()} deadline`,
+      "TimeoutError",
+    ) as TaggedTimeoutReason;
+    reason.chimapTimeoutOrigin = timeoutOrigin;
+    controller.abort(reason);
+  };
+  if (milliseconds <= 0) {
+    abort();
+    return controller.signal;
+  }
+  const timeout = AbortSignal.timeout(Math.ceil(milliseconds));
+  if (timeout.aborted) abort();
+  else timeout.addEventListener("abort", abort, { once: true });
+  return controller.signal;
+}
+
+function combinedSignal(
+  signal: AbortSignal | undefined,
+  deadline: AbortSignal,
+): AbortSignal {
+  return signal === undefined
+    ? deadline
+    : AbortSignal.any([signal, deadline]);
+}
+
+function finalPhaseDeadlineSignal(
+  requestStartedAtMilliseconds: number,
+): AbortSignal {
+  const untilCutoff =
+    requestStartedAtMilliseconds + FINAL_PHASE_CUTOFF_MILLISECONDS - Date.now();
+  const delay = Math.min(FINAL_PHASE_BUDGET_MILLISECONDS, untilCutoff);
+  return delay <= 0
+    ? deadlineSignal(0, "GEOMETRY")
+    : deadlineSignal(delay, "GEOMETRY");
+}
+
+function abortProviderError(signal: AbortSignal): ProviderError {
+  const timedOut =
+    signal.reason instanceof DOMException &&
+    signal.reason.name === "TimeoutError";
+  return new ProviderError({
+    kind: timedOut ? "TIMEOUT" : "ABORTED",
+    message: timedOut
+      ? "추천 단계 처리 시간이 초과되었습니다."
+      : "추천 요청이 취소되었습니다.",
+    retryable: timedOut,
+    cause: signal.reason,
+  });
+}
+
+function withAbortSignal<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortProviderError(signal));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", handleAbort);
+      callback();
+    };
+    const handleAbort = () => settle(() => reject(abortProviderError(signal)));
+    signal.addEventListener("abort", handleAbort, { once: true });
+    operation.then(
+      (value) => settle(() => resolve(value)),
+      (error: unknown) => settle(() => reject(error)),
+    );
+  });
+}
+
+function overlayLegGeometry(target: RouteLeg, source: RouteLeg): RouteLeg {
+  if (
+    target.id !== source.id ||
+    target.mode !== source.mode ||
+    (target.mode !== "BUS" && target.mode !== "WALK")
+  ) {
+    return target;
+  }
+  return {
+    ...target,
+    coordinates: source.coordinates,
+    ...(source.geometryQuality === undefined
+      ? {}
+      : { geometryQuality: source.geometryQuality }),
+    ...(target.mode === "BUS" &&
+        target.bus !== undefined &&
+        source.bus !== undefined
+      ? {
+          bus: {
+            ...target.bus,
+            polyline: source.bus.polyline,
+          },
+        }
+      : {}),
+  };
+}
+
+export function overlaySelectedRouteGeometry(
+  target: readonly Recommendation[],
+  detailed: readonly Recommendation[],
+): Recommendation[] {
+  const detailedById = new Map(
+    detailed.map((recommendation) => [recommendation.id, recommendation]),
+  );
+  const detailedGoal = detailed.find(
+    (recommendation) => recommendation.type === "GOAL",
+  );
+  return target.map((recommendation) => {
+    const source = detailedById.get(recommendation.id) ??
+      (recommendation.type === "GOAL" ? detailedGoal : undefined);
+    if (source === undefined) return recommendation;
+    const sourceLegs = new Map(source.legs.map((leg) => [leg.id, leg]));
+    return {
+      ...recommendation,
+      legs: recommendation.legs.map((leg) => {
+        const sourceLeg = sourceLegs.get(leg.id);
+        return sourceLeg === undefined
+          ? leg
+          : overlayLegGeometry(leg, sourceLeg);
+      }),
+    };
+  });
+}
+
+type GeometryCompletion =
+  | { status: "fulfilled"; recommendations: Recommendation[] }
+  | { status: "rejected"; error: unknown };
 
 export class RecommendationService {
   readonly #candidateGenerator: CandidateGenerator;
   readonly #clock: Clock;
   readonly #logger: Logger;
   readonly #parkRoutes: ParkRouteCandidateService | undefined;
+  readonly #observePhase:
+    | ((observation: RecommendationPhaseObservation) => void)
+    | undefined;
+  readonly #phasedTimeoutsEnabled: boolean;
+  readonly #selectedGeometryEnabled: boolean;
+  readonly #observeGeometrySkipped:
+    | ((observation: GeometrySkippedObservation) => void)
+    | undefined;
 
   public constructor(options: {
     candidateGenerator: CandidateGenerator;
     clock?: Clock;
     logger: Logger;
     parkRoutes?: ParkRouteCandidateService;
+    observePhase?: (observation: RecommendationPhaseObservation) => void;
+    observeGeometrySkipped?: (
+      observation: GeometrySkippedObservation,
+    ) => void;
+    phasedTimeoutsEnabled?: boolean;
+    selectedGeometryEnabled?: boolean;
   }) {
     this.#candidateGenerator = options.candidateGenerator;
     this.#clock = options.clock ?? (() => new Date());
     this.#logger = options.logger;
     this.#parkRoutes = options.parkRoutes;
+    this.#observePhase = options.observePhase;
+    this.#phasedTimeoutsEnabled = options.phasedTimeoutsEnabled ?? false;
+    this.#selectedGeometryEnabled = options.selectedGeometryEnabled ?? false;
+    this.#observeGeometrySkipped = options.observeGeometrySkipped;
   }
 
   public async createRecommendations(input: {
@@ -50,13 +246,20 @@ export class RecommendationService {
     observeSubwayGeometry?: (observation: SubwayGeometryObservation) => void;
     observeRouteGeometry?: (observation: RouteGeometryObservation) => void;
   }): Promise<RecommendationResponse> {
+    const requestStartedAtMilliseconds = Date.now();
     const departureAt = this.#clock();
     this.#validateRequest(input.request, departureAt, input.requestId);
-    const timeoutSignal = AbortSignal.timeout(20_000);
-    const signal =
-      input.signal === undefined
-        ? timeoutSignal
-        : AbortSignal.any([input.signal, timeoutSignal]);
+    const hardDeadlineSignal = deadlineSignal(
+      RECOMMENDATION_HARD_DEADLINE_MILLISECONDS,
+      "PLANNING",
+    );
+    const requestSignal = combinedSignal(input.signal, hardDeadlineSignal);
+    const planningDeadlineSignal = this.#phasedTimeoutsEnabled
+      ? deadlineSignal(PLANNING_DEADLINE_MILLISECONDS, "PLANNING")
+      : undefined;
+    const planningSignal = planningDeadlineSignal === undefined
+      ? requestSignal
+      : AbortSignal.any([requestSignal, planningDeadlineSignal]);
     let geometryDegradedLegCount = 0;
     const observeRouteGeometry = (observation: RouteGeometryObservation) => {
       if (observation.outcome === "APPROXIMATE") {
@@ -66,19 +269,56 @@ export class RecommendationService {
     };
 
     try {
-      const generated = await this.#candidateGenerator.generate(
-        input.request,
-        signal,
-        {
-          ...(input.geometryProfile === undefined
+      const generationStartedAt = performance.now();
+      let generated: Awaited<
+        ReturnType<CandidateGenerator["generate"]>
+      >;
+      try {
+        generated = await runWithRecommendationPhase(
+          "CANDIDATE_GENERATION",
+          () => this.#candidateGenerator.generate(
+            input.request,
+            planningSignal,
+            {
+              ...(input.geometryProfile === undefined
+                ? {}
+                : { geometryProfile: input.geometryProfile }),
+              ...(this.#phasedTimeoutsEnabled
+                ? { allowPartialOnTimeout: true }
+                : {}),
+              ...(input.observeSubwayGeometry === undefined
+                ? {}
+                : { observeSubwayGeometry: input.observeSubwayGeometry }),
+              observeRouteGeometry,
+            },
+          ),
+        );
+        this.#recordPhase(
+          "CANDIDATE_GENERATION",
+          generated.planningTimedOut === true ? "TIMEOUT" : "SUCCESS",
+          generated.planningTimedOut === true ? "PLANNING" : "NONE",
+          generationStartedAt,
+        );
+      } catch (error) {
+        const timeoutOrigin = this.#timeoutOrigin({
+          error,
+          phase: "PLANNING",
+          clientSignal: input.signal,
+          hardDeadlineSignal,
+          ...(planningDeadlineSignal === undefined
             ? {}
-            : { geometryProfile: input.geometryProfile }),
-          ...(input.observeSubwayGeometry === undefined
-            ? {}
-            : { observeSubwayGeometry: input.observeSubwayGeometry }),
-          observeRouteGeometry,
-        },
-      );
+            : { phaseDeadlineSignal: planningDeadlineSignal }),
+        });
+        this.#recordPhase(
+          "CANDIDATE_GENERATION",
+          timeoutOrigin === "NONE" || timeoutOrigin === "CLIENT"
+            ? "ERROR"
+            : "TIMEOUT",
+          timeoutOrigin,
+          generationStartedAt,
+        );
+        throw error;
+      }
       if (generated.routeApiCallCount > 9) {
         throw new AppError({
           code: "INTERNAL_ERROR",
@@ -87,18 +327,36 @@ export class RecommendationService {
         });
       }
 
-      const policy = resolveRecommendationPolicy(
-        input.request,
-        generated.baseline,
-      );
-
-      const selection = selectRecommendations({
-        candidates: generated.candidates,
-        baseline: generated.baseline,
-        request: input.request,
-        departureAt,
-        policy,
-      });
+      const selectionStartedAt = performance.now();
+      let policy: ReturnType<typeof resolveRecommendationPolicy>;
+      let selection: ReturnType<typeof selectRecommendations>;
+      try {
+        policy = resolveRecommendationPolicy(
+          input.request,
+          generated.baseline,
+        );
+        selection = selectRecommendations({
+          candidates: generated.candidates,
+          baseline: generated.baseline,
+          request: input.request,
+          departureAt,
+          policy,
+        });
+        this.#recordPhase(
+          "SELECTION",
+          "SUCCESS",
+          "NONE",
+          selectionStartedAt,
+        );
+      } catch (error) {
+        this.#recordPhase(
+          "SELECTION",
+          "ERROR",
+          "NONE",
+          selectionStartedAt,
+        );
+        throw error;
+      }
       if (selection.recommendations.length === 0) {
         throw new AppError({
           code: "NO_ROUTE_WITHIN_DEADLINE",
@@ -118,7 +376,15 @@ export class RecommendationService {
         });
       }
       let recommendations = selection.recommendations;
+      const finalDeadlineSignal = this.#phasedTimeoutsEnabled
+        ? finalPhaseDeadlineSignal(requestStartedAtMilliseconds)
+        : undefined;
+      const finalPhaseSignal = finalDeadlineSignal === undefined
+        ? requestSignal
+        : AbortSignal.any([requestSignal, finalDeadlineSignal]);
+      let geometryCompletion: Promise<GeometryCompletion> | undefined;
       if (input.geometryProfile === "TRANSIT_V2") {
+        const geometryStartedAt = performance.now();
         const prioritized = [
           ...recommendations.filter(
             (recommendation) => recommendation.id === primaryRecommendationId,
@@ -127,41 +393,274 @@ export class RecommendationService {
             (recommendation) => recommendation.id !== primaryRecommendationId,
           ),
         ];
-        const enriched = await this.#candidateGenerator.enrichWalkingGeometry(
-          prioritized,
-          signal,
-          observeRouteGeometry,
-        );
-        const enrichedById = new Map(
-          enriched.map((recommendation) => [recommendation.id, recommendation]),
-        );
-        recommendations = recommendations.map(
-          (recommendation) =>
-            enrichedById.get(recommendation.id) ?? recommendation,
+        if (finalPhaseSignal.aborted) {
+          await runWithRecommendationPhase(
+            "SELECTED_GEOMETRY",
+            () => this.#selectedGeometryEnabled
+              ? this.#candidateGenerator.enrichSelectedRouteGeometry(
+                  prioritized,
+                  finalPhaseSignal,
+                  observeRouteGeometry,
+                  this.#observeGeometrySkipped,
+                )
+              : this.#candidateGenerator.enrichWalkingGeometry(
+                  prioritized,
+                  finalPhaseSignal,
+                  observeRouteGeometry,
+                  this.#observeGeometrySkipped,
+                ),
+          );
+          this.#recordPhase(
+            "SELECTED_GEOMETRY",
+            "SKIPPED",
+            this.#timeoutOrigin({
+              phase: "GEOMETRY",
+              clientSignal: input.signal,
+              hardDeadlineSignal,
+              ...(finalDeadlineSignal === undefined
+                ? {}
+                : { phaseDeadlineSignal: finalDeadlineSignal }),
+            }),
+            geometryStartedAt,
+          );
+        } else if (
+          this.#selectedGeometryEnabled &&
+          this.#parkRoutes !== undefined
+        ) {
+          const plan = runWithRecommendationPhase(
+            "SELECTED_GEOMETRY",
+            () => this.#candidateGenerator.prepareSelectedRouteGeometry(
+              prioritized,
+              finalPhaseSignal,
+              observeRouteGeometry,
+              this.#observeGeometrySkipped,
+            ),
+          );
+          geometryCompletion = withAbortSignal(
+            plan.complete,
+            finalPhaseSignal,
+          ).then(
+            (enriched): GeometryCompletion => {
+              this.#recordPhase(
+                "SELECTED_GEOMETRY",
+                "SUCCESS",
+                "NONE",
+                geometryStartedAt,
+              );
+              return { status: "fulfilled", recommendations: enriched };
+            },
+            (error: unknown): GeometryCompletion => {
+              const timeoutOrigin = this.#timeoutOrigin({
+                error,
+                phase: "GEOMETRY",
+                clientSignal: input.signal,
+                hardDeadlineSignal,
+                ...(finalDeadlineSignal === undefined
+                  ? {}
+                  : { phaseDeadlineSignal: finalDeadlineSignal }),
+              });
+              this.#recordPhase(
+                "SELECTED_GEOMETRY",
+                timeoutOrigin === "NONE" || timeoutOrigin === "CLIENT"
+                  ? "ERROR"
+                  : "TIMEOUT",
+                timeoutOrigin,
+                geometryStartedAt,
+              );
+              return { status: "rejected", error };
+            },
+          );
+          try {
+            const goalReady = await withAbortSignal(
+              plan.goalWalking,
+              finalPhaseSignal,
+            );
+            const goalReadyById = new Map(
+              goalReady.map((recommendation) => [
+                recommendation.id,
+                recommendation,
+              ]),
+            );
+            recommendations = recommendations.map(
+              (recommendation) =>
+                goalReadyById.get(recommendation.id) ?? recommendation,
+            );
+          } catch (error) {
+            if (requestSignal.aborted) throw error;
+          }
+        } else {
+          try {
+            const enriched = await withAbortSignal(
+              runWithRecommendationPhase(
+                "SELECTED_GEOMETRY",
+                () => this.#selectedGeometryEnabled
+                  ? this.#candidateGenerator.enrichSelectedRouteGeometry(
+                      prioritized,
+                      finalPhaseSignal,
+                      observeRouteGeometry,
+                      this.#observeGeometrySkipped,
+                    )
+                  : this.#candidateGenerator.enrichWalkingGeometry(
+                      prioritized,
+                      finalPhaseSignal,
+                      observeRouteGeometry,
+                      this.#observeGeometrySkipped,
+                    ),
+              ),
+              finalPhaseSignal,
+            );
+            const enrichedById = new Map(
+              enriched.map((recommendation) => [
+                recommendation.id,
+                recommendation,
+              ]),
+            );
+            recommendations = recommendations.map(
+              (recommendation) =>
+                enrichedById.get(recommendation.id) ?? recommendation,
+            );
+            this.#recordPhase(
+              "SELECTED_GEOMETRY",
+              finalPhaseSignal.aborted ? "TIMEOUT" : "SUCCESS",
+              finalPhaseSignal.aborted
+                ? this.#timeoutOrigin({
+                    phase: "GEOMETRY",
+                    clientSignal: input.signal,
+                    hardDeadlineSignal,
+                    ...(finalDeadlineSignal === undefined
+                      ? {}
+                      : { phaseDeadlineSignal: finalDeadlineSignal }),
+                  })
+                : "NONE",
+              geometryStartedAt,
+            );
+          } catch (error) {
+            const timeoutOrigin = this.#timeoutOrigin({
+              error,
+              phase: "GEOMETRY",
+              clientSignal: input.signal,
+              hardDeadlineSignal,
+              ...(finalDeadlineSignal === undefined
+                ? {}
+                : { phaseDeadlineSignal: finalDeadlineSignal }),
+            });
+            this.#recordPhase(
+              "SELECTED_GEOMETRY",
+              timeoutOrigin === "NONE" || timeoutOrigin === "CLIENT"
+                ? "ERROR"
+                : "TIMEOUT",
+              timeoutOrigin,
+              geometryStartedAt,
+            );
+            if (requestSignal.aborted) throw error;
+          }
+        }
+      } else {
+        this.#recordPhase(
+          "SELECTED_GEOMETRY",
+          "SKIPPED",
+          "NONE",
+          performance.now(),
         );
       }
       if (this.#parkRoutes !== undefined) {
-        const priorGoalId = recommendations.find(
-          (recommendation) => recommendation.type === "GOAL",
-        )?.id;
-        recommendations = await this.#parkRoutes.improveGoal({
-          recommendations,
-          request: input.request,
-          requestId: input.requestId,
-          baselineDurationSeconds: generated.baseline.durationSeconds,
-          policy,
-          departureAt,
-          remainingRouteApiCalls: 9 - generated.routeApiCallCount,
-          signal,
-        });
-        const newGoalId = recommendations.find(
-          (recommendation) => recommendation.type === "GOAL",
-        )?.id;
-        if (
-          primaryRecommendationId === priorGoalId &&
-          newGoalId !== undefined
-        ) {
-          primaryRecommendationId = newGoalId;
+        const parkStartedAt = performance.now();
+        if (finalPhaseSignal.aborted) {
+          this.#recordPhase(
+            "PARK_ROUTE",
+            "SKIPPED",
+            this.#timeoutOrigin({
+              phase: "GEOMETRY",
+              clientSignal: input.signal,
+              hardDeadlineSignal,
+              ...(finalDeadlineSignal === undefined
+                ? {}
+                : { phaseDeadlineSignal: finalDeadlineSignal }),
+            }),
+            parkStartedAt,
+          );
+        } else {
+          const priorGoalId = recommendations.find(
+            (recommendation) => recommendation.type === "GOAL",
+          )?.id;
+          try {
+            recommendations = await withAbortSignal(
+              runWithRecommendationPhase(
+                "PARK_ROUTE",
+                () => this.#parkRoutes!.improveGoal({
+                  recommendations,
+                  request: input.request,
+                  requestId: input.requestId,
+                  baselineDurationSeconds: generated.baseline.durationSeconds,
+                  policy,
+                  departureAt,
+                  remainingRouteApiCalls: 11 - generated.routeApiCallCount,
+                  signal: finalPhaseSignal,
+                }),
+              ),
+              finalPhaseSignal,
+            );
+            const newGoalId = recommendations.find(
+              (recommendation) => recommendation.type === "GOAL",
+            )?.id;
+            if (
+              primaryRecommendationId === priorGoalId &&
+              newGoalId !== undefined
+            ) {
+              primaryRecommendationId = newGoalId;
+            }
+            this.#recordPhase(
+              "PARK_ROUTE",
+              finalPhaseSignal.aborted ? "TIMEOUT" : "SUCCESS",
+              finalPhaseSignal.aborted ? this.#timeoutOrigin({
+                phase: "GEOMETRY",
+                clientSignal: input.signal,
+                hardDeadlineSignal,
+                ...(finalDeadlineSignal === undefined
+                  ? {}
+                  : { phaseDeadlineSignal: finalDeadlineSignal }),
+              }) : "NONE",
+              parkStartedAt,
+            );
+          } catch (error) {
+            const timeoutOrigin = this.#timeoutOrigin({
+              error,
+              phase: "GEOMETRY",
+              clientSignal: input.signal,
+              hardDeadlineSignal,
+              ...(finalDeadlineSignal === undefined
+                ? {}
+                : { phaseDeadlineSignal: finalDeadlineSignal }),
+            });
+            this.#recordPhase(
+              "PARK_ROUTE",
+              timeoutOrigin === "NONE" || timeoutOrigin === "CLIENT"
+                ? "ERROR"
+                : "TIMEOUT",
+              timeoutOrigin,
+              parkStartedAt,
+            );
+            if (requestSignal.aborted) throw error;
+          }
+        }
+      } else {
+        this.#recordPhase(
+          "PARK_ROUTE",
+          "SKIPPED",
+          "NONE",
+          performance.now(),
+        );
+      }
+
+      if (geometryCompletion !== undefined) {
+        const completion = await geometryCompletion;
+        if (completion.status === "fulfilled") {
+          recommendations = overlaySelectedRouteGeometry(
+            recommendations,
+            completion.recommendations,
+          );
+        } else if (requestSignal.aborted) {
+          throw completion.error;
         }
       }
 
@@ -229,33 +728,51 @@ export class RecommendationService {
         });
       }
 
-      const response = recommendationResponseSchema.parse({
-        requestId: input.requestId,
-        generatedAt: this.#clock().toISOString(),
-        departureAt: departureAt.toISOString(),
-        baseline: {
-          durationSeconds: generated.baseline.durationSeconds,
-          arrivalAt: new Date(
-            departureAt.getTime() +
-              generated.baseline.durationSeconds * 1000,
-          ).toISOString(),
-          walkDistanceMeters: generated.baseline.walkDistanceMeters,
-          estimatedSteps: baselineMetrics.baseEstimatedSteps,
-        },
-        walkingGoal: {
-          remainingSteps: baselineMetrics.remainingSteps,
-          targetWalkDistanceMeters: Math.round(
-            baselineMetrics.targetTripWalkDistanceMeters,
-          ),
-          toleranceSteps: Math.round(baselineMetrics.remainingSteps * 0.05),
-          effectiveStepLengthMeters:
-            input.request.walkingMetric.stepLengthMeters,
-          source: input.request.walkingMetric.source,
-        },
-        primaryRecommendationId,
-        recommendations,
-        warnings,
-      });
+      const responseValidationStartedAt = performance.now();
+      let response: RecommendationResponse;
+      try {
+        response = recommendationResponseSchema.parse({
+          requestId: input.requestId,
+          generatedAt: this.#clock().toISOString(),
+          departureAt: departureAt.toISOString(),
+          baseline: {
+            durationSeconds: generated.baseline.durationSeconds,
+            arrivalAt: new Date(
+              departureAt.getTime() +
+                generated.baseline.durationSeconds * 1000,
+            ).toISOString(),
+            walkDistanceMeters: generated.baseline.walkDistanceMeters,
+            estimatedSteps: baselineMetrics.baseEstimatedSteps,
+          },
+          walkingGoal: {
+            remainingSteps: baselineMetrics.remainingSteps,
+            targetWalkDistanceMeters: Math.round(
+              baselineMetrics.targetTripWalkDistanceMeters,
+            ),
+            toleranceSteps: Math.round(baselineMetrics.remainingSteps * 0.05),
+            effectiveStepLengthMeters:
+              input.request.walkingMetric.stepLengthMeters,
+            source: input.request.walkingMetric.source,
+          },
+          primaryRecommendationId,
+          recommendations,
+          warnings,
+        });
+        this.#recordPhase(
+          "RESPONSE_VALIDATION",
+          "SUCCESS",
+          "NONE",
+          responseValidationStartedAt,
+        );
+      } catch (error) {
+        this.#recordPhase(
+          "RESPONSE_VALIDATION",
+          "ERROR",
+          "NONE",
+          responseValidationStartedAt,
+        );
+        throw error;
+      }
 
       this.#logger.info({
         event: "recommendation.completed",
@@ -274,7 +791,7 @@ export class RecommendationService {
       if (error instanceof AppError) {
         throw error;
       }
-      if (timeoutSignal.aborted) {
+      if (hardDeadlineSignal.aborted) {
         throw new AppError({
           code: "UPSTREAM_TIMEOUT",
           message: "추천 경로 계산 시간이 초과됐어요. 다시 시도해 주세요.",
@@ -287,6 +804,41 @@ export class RecommendationService {
       }
       throw error;
     }
+  }
+
+  #recordPhase(
+    phase: RecommendationPhase,
+    outcome: RecommendationPhaseOutcome,
+    timeoutOrigin: RecommendationTimeoutOrigin,
+    startedAt: number,
+  ): void {
+    try {
+      this.#observePhase?.({
+        phase,
+        outcome,
+        timeoutOrigin,
+        durationMilliseconds: Math.max(0, performance.now() - startedAt),
+      });
+    } catch {
+      // Observability must never change the recommendation result.
+    }
+  }
+
+  #timeoutOrigin(input: {
+    error?: unknown;
+    phase: "PLANNING" | "GEOMETRY";
+    clientSignal: AbortSignal | undefined;
+    hardDeadlineSignal: AbortSignal;
+    phaseDeadlineSignal?: AbortSignal;
+  }): RecommendationTimeoutOrigin {
+    if (input.clientSignal?.aborted === true) return "CLIENT";
+    if (input.hardDeadlineSignal.aborted) return input.phase;
+    if (input.phaseDeadlineSignal?.aborted === true) return input.phase;
+    if (input.error instanceof ProviderError) {
+      if (input.error.kind === "TIMEOUT") return "PROVIDER";
+      if (input.error.kind === "ABORTED") return "QUEUE";
+    }
+    return "NONE";
   }
 
   #validateRequest(

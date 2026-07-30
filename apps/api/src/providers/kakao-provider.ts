@@ -11,7 +11,10 @@ import {
   normalizeKakaoWalkResponse,
 } from "./kakao-normalizers.js";
 import { KakaoLocalClient } from "./kakao-local-client.js";
-import { KakaoRestClient } from "./kakao-rest-client.js";
+import {
+  KakaoRestClient,
+  type KakaoRouteProviderObservation,
+} from "./kakao-rest-client.js";
 import type {
   MobilityProvider,
   PlaceSearchOptions,
@@ -144,6 +147,12 @@ export class KakaoMobilityProvider
     this.local = new KakaoLocalClient(this.#rest);
   }
 
+  public setRouteProviderObserver(
+    observer: (observation: KakaoRouteProviderObservation) => void,
+  ): void {
+    this.#rest.setRouteProviderObserver(observer);
+  }
+
   public async searchPlaces(
     query: string,
     options: PlaceSearchOptions = {},
@@ -168,6 +177,7 @@ export class KakaoMobilityProvider
       parameters,
       {
         timeoutMilliseconds: 3_500,
+        operation: "ROUTE_SEARCH",
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       },
     );
@@ -195,6 +205,7 @@ export class KakaoMobilityProvider
       parameters,
       {
         timeoutMilliseconds: 3_500,
+        operation: "WALK_GEOMETRY",
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       },
     );
@@ -247,6 +258,7 @@ export class KakaoMobilityProvider
           },
           {
             timeoutMilliseconds: 3_500,
+            operation: "ROAD_GEOMETRY",
             ...(request.signal === undefined
               ? {}
               : { signal: request.signal }),

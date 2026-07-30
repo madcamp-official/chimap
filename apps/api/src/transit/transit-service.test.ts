@@ -53,6 +53,7 @@ function serviceWith(input: {
       : vi.fn().mockRejectedValue(input.providerError);
   const repository = {
     findNearbyStops: vi.fn().mockResolvedValue(input.databaseStops),
+    findNearbyRoutableStops: vi.fn().mockResolvedValue(input.databaseStops),
     reconcileTagoStop: vi.fn(async (stop: BusStop) => ({
       status: "matched" as const,
       stop,
@@ -75,6 +76,84 @@ function serviceWith(input: {
 }
 
 describe("TransitService 주변 정류장 보강", () => {
+  it("TAGO route provider observer를 client 요청 경계에 연결한다", () => {
+    const setRouteProviderObserver = vi.fn();
+    const config = loadConfig({ NODE_ENV: "test" });
+    const service = new TransitService({
+      config,
+      logger: createLogger(config),
+      repository: {} as TransitRepository,
+      client: { setRouteProviderObserver } as unknown as TagoClient,
+    });
+    const observer = vi.fn();
+
+    service.setRouteProviderMetricsObserver(observer);
+
+    expect(setRouteProviderObserver).toHaveBeenCalledWith(observer);
+  });
+
+  it("추천 탐색의 database-only 모드에서는 TAGO를 호출하지 않는다", async () => {
+    const context = serviceWith({
+      databaseStops: [kaistNorthGate],
+      providerStops: [linkedMainBuilding],
+    });
+
+    const result = await context.service.getNearbyStops(
+      { lat: 36.3723, lng: 127.3604 },
+      500,
+      undefined,
+      { mode: "DATABASE_ONLY" },
+    );
+
+    expect(context.getNearbyStops).not.toHaveBeenCalled();
+    expect(result).toEqual({ items: [kaistNorthGate], partial: false });
+  });
+
+  it("추천 구조 복구 조회는 database 결과가 있어도 bounded TAGO를 한 번 호출한다", async () => {
+    const context = serviceWith({
+      databaseStops: [kaistNorthGate],
+      providerStops: [linkedMainBuilding],
+    });
+
+    await context.service.getNearbyStops(
+      { lat: 36.3723, lng: 127.3604 },
+      1_200,
+      undefined,
+      { mode: "FORCE_ONLINE", onlineTimeoutMilliseconds: 2_000 },
+    );
+
+    expect(context.getNearbyStops).toHaveBeenCalledOnce();
+    expect(context.getNearbyStops.mock.calls[0]?.[1]).toBeInstanceOf(
+      AbortSignal,
+    );
+    expect(context.getNearbyStops.mock.calls[0]?.[2]).toEqual({
+      retryCount: 0,
+    });
+  });
+
+  it("추천 구조 복구 조회는 hot path에서 정류장 reconciliation을 기다리지 않는다", async () => {
+    const context = serviceWith({
+      databaseStops: [],
+      providerStops: [linkedMainBuilding],
+    });
+
+    const result = await context.service.getNearbyStops(
+      { lat: 36.3723, lng: 127.3604 },
+      1_200,
+      undefined,
+      {
+        mode: "FORCE_ONLINE",
+        onlineTimeoutMilliseconds: 2_000,
+        routableOnly: true,
+        reconcileOnline: false,
+      },
+    );
+
+    expect(context.repository.findNearbyRoutableStops).toHaveBeenCalledOnce();
+    expect(context.repository.reconcileTagoStop).not.toHaveBeenCalled();
+    expect(result).toEqual({ items: [linkedMainBuilding], partial: false });
+  });
+
   it("연결된 정류장이 일부 있어도 TAGO를 조회해 나머지 정류장을 연결한다", async () => {
     const context = serviceWith({
       databaseStops: [kaistMainBuilding, kaistNorthGate],

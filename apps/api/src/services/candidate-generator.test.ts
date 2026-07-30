@@ -1,9 +1,116 @@
-import type { NormalizedRoute, Recommendation } from "@chimap/contracts";
+import type {
+  NormalizedRoute,
+  Recommendation,
+  RecommendationRequest,
+  RouteLeg,
+} from "@chimap/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { ProviderError } from "../errors.js";
 import type { MobilityProvider } from "../providers/types.js";
-import { CandidateGenerator, rebuildRoute } from "./candidate-generator.js";
+import {
+  CandidateGenerator,
+  adjustedBusLeg,
+  rebuildRoute,
+} from "./candidate-generator.js";
+
+function adjustableRoute(): NormalizedRoute {
+  const stops = [
+    { nodeId: "n1", lat: 36.35, lng: 127.37 },
+    { nodeId: "n2", lat: 36.352, lng: 127.372 },
+    { nodeId: "n3", lat: 36.354, lng: 127.374 },
+    { nodeId: "n4", lat: 36.356, lng: 127.376 },
+  ].map((stop, index) => ({
+    routeId: "route-514",
+    stopId: `stop-${index + 1}`,
+    nodeId: stop.nodeId,
+    cityCode: "25",
+    stopName: stop.nodeId,
+    latitude: stop.lat,
+    longitude: stop.lng,
+    nodeOrder: index + 1,
+    direction: null,
+  }));
+  const stopRef = (index: number) => ({
+    id: stops[index]!.stopId,
+    cityCode: "25",
+    nodeId: stops[index]!.nodeId,
+    sourceStopNo: null,
+    arsId: null,
+    name: stops[index]!.stopName,
+    latitude: stops[index]!.latitude,
+    longitude: stops[index]!.longitude,
+    source: "database" as const,
+  });
+  return {
+    id: "adjustable",
+    source: "TAGO",
+    durationSeconds: 600,
+    distanceMeters: 1_000,
+    walkDistanceMeters: 0,
+    transitDistanceMeters: 1_000,
+    transferCount: 0,
+    legs: [{
+      id: "adjustable-bus",
+      mode: "BUS",
+      name: "514",
+      distanceMeters: 1_000,
+      durationSeconds: 600,
+      coordinates: stops.map((stop) => ({
+        lat: stop.latitude,
+        lng: stop.longitude,
+      })),
+      isExerciseSegment: false,
+      bus: {
+        routeId: "route-514",
+        cityCode: "25",
+        routeNo: "514",
+        routeType: null,
+        boardingStop: stopRef(0),
+        alightingStop: stopRef(3),
+        stopCount: 3,
+        boardingNodeOrder: 1,
+        alightingNodeOrder: 4,
+        expectedArrivalSeconds: 120,
+        expectedRideSeconds: 480,
+        vehicleNo: null,
+        vehicleType: null,
+        isArrivalRealtime: false,
+        polyline: stops.map((stop) => ({
+          lat: stop.latitude,
+          lng: stop.longitude,
+        })),
+        stops,
+      },
+    }],
+  };
+}
+
+const generationRequest: RecommendationRequest = {
+  origin: {
+    id: "origin",
+    name: "출발",
+    address: "",
+    roadAddress: "",
+    category: "",
+    location: { lat: 36.349, lng: 127.369 },
+  },
+  destination: {
+    id: "destination",
+    name: "도착",
+    address: "",
+    roadAddress: "",
+    category: "",
+    location: { lat: 36.358, lng: 127.378 },
+  },
+  currentSteps: 0,
+  goalSteps: 2_000,
+  walkingMetric: {
+    stepLengthMeters: 0.7,
+    source: "RESEARCH_ESTIMATE",
+    modelVersion: "HAN_2026_V1",
+  },
+};
 
 describe("대중교통 목표 걸음 경로 재구성", () => {
   it("시간표 기반 지하철의 비실시간 상태와 시간 합계를 보존한다", () => {
@@ -315,6 +422,145 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
       outcome: "DETAILED",
       source: "KAKAO_WALK",
       walkingRole: "ACCESS",
+    });
+  });
+
+  it("조정 버스의 계획 거리와 시간은 상세 도로선이 아니라 정류장 topology로 계산한다", () => {
+    const stops = [
+      { nodeId: "n1", lat: 36.35, lng: 127.37 },
+      { nodeId: "n2", lat: 36.351, lng: 127.372 },
+      { nodeId: "n3", lat: 36.352, lng: 127.374 },
+      { nodeId: "n4", lat: 36.353, lng: 127.376 },
+    ].map((stop, index) => ({
+      routeId: "route-514",
+      stopId: `stop-${index + 1}`,
+      nodeId: stop.nodeId,
+      cityCode: "25",
+      stopName: stop.nodeId,
+      latitude: stop.lat,
+      longitude: stop.lng,
+      nodeOrder: index + 1,
+      direction: null,
+    }));
+    const stopRef = (index: number) => ({
+      id: stops[index]!.stopId,
+      cityCode: "25",
+      nodeId: stops[index]!.nodeId,
+      sourceStopNo: null,
+      arsId: null,
+      name: stops[index]!.stopName,
+      latitude: stops[index]!.latitude,
+      longitude: stops[index]!.longitude,
+      source: "database" as const,
+    });
+    const leg: RouteLeg = {
+      id: "bus-514",
+      mode: "BUS",
+      name: "514",
+      distanceMeters: 2_000,
+      durationSeconds: 900,
+      coordinates: [
+        { lat: 36.35, lng: 127.37 },
+        { lat: 36.39, lng: 127.45 },
+        { lat: 36.353, lng: 127.376 },
+      ],
+      geometryQuality: "DETAILED",
+      isExerciseSegment: false,
+      bus: {
+        routeId: "route-514",
+        cityCode: "25",
+        routeNo: "514",
+        routeType: null,
+        boardingStop: stopRef(0),
+        alightingStop: stopRef(3),
+        stopCount: 3,
+        boardingNodeOrder: 1,
+        alightingNodeOrder: 4,
+        expectedArrivalSeconds: 120,
+        expectedRideSeconds: 780,
+        vehicleNo: null,
+        vehicleType: null,
+        isArrivalRealtime: false,
+        polyline: [],
+        stops,
+      },
+    };
+
+    const adjusted = adjustedBusLeg(leg, 1, 3, true);
+    const sameTopologyDifferentShape = adjustedBusLeg(
+      {
+        ...leg,
+        distanceMeters: 99_999,
+        coordinates: [...leg.coordinates].reverse(),
+      },
+      1,
+      3,
+      true,
+    );
+
+    expect(adjusted.coordinates).toEqual(
+      stops.slice(1).map((stop) => ({
+        lat: stop.latitude,
+        lng: stop.longitude,
+      })),
+    );
+    expect(adjusted.geometryQuality).toBe("APPROXIMATE");
+    expect(sameTopologyDifferentShape).toMatchObject({
+      distanceMeters: adjusted.distanceMeters,
+      durationSeconds: adjusted.durationSeconds,
+      coordinates: adjusted.coordinates,
+    });
+  });
+
+  it("baseline 생성 뒤 planning deadline이 끝나면 완성된 후보만 partial로 반환한다", async () => {
+    const getWalkingRoute = vi.fn(
+      async () => new Promise<NormalizedRoute>(() => undefined),
+    );
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [adjustableRoute()],
+      getWalkingRoute,
+    };
+    const controller = new AbortController();
+    const pending = new CandidateGenerator(provider).generate(
+      generationRequest,
+      controller.signal,
+      { allowPartialOnTimeout: true },
+    );
+    await vi.waitFor(() => expect(getWalkingRoute).toHaveBeenCalled());
+
+    controller.abort(new DOMException("planning deadline", "TimeoutError"));
+    const result = await pending;
+
+    expect(result.planningTimedOut).toBe(true);
+    expect(result.candidates).toEqual([
+      { route: expect.objectContaining({ id: "adjustable" }), kind: "BASE" },
+    ]);
+  });
+
+  it("baseline 생성 뒤 client abort는 partial 성공으로 바꾸지 않는다", async () => {
+    const getWalkingRoute = vi.fn(
+      async () => new Promise<NormalizedRoute>(() => undefined),
+    );
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [adjustableRoute()],
+      getWalkingRoute,
+    };
+    const controller = new AbortController();
+    const pending = new CandidateGenerator(provider).generate(
+      generationRequest,
+      controller.signal,
+      { allowPartialOnTimeout: true },
+    );
+    await vi.waitFor(() => expect(getWalkingRoute).toHaveBeenCalled());
+
+    controller.abort(new DOMException("client aborted", "AbortError"));
+
+    await expect(pending).rejects.toMatchObject<Partial<ProviderError>>({
+      kind: "ABORTED",
     });
   });
 });

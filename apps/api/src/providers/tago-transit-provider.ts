@@ -20,6 +20,7 @@ import {
 import { TagoApiError } from "../transit/tago-client.js";
 import { TransitService } from "../transit/transit-service.js";
 import type {
+  BusGeometryRequest,
   MobilityProvider,
   PlaceSearchOptions,
   RoadGeometryProvider,
@@ -28,6 +29,7 @@ import type {
 } from "./types.js";
 import { MultimodalRoutePlanner } from "./multimodal-route-planner.js";
 import {
+  BUS_GEOMETRY_ALGORITHM_VERSION,
   classifyGeometryError,
   RouteGeometryService,
   withWalkingGeometryLimit,
@@ -296,6 +298,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     this.#routeGeometryService = new RouteGeometryService({
       provider: options.baseProvider,
       repository: options.transitService.repository,
+      algorithmVersion: options.config.transit.busGeometryPairV3Enabled
+        ? BUS_GEOMETRY_ALGORITHM_VERSION
+        : "transit-v2",
     });
     this.#subwayRoutePlanner = new SubwayRoutePlanner(options);
     this.#multimodalRoutePlanner = new MultimodalRoutePlanner({
@@ -313,6 +318,12 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
 
   public getWalkingRoute(request: WalkRouteRequest) {
     return this.#baseProvider.getWalkingRoute(request);
+  }
+
+  public resolveBusGeometry(
+    request: BusGeometryRequest,
+  ): Promise<ResolvedBusGeometry> {
+    return this.#routeGeometryService.resolveBusGeometry(request);
   }
 
   public async getTransitRoutes(
@@ -943,16 +954,29 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
     const walkingSignal = request.signal === undefined
       ? budgetSignal
       : AbortSignal.any([request.signal, budgetSignal]);
+    let queueWaitMilliseconds = 0;
+    let queueStartedCount = 0;
+    let queueAbortedBeforeStartCount = 0;
     try {
       const route = await this.#walkingCache.getOrLoad(
         key,
         30 * 60 * 1000,
-        () => withWalkingGeometryLimit(() => this.#baseProvider.getWalkingRoute({
-          origin: from,
-          destination: to,
-          routeMode: "BROAD_FIRST",
-          signal: walkingSignal,
-        }), walkingSignal),
+        () => withWalkingGeometryLimit(
+          () => this.#baseProvider.getWalkingRoute({
+            origin: from,
+            destination: to,
+            routeMode: "BROAD_FIRST",
+            signal: walkingSignal,
+          }),
+          walkingSignal,
+          (observation) => {
+            queueWaitMilliseconds = observation.queueWaitMilliseconds;
+            queueStartedCount = observation.started ? 1 : 0;
+            queueAbortedBeforeStartCount = observation.abortedBeforeStart
+              ? 1
+              : 0;
+          },
+        ),
       );
       request.observeRouteGeometry?.({
         mode: "WALK",
@@ -965,6 +989,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         outputVertexCount: route.legs.reduce((total, leg) => total + leg.coordinates.length, 0),
         successfulSectionCount: 1,
         failedSectionCount: 0,
+        queueWaitMilliseconds,
+        queueStartedCount,
+        queueAbortedBeforeStartCount,
       });
       return route;
     } catch (error) {
@@ -979,6 +1006,9 @@ export class TagoTransitMobilityProvider implements MobilityProvider {
         outputVertexCount: 2,
         successfulSectionCount: 0,
         failedSectionCount: 1,
+        queueWaitMilliseconds,
+        queueStartedCount,
+        queueAbortedBeforeStartCount,
       });
       return approximateWalkingRoute(
         from,

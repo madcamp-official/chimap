@@ -72,18 +72,48 @@ mobile binary에 넣지 않습니다. Web/API Compose 승격은 App Store·Play 
 TRANSIT_GEOMETRY_V2_ENABLED=0
 ```
 
-staging 검증 시 `1`로 바꾸고 514번은 아래처럼 quota 상한과 dry-run을 먼저
-확인한 뒤 warm-up합니다. 전국 일괄 warm-up은 수행하지 않습니다.
+staging 검증 시 `1`로 바꾸고 legacy v2 cache를 갱신할 때는 알고리즘을
+명시합니다. 전국 일괄 warm-up은 수행하지 않습니다.
 
 ```bash
 docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
-  --cityCode 25 --routeId DJB30300067 --maxApiCalls 5 --dryRun
+  --cityCode 25 --routeId DJB30300067 --algorithm transit-v2 \
+  --maxApiCalls 5 --dryRun
 docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
-  --cityCode 25 --routeId DJB30300067 --maxApiCalls 5
+  --cityCode 25 --routeId DJB30300067 --algorithm transit-v2 \
+  --maxApiCalls 5
 ```
 
 rollback은 flag를 `0`으로 되돌린 뒤 API를 재기동합니다. migration 11 테이블은
 기존 `track-v1` 및 헤더 없는 요청에서 참조되지 않으므로 삭제하지 않습니다.
+
+추천 timeout·선택 결과 geometry·버스 stop-pair v3는 서로 독립적인 flag로
+배포합니다. 새 이미지를 세 flag 모두 `0`으로 먼저 기동해 기존 동작과 신규
+Prometheus 지표 수집을 확인한 뒤, staging에서 아래 순서대로 하나씩 켭니다.
+
+```dotenv
+RECOMMENDATION_PHASED_TIMEOUTS_ENABLED=0
+RECOMMENDATION_SELECTED_GEOMETRY_ENABLED=0
+BUS_GEOMETRY_PAIR_V3_ENABLED=0
+```
+
+각 단계 사이에는 추천 phase timeout 비율, provider timeout origin, geometry
+skip, 버스 snap 거리·detour ratio·out-and-back 지표를 확인합니다. production도
+`phased timeouts → selected geometry → bus pair v3` 순서로 승격하며, 이상이 생긴
+기능의 flag만 `0`으로 되돌리고 API를 재기동합니다. 세 flag는 API 응답 계약이나
+DB schema를 바꾸지 않습니다.
+
+v3 cache는 604·108·514 순서로 dry-run 뒤 생성합니다. 기본 algorithm은 v3이며,
+노선 전체를 처리할 때는 실제 인접 정류장 쌍 수보다 큰 호출 상한을 지정합니다.
+
+```bash
+docker compose run --rm api node dist/cli/transit.js warm-bus-geometry \
+  --cityCode 25 --routeId DJB30300071 --algorithm kakao-road-pair-v3 \
+  --concurrency 2 --maxApiCalls 100 --dryRun
+# 출력 확인 뒤 --dryRun만 제거합니다. 108(DJB30300043, 88),
+# 514(DJB30300067, 99)도 같은 순서로 실행합니다.
+```
+
 `APP_ENV=staging`에는 staging 전용 API/DB만 연결하고 production host를 대입하지
 않습니다. production 주소는 production profile과 승인된 guest smoke에만 씁니다.
 

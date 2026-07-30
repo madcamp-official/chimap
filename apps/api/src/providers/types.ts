@@ -1,4 +1,5 @@
 import type {
+  BusRouteStop,
   Coordinate,
   NormalizedRoute,
   Place,
@@ -8,7 +9,10 @@ import type {
   RouteGeometryProfile,
   SubwayGeometryObservation,
 } from "./subway-track-geometry.js";
-import type { RouteGeometryObservation } from "./route-geometry.js";
+import type {
+  ResolvedBusGeometry,
+  RouteGeometryObservation,
+} from "./route-geometry.js";
 
 export type WalkRouteMode = "BROAD_FIRST" | "SHORTEST" | "ACCESSIBLE";
 
@@ -47,6 +51,12 @@ export type RoadRouteSectionsResult = {
   sections: Coordinate[][];
 };
 
+export type BusGeometryRequest = {
+  stops: BusRouteStop[];
+  signal?: AbortSignal;
+  observe?: (observation: RouteGeometryObservation) => void;
+};
+
 export interface RoadGeometryProvider {
   getRoadRouteGeometry(request: RoadRouteRequest): Promise<Coordinate[]>;
   getRoadRouteSections(
@@ -67,4 +77,8 @@ export interface MobilityProvider {
   ): Promise<NormalizedRoute[]>;
 
   getWalkingRoute(request: WalkRouteRequest): Promise<NormalizedRoute>;
+
+  resolveBusGeometry?(
+    request: BusGeometryRequest,
+  ): Promise<ResolvedBusGeometry>;
 }

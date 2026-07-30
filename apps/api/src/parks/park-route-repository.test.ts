@@ -29,12 +29,30 @@ describe("ParkRouteRepository direction view", () => {
       ],
     });
     const repository = new ParkRouteRepository({ query } as never);
-    const result = await repository.findNearSegment({
-      start: { lng: 127.3, lat: 36.3 },
-      end: { lng: 127.4, lat: 36.4 },
+    const result = await repository.findNearRoute({
+      coordinates: [
+        { lng: 127.3, lat: 36.3 },
+        { lng: 127.35, lat: 36.35 },
+        { lng: 127.4, lat: 36.4 },
+      ],
       radiusMeters: 800,
       limit: 3,
     });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("requested_route.geometry"),
+      [
+        JSON.stringify({
+          type: "LineString",
+          coordinates: [
+            [127.3, 36.3],
+            [127.35, 36.35],
+            [127.4, 36.4],
+          ],
+        }),
+        800,
+        3,
+      ],
+    );
     expect(result).toHaveLength(2);
     expect(result[0]?.reversed).toBe(false);
     expect(result[1]).toMatchObject({

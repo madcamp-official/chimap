@@ -92,6 +92,26 @@ export type BusSegmentGeometryWrite = Omit<
   expiresAt: Date;
 };
 
+/**
+ * Additive, algorithm-versioned bus geometry cache introduced by migration 13.
+ * The legacy BusSegmentGeometry types remain bound to bus_segment_geometries so
+ * older binaries can continue to read and write transit-v2 during rollback.
+ */
+export type VersionedBusSegmentGeometry = BusSegmentGeometry & {
+  startSnapDistanceMeters: number;
+  endSnapDistanceMeters: number;
+  detourRatio: number;
+  outAndBack: boolean;
+};
+
+export type VersionedBusSegmentGeometryWrite = Omit<
+  VersionedBusSegmentGeometry,
+  "cacheState"
+> & {
+  freshUntil: Date;
+  expiresAt: Date;
+};
+
 export type CsvSubwayStation = {
   stationCode: string;
   name: string;
@@ -567,16 +587,27 @@ export class TransitRepository {
              SELECT 1 FROM pg_extension WHERE extname = 'postgis'
            ) AS installed`,
         ),
-        this.pool.query<{ count: string }>(
-          "SELECT COUNT(*)::text AS count FROM schema_migrations",
+        this.pool.query<{ version: string; checksum: string }>(
+          `SELECT version::text, checksum
+           FROM schema_migrations
+           WHERE version = ANY($1::bigint[])`,
+          [APP_MIGRATIONS.map((migration) => migration.version)],
         ),
       ]);
+      const appliedChecksums = new Map(
+        migrations.rows.map((migration) => [
+          Number(migration.version),
+          migration.checksum,
+        ]),
+      );
       return {
         connected: true,
         postgis: postgis.rows[0]?.installed === true,
-        migrationsCurrent:
-          Number(migrations.rows[0]?.count ?? 0) ===
-          APP_MIGRATIONS.length,
+        migrationsCurrent: APP_MIGRATIONS.every(
+          (migration) =>
+            appliedChecksums.get(migration.version) ===
+            migrationChecksum(migration.sql),
+        ),
       };
     } catch {
       return {
@@ -610,6 +641,39 @@ export class TransitRepository {
          ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
          $3
        )
+       ORDER BY distance_meters
+       LIMIT 100`,
+      [latitude, longitude, radiusMeters],
+    );
+    return result.rows.map((row) => rowToStop(row as SqlRow));
+  }
+
+  public async findNearbyRoutableStops(
+    latitude: number,
+    longitude: number,
+    radiusMeters: number,
+    queryable: Queryable = this.pool,
+  ): Promise<BusStop[]> {
+    const result = await queryable.query(
+      `SELECT
+         ${stopSelect("stop.")}
+         , ST_Distance(
+             stop.location,
+             ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+           ) AS distance_meters
+       FROM bus_stops AS stop
+       WHERE ST_DWithin(
+         stop.location,
+         ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+         $3
+       )
+         AND EXISTS (
+           SELECT 1
+           FROM bus_route_stops AS relation
+           JOIN bus_routes AS route
+             ON route.id = relation.route_internal_id
+           WHERE relation.stop_internal_id = stop.id
+         )
        ORDER BY distance_meters
        LIMIT 100`,
       [latitude, longitude, radiusMeters],
@@ -1168,6 +1232,160 @@ export class TransitRepository {
             row.geometrySource,
             row.geometryVersion,
             row.sourceHash,
+            row.freshUntil,
+            row.expiresAt,
+          ],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getVersionedBusSegmentGeometries(
+    cityCode: string,
+    routeId: string,
+    geometryVersion: string,
+  ): Promise<VersionedBusSegmentGeometry[]> {
+    const result = await this.pool.query(
+      `SELECT
+         geometry.from_node_order,
+         geometry.to_node_order,
+         ST_AsGeoJSON(
+           ST_Transform(
+             ST_SimplifyPreserveTopology(
+               ST_Transform(geometry.road_geometry, 5179),
+               2
+             ),
+             4326
+           )
+         ) AS road_geojson,
+         geometry.distance_meters,
+         geometry.geometry_source,
+         geometry.geometry_version,
+         geometry.source_hash,
+         geometry.start_snap_distance_meters,
+         geometry.end_snap_distance_meters,
+         geometry.detour_ratio,
+         geometry.out_and_back,
+         CASE WHEN geometry.fresh_until > now()
+           THEN 'FRESH' ELSE 'STALE' END AS cache_state
+       FROM bus_segment_geometry_versions AS geometry
+       JOIN bus_routes AS route ON route.id = geometry.route_internal_id
+       WHERE route.city_code = $1 AND route.route_id = $2
+         AND geometry.geometry_version = $3
+         AND geometry.expires_at > now()
+       ORDER BY geometry.from_node_order, geometry.to_node_order`,
+      [cityCode, routeId, geometryVersion],
+    );
+    return result.rows.flatMap((row): VersionedBusSegmentGeometry[] => {
+      const parsed = JSON.parse(String(row.road_geojson)) as {
+        type?: unknown;
+        coordinates?: unknown;
+      };
+      if (parsed.type !== "LineString" || !Array.isArray(parsed.coordinates)) {
+        return [];
+      }
+      const coordinates = parsed.coordinates.flatMap((coordinate) =>
+        Array.isArray(coordinate) &&
+        typeof coordinate[0] === "number" &&
+        typeof coordinate[1] === "number"
+          ? [{ lng: coordinate[0], lat: coordinate[1] }]
+          : [],
+      );
+      if (coordinates.length < 2) {
+        return [];
+      }
+      return [{
+        fromNodeOrder: Number(row.from_node_order),
+        toNodeOrder: Number(row.to_node_order),
+        coordinates,
+        distanceMeters: Number(row.distance_meters),
+        geometrySource: String(row.geometry_source),
+        geometryVersion: String(row.geometry_version),
+        sourceHash: String(row.source_hash),
+        startSnapDistanceMeters: Number(row.start_snap_distance_meters),
+        endSnapDistanceMeters: Number(row.end_snap_distance_meters),
+        detourRatio: Number(row.detour_ratio),
+        outAndBack: row.out_and_back === true,
+        cacheState: row.cache_state === "FRESH" ? "FRESH" : "STALE",
+      }];
+    });
+  }
+
+  public async upsertVersionedBusSegmentGeometries(
+    cityCode: string,
+    routeId: string,
+    rows: readonly VersionedBusSegmentGeometryWrite[],
+  ): Promise<void> {
+    if (rows.length === 0) {
+      return;
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const routeResult = await client.query<{ id: string }>(
+        "SELECT id FROM bus_routes WHERE city_code = $1 AND route_id = $2",
+        [cityCode, routeId],
+      );
+      const routeInternalId = routeResult.rows[0]?.id;
+      if (routeInternalId === undefined) {
+        throw new Error("버스 형상을 저장할 노선을 찾지 못했습니다.");
+      }
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO bus_segment_geometry_versions (
+             route_internal_id, from_node_order, to_node_order,
+             geometry_version, road_geometry, distance_meters,
+             geometry_source, source_hash,
+             start_snap_distance_meters, end_snap_distance_meters,
+             detour_ratio, out_and_back, fresh_until, expires_at,
+             last_used_at, created_at, updated_at
+           ) VALUES (
+             $1,$2,$3,$4,
+             ST_SetSRID(ST_GeomFromGeoJSON($5),4326),$6,$7,$8,
+             $9,$10,$11,$12,$13,$14,
+             now(),now(),now()
+           )
+           ON CONFLICT(
+             route_internal_id,
+             from_node_order,
+             to_node_order,
+             geometry_version
+           )
+           DO UPDATE SET
+             road_geometry = EXCLUDED.road_geometry,
+             distance_meters = EXCLUDED.distance_meters,
+             geometry_source = EXCLUDED.geometry_source,
+             source_hash = EXCLUDED.source_hash,
+             start_snap_distance_meters = EXCLUDED.start_snap_distance_meters,
+             end_snap_distance_meters = EXCLUDED.end_snap_distance_meters,
+             detour_ratio = EXCLUDED.detour_ratio,
+             out_and_back = EXCLUDED.out_and_back,
+             fresh_until = EXCLUDED.fresh_until,
+             expires_at = EXCLUDED.expires_at,
+             last_used_at = now(),
+             updated_at = now()`,
+          [
+            routeInternalId,
+            row.fromNodeOrder,
+            row.toNodeOrder,
+            row.geometryVersion,
+            JSON.stringify({
+              type: "LineString",
+              coordinates: row.coordinates.map((point) => [point.lng, point.lat]),
+            }),
+            row.distanceMeters,
+            row.geometrySource,
+            row.sourceHash,
+            row.startSnapDistanceMeters,
+            row.endSnapDistanceMeters,
+            row.detourRatio,
+            row.outAndBack,
             row.freshUntil,
             row.expiresAt,
           ],

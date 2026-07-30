@@ -22,6 +22,7 @@ import {
   TagoApiError,
   TagoClient,
   type TagoCityCode,
+  type TagoRouteProviderObservation,
 } from "./tago-client.js";
 import { TransitRepository } from "./transit-repository.js";
 
@@ -137,6 +138,13 @@ export type NearbyStopsResult = {
   partial: boolean;
 };
 
+export type NearbyStopsOptions = {
+  mode?: "AUTO" | "DATABASE_ONLY" | "FORCE_ONLINE";
+  onlineTimeoutMilliseconds?: number;
+  routableOnly?: boolean;
+  reconcileOnline?: boolean;
+};
+
 export type SubwayDepartureResult = {
   station: SubwayStation | null;
   items: SubwayDeparture[];
@@ -195,6 +203,12 @@ export class TransitService {
 
   public setSubwayMetricsObserver(observer: SubwayMetricsObserver): void {
     this.#subwayMetricsObserver = observer;
+  }
+
+  public setRouteProviderMetricsObserver(
+    observer: (observation: TagoRouteProviderObservation) => void,
+  ): void {
+    this.client.setRouteProviderObserver?.(observer);
   }
 
   async #removeMismatchedBusGeometry(
@@ -656,48 +670,79 @@ export class TransitService {
     coordinate: Coordinate,
     radiusMeters = this.#config.transit.maxNearbyStopDistanceMeters,
     signal?: AbortSignal,
+    options: NearbyStopsOptions = {},
   ): Promise<NearbyStopsResult> {
     const radius = Math.min(
       Math.max(1, radiusMeters),
       this.#config.transit.routeSearchMaxDistanceMeters,
     );
-    const databaseStops = await this.repository.findNearbyStops(
-      coordinate.lat,
-      coordinate.lng,
-      radius,
-    );
+    const databaseStops = options.routableOnly === true
+      ? await this.repository.findNearbyRoutableStops(
+          coordinate.lat,
+          coordinate.lng,
+          radius,
+        )
+      : await this.repository.findNearbyStops(
+          coordinate.lat,
+          coordinate.lng,
+          radius,
+        );
     const linkedDatabaseStopCount = databaseStops.filter(
       (stop) => stop.cityCode !== null && stop.nodeId !== null,
     ).length;
     const linkedCoverageIsSufficient =
       linkedDatabaseStopCount >= 8 &&
       linkedDatabaseStopCount / Math.max(databaseStops.length, 1) >= 0.8;
-    if (linkedCoverageIsSufficient) {
+    if (options.mode === "DATABASE_ONLY") {
+      return { items: uniqueStops(databaseStops), partial: false };
+    }
+    if (
+      options.mode !== "FORCE_ONLINE" &&
+      linkedCoverageIsSufficient
+    ) {
       return { items: uniqueStops(databaseStops), partial: false };
     }
 
+    const onlineTimeoutSignal =
+      options.onlineTimeoutMilliseconds === undefined
+        ? undefined
+        : AbortSignal.timeout(options.onlineTimeoutMilliseconds);
+    const onlineSignal =
+      onlineTimeoutSignal === undefined
+        ? signal
+        : signal === undefined
+          ? onlineTimeoutSignal
+          : AbortSignal.any([signal, onlineTimeoutSignal]);
+    const cacheNamespace =
+      options.mode === "FORCE_ONLINE" ? "recommendation" : "default";
     try {
       const tagoStops = await this.#cache.getOrLoad(
-        `tago:nearby-stops:${roundedCoordinate(coordinate.lat)}:${roundedCoordinate(coordinate.lng)}`,
+        `tago:nearby-stops:${cacheNamespace}:${roundedCoordinate(coordinate.lat)}:${roundedCoordinate(coordinate.lng)}`,
         this.#config.tagoCacheTtlSeconds.nearbyStops * 1000,
-        () => this.client.getNearbyStops(coordinate, signal),
+        () => this.client.getNearbyStops(
+          coordinate,
+          onlineSignal,
+          options.mode === "FORCE_ONLINE" ? { retryCount: 0 } : undefined,
+        ),
       );
-      const reconciled = await Promise.all(tagoStops.map(async (stop) => {
-        const result = await this.repository.reconcileTagoStop(stop);
-        if (result.status === "ambiguous") {
-          this.#logger.warn({
-            event: "transit.stop_match_ambiguous",
-            cityCode: stop.cityCode,
-            nodeId: stop.nodeId,
-            candidateCount: result.candidateIds.length,
-          });
-          return stop;
-        }
-        return {
-          ...result.stop,
-          distanceMeters: stop.distanceMeters,
-        };
-      }));
+      const reconciled = options.reconcileOnline === false
+        ? tagoStops
+        : await Promise.all(tagoStops.map(async (stop) => {
+            const result = await this.repository.reconcileTagoStop(stop);
+            if (result.status === "ambiguous") {
+              this.#logger.warn({
+                event: "transit.stop_match_ambiguous",
+                cityCode: stop.cityCode,
+                nodeId: stop.nodeId,
+                candidateCount: result.candidateIds.length,
+              });
+              return stop;
+            }
+            return {
+              ...result.stop,
+              distanceMeters: stop.distanceMeters,
+            };
+          }));
       return {
         items: uniqueStops([...databaseStops, ...reconciled]).filter(
           (stop) => (stop.distanceMeters ?? Infinity) <= radius,
