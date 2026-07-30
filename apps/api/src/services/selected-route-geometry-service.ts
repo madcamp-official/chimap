@@ -4,6 +4,7 @@ import type {
   NormalizedRoute,
   Recommendation,
   RouteGeometryQuality,
+  WalkingRole,
 } from "@chimap/contracts";
 
 import type { MobilityProvider } from "../providers/types.js";
@@ -45,6 +46,17 @@ export type SelectedRouteGeometryPlan = {
 function observeGeometrySkipped(
   observer: GeometrySkippedObserver | undefined,
   observation: GeometrySkippedObservation,
+): void {
+  try {
+    observer?.(observation);
+  } catch {
+    // Observability must never change geometry enrichment.
+  }
+}
+
+function observeRouteGeometry(
+  observer: ((observation: RouteGeometryObservation) => void) | undefined,
+  observation: RouteGeometryObservation,
 ): void {
   try {
     observer?.(observation);
@@ -145,7 +157,12 @@ export class SelectedRouteGeometryService {
     const selected = recommendations.slice(0, MAX_SELECTED_RECOMMENDATIONS);
     const walkingTargets = new Map<
       string,
-      { from: Coordinate; to: Coordinate }
+      {
+        from: Coordinate;
+        to: Coordinate;
+        fallbackVertexCount: number;
+        walkingRole?: WalkingRole;
+      }
     >();
     const busTargets = new Map<string, BusRouteStop[]>();
 
@@ -161,7 +178,25 @@ export class SelectedRouteGeometryService {
           const to = leg.coordinates.at(-1);
           if (from !== undefined && to !== undefined) {
             const key = walkingGeometryKey(from, to);
-            if (!walkingTargets.has(key)) walkingTargets.set(key, { from, to });
+            const existing = walkingTargets.get(key);
+            if (existing === undefined) {
+              walkingTargets.set(key, {
+                from,
+                to,
+                fallbackVertexCount: leg.coordinates.length,
+                ...(leg.walkingRole === undefined
+                  ? {}
+                  : { walkingRole: leg.walkingRole }),
+              });
+            } else {
+              existing.fallbackVertexCount = Math.max(
+                existing.fallbackVertexCount,
+                leg.coordinates.length,
+              );
+              if (existing.walkingRole !== leg.walkingRole) {
+                delete existing.walkingRole;
+              }
+            }
           }
         }
         if (
@@ -244,7 +279,7 @@ export class SelectedRouteGeometryService {
           },
         ).then((route): ResolvedWalkingGeometry => {
           const coordinates = joinedWalkingCoordinates(route);
-          return coordinates.length >= 2
+          const resolved: ResolvedWalkingGeometry = coordinates.length >= 2
             ? {
                 coordinates,
                 reason: "NONE",
@@ -261,14 +296,67 @@ export class SelectedRouteGeometryService {
                 queueStartedCount,
                 queueAbortedBeforeStartCount,
               };
-        }).catch((error: unknown): ResolvedWalkingGeometry => ({
-          coordinates: null,
-          reason: classifyGeometryError(error),
-          durationMilliseconds: performance.now() - startedAt,
-          queueWaitMilliseconds,
-          queueStartedCount,
-          queueAbortedBeforeStartCount,
-        })),
+          observeRouteGeometry(
+            observe,
+            {
+              mode: "WALK",
+              outcome: resolved.coordinates === null
+                ? "APPROXIMATE"
+                : "DETAILED",
+              reason: resolved.reason,
+              source: resolved.coordinates === null
+                ? "FALLBACK"
+                : "KAKAO_WALK",
+              cacheState: "NONE",
+              durationMilliseconds: resolved.durationMilliseconds,
+              inputVertexCount: 2,
+              outputVertexCount:
+                resolved.coordinates?.length ?? target.fallbackVertexCount,
+              successfulSectionCount: resolved.coordinates === null ? 0 : 1,
+              failedSectionCount: resolved.coordinates === null ? 1 : 0,
+              queueWaitMilliseconds: resolved.queueWaitMilliseconds,
+              queueStartedCount: resolved.queueStartedCount,
+              queueAbortedBeforeStartCount:
+                resolved.queueAbortedBeforeStartCount,
+              ...(target.walkingRole === undefined
+                ? {}
+                : { walkingRole: target.walkingRole }),
+            },
+          );
+          return resolved;
+        }).catch((error: unknown): ResolvedWalkingGeometry => {
+          const resolved: ResolvedWalkingGeometry = {
+            coordinates: null,
+            reason: classifyGeometryError(error),
+            durationMilliseconds: performance.now() - startedAt,
+            queueWaitMilliseconds,
+            queueStartedCount,
+            queueAbortedBeforeStartCount,
+          };
+          observeRouteGeometry(
+            observe,
+            {
+              mode: "WALK",
+              outcome: "APPROXIMATE",
+              reason: resolved.reason,
+              source: "FALLBACK",
+              cacheState: "NONE",
+              durationMilliseconds: resolved.durationMilliseconds,
+              inputVertexCount: 2,
+              outputVertexCount: target.fallbackVertexCount,
+              successfulSectionCount: 0,
+              failedSectionCount: 1,
+              queueWaitMilliseconds: resolved.queueWaitMilliseconds,
+              queueStartedCount: resolved.queueStartedCount,
+              queueAbortedBeforeStartCount:
+                resolved.queueAbortedBeforeStartCount,
+              ...(target.walkingRole === undefined
+                ? {}
+                : { walkingRole: target.walkingRole }),
+            },
+          );
+          return resolved;
+        }),
       );
     }
 
@@ -278,19 +366,55 @@ export class SelectedRouteGeometryService {
     >();
     for (const [key, stops] of busTargets) {
       const startedAt = performance.now();
+      let observed = false;
+      const observeBusOnce = (observation: RouteGeometryObservation): void => {
+        if (observed) return;
+        observed = true;
+        observeRouteGeometry(observe, observation);
+      };
       busResolutions.set(
         key,
         this.provider.resolveBusGeometry!({
           stops,
           ...(signal === undefined ? {} : { signal }),
-          ...(observe === undefined ? {} : { observe }),
-        }).then((geometry): ResolvedBusGeometryTask => ({
-          geometry,
-          reason: geometry.reason,
-          durationMilliseconds: performance.now() - startedAt,
-        })).catch((error: unknown): ResolvedBusGeometryTask => {
+          ...(observe === undefined ? {} : { observe: observeBusOnce }),
+        }).then((geometry): ResolvedBusGeometryTask => {
+          const durationMilliseconds = performance.now() - startedAt;
+          observeBusOnce({
+            mode: "BUS",
+            outcome: geometry.quality,
+            reason: geometry.reason,
+            source: geometry.quality === "DETAILED"
+              ? "KAKAO_ROAD"
+              : "FALLBACK",
+            cacheState: "NONE",
+            durationMilliseconds,
+            inputVertexCount: stops.length,
+            outputVertexCount: geometry.coordinates.length,
+            successfulSectionCount: geometry.quality === "DETAILED"
+              ? Math.max(1, stops.length - 1)
+              : 0,
+            failedSectionCount: geometry.quality === "DETAILED"
+              ? 0
+              : Math.max(1, stops.length - 1),
+            ...(stops[0] === undefined
+              ? {}
+              : {
+                  routeId: stops[0].routeId,
+                  fromNodeOrder: stops[0].nodeOrder,
+                }),
+            ...(stops.at(-1) === undefined
+              ? {}
+              : { toNodeOrder: stops.at(-1)!.nodeOrder }),
+          });
+          return {
+            geometry,
+            reason: geometry.reason,
+            durationMilliseconds,
+          };
+        }).catch((error: unknown): ResolvedBusGeometryTask => {
           const reason = classifyGeometryError(error);
-          observe?.({
+          observeBusOnce({
             mode: "BUS",
             outcome: "APPROXIMATE",
             reason,
@@ -341,7 +465,6 @@ export class SelectedRouteGeometryService {
       resolvedBus: ReadonlyMap<string, ResolvedBusGeometryTask>;
       recommendationIndexes?: ReadonlySet<number>;
       includeBus: boolean;
-      observeWalking: boolean;
     }): Recommendation[] => recommendations.map(
       (recommendation, recommendationIndex) => {
         if (
@@ -369,28 +492,6 @@ export class SelectedRouteGeometryService {
             );
             if (geometry === undefined) return leg;
             const detailed = geometry.coordinates !== null;
-            if (input.observeWalking) {
-              observe?.({
-                mode: "WALK",
-                outcome: detailed ? "DETAILED" : "APPROXIMATE",
-                reason: detailed ? "NONE" : geometry.reason,
-                source: detailed ? "KAKAO_WALK" : "FALLBACK",
-                cacheState: "NONE",
-                durationMilliseconds: geometry.durationMilliseconds,
-                inputVertexCount: 2,
-                outputVertexCount:
-                  geometry.coordinates?.length ?? leg.coordinates.length,
-                successfulSectionCount: detailed ? 1 : 0,
-                failedSectionCount: detailed ? 0 : 1,
-                queueWaitMilliseconds: geometry.queueWaitMilliseconds,
-                queueStartedCount: geometry.queueStartedCount,
-                queueAbortedBeforeStartCount:
-                  geometry.queueAbortedBeforeStartCount,
-                ...(leg.walkingRole === undefined
-                  ? {}
-                  : { walkingRole: leg.walkingRole }),
-              });
-            }
             return detailed
               ? {
                   ...leg,
@@ -460,7 +561,6 @@ export class SelectedRouteGeometryService {
         resolvedBus: new Map(),
         recommendationIndexes: new Set([goalIndex]),
         includeBus: false,
-        observeWalking: false,
       });
     })();
     const complete = (async (): Promise<Recommendation[]> => {
@@ -472,7 +572,6 @@ export class SelectedRouteGeometryService {
         resolvedWalking,
         resolvedBus,
         includeBus: options.includeBus !== false,
-        observeWalking: true,
       });
     })();
     return { goalWalking, complete };

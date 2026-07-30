@@ -430,6 +430,90 @@ describe("버스 인접 정류장 형상", () => {
     expect(joined.continuityGap).toBe(true);
   });
 
+  it("section 경계의 A-B-A를 제거한 뒤 돌출이 남지 않으면 DETAILED를 허용한다", async () => {
+    const routeStops = stops.slice(0, 3);
+    const junction = {
+      lat: routeStops[1]!.latitude,
+      lng: routeStops[1]!.longitude,
+    };
+    const spur = {
+      lat: junction.lat + 0.0001,
+      lng: junction.lng,
+    };
+    const joined = joinBusRoadSections(routeStops, [
+      [
+        { lat: routeStops[0]!.latitude, lng: routeStops[0]!.longitude },
+        junction,
+      ],
+      [
+        spur,
+        junction,
+        { lat: routeStops[2]!.latitude, lng: routeStops[2]!.longitude },
+      ],
+    ]);
+
+    expect(joined.removedOutAndBack).toBe(true);
+    expect(joined.outAndBack).toBe(false);
+    expect(hasOutAndBackSpike(joined.coordinates)).toBe(false);
+
+    const observations: Array<{ outAndBack?: boolean }> = [];
+    const service = new RouteGeometryService({
+      provider: {
+        getRoadRouteGeometry: vi.fn(async () => []),
+        getRoadRouteSections: vi.fn(async ({ points }) => ({
+          sections: [points[0]!.lat === routeStops[0]!.latitude
+            ? [points[0]!, junction]
+            : [spur, junction, points[1]!]],
+        })),
+      },
+      repository: {
+        getBusSegmentGeometries: vi.fn(async () => []),
+        upsertBusSegmentGeometries: vi.fn(async () => undefined),
+        getVersionedBusSegmentGeometries: vi.fn(async () => []),
+        upsertVersionedBusSegmentGeometries: vi.fn(async () => undefined),
+      },
+      algorithmVersion: BUS_GEOMETRY_ALGORITHM_VERSION,
+    });
+
+    const result = await service.resolveBusGeometry({
+      stops: routeStops,
+      observe: (observation) => observations.push(observation),
+    });
+
+    expect(result).toMatchObject({ quality: "DETAILED", reason: "NONE" });
+    expect(hasOutAndBackSpike(result.coordinates)).toBe(false);
+    expect(observations).toEqual([
+      expect.objectContaining({
+        outcome: "DETAILED",
+        reason: "NONE",
+        outAndBack: true,
+      }),
+    ]);
+  });
+
+  it("전체 A-B-A가 한 점으로 축약되면 최소 두 좌표 fallback으로 강등한다", () => {
+    const start = stop(1, 36.35, 127.37);
+    const middle = stop(2, 36.3501, 127.37);
+    const returned = stop(3, 36.35, 127.37);
+    const joined = joinBusRoadSections(
+      [start, middle, returned],
+      [
+        [
+          { lat: start.latitude, lng: start.longitude },
+          { lat: middle.latitude, lng: middle.longitude },
+        ],
+        [
+          { lat: middle.latitude, lng: middle.longitude },
+          { lat: returned.latitude, lng: returned.longitude },
+        ],
+      ],
+    );
+
+    expect(joined.coordinates).toHaveLength(2);
+    expect(joined.outAndBack).toBe(true);
+    expect(joined.removedOutAndBack).toBe(true);
+  });
+
   it("5m 이상 왕복하는 A-B-A section을 거절한다", () => {
     const from = { lat: 36.35, lng: 127.37 };
     const to = { lat: 36.351, lng: 127.371 };

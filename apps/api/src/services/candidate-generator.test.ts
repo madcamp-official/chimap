@@ -417,7 +417,7 @@ describe("대중교통 목표 걸음 경로 재구성", () => {
         geometryQuality: "DETAILED",
       });
     }
-    expect(observations).toHaveLength(2);
+    expect(observations).toHaveLength(1);
     expect(observations[0]).toMatchObject({
       outcome: "DETAILED",
       source: "KAKAO_WALK",

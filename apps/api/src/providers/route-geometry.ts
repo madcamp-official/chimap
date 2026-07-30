@@ -101,6 +101,7 @@ export type JoinedBusRoadSections = {
   coordinates: Coordinate[];
   continuityGap: boolean;
   outAndBack: boolean;
+  removedOutAndBack: boolean;
 };
 
 export type RouteGeometryQueueObservation = {
@@ -432,7 +433,12 @@ export function joinBusRoadSections(
   const first = stops[0];
   const last = stops.at(-1);
   if (first === undefined || last === undefined || stops.length < 2) {
-    return { coordinates: [], continuityGap: false, outAndBack: false };
+    return {
+      coordinates: [],
+      continuityGap: false,
+      outAndBack: false,
+      removedOutAndBack: false,
+    };
   }
 
   const joined: Coordinate[] = [stopCoordinate(first)];
@@ -466,10 +472,14 @@ export function joinBusRoadSections(
   appendJoinPoint(joined, stopCoordinate(last));
 
   const sanitized = removeOutAndBackSpikes(joined);
+  const collapsed = sanitized.coordinates.length < 2;
   return {
-    coordinates: sanitized.coordinates,
+    coordinates: collapsed
+      ? [stopCoordinate(first), stopCoordinate(last)]
+      : sanitized.coordinates,
     continuityGap,
-    outAndBack: sanitized.removed || hasOutAndBackSpike(sanitized.coordinates),
+    outAndBack: collapsed || hasOutAndBackSpike(sanitized.coordinates),
+    removedOutAndBack: sanitized.removed,
   };
 }
 
@@ -1042,7 +1052,10 @@ export class RouteGeometryService {
     ).length;
     const failed = expected.length - successful;
     const quality: RouteGeometryQuality =
-      failed === 0 && !joined.continuityGap && !joined.outAndBack
+      failed === 0 &&
+        joined.coordinates.length >= 2 &&
+        !joined.continuityGap &&
+        !joined.outAndBack
         ? "DETAILED"
         : "APPROXIMATE";
     const reason: RouteGeometryReason = quality === "DETAILED"
@@ -1093,7 +1106,7 @@ export class RouteGeometryService {
       toNodeOrder: last.nodeOrder,
       geometryVersion: BUS_GEOMETRY_ALGORITHM_VERSION,
       ...snapAndDetour,
-      outAndBack: joined.outAndBack,
+      outAndBack: joined.outAndBack || joined.removedOutAndBack,
       queueWaitMilliseconds,
       queueStartedCount,
       queueAbortedBeforeStartCount,

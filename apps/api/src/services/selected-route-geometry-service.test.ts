@@ -285,8 +285,13 @@ describe("선택 경로 형상 상세화", () => {
         distanceMeters: leg.distanceMeters,
       })),
     }));
+    const observe = vi.fn();
 
-    const pending = new SelectedRouteGeometryService(provider).enrich(input);
+    const pending = new SelectedRouteGeometryService(provider).enrich(
+      input,
+      undefined,
+      observe,
+    );
     await vi.waitFor(() => {
       expect(getWalkingRoute).toHaveBeenCalledTimes(1);
       expect(resolveBusGeometry).toHaveBeenCalledTimes(1);
@@ -317,6 +322,11 @@ describe("선택 경로 형상 상세화", () => {
       });
     }
     expect(result[3]).toBe(fourth);
+    expect(
+      observe.mock.calls.filter(([observation]) =>
+        observation.mode === "WALK"
+      ),
+    ).toHaveLength(1);
   });
 
   it("한 mode의 실패를 다른 mode의 상세화와 추천 응답에서 격리한다", async () => {
@@ -347,14 +357,71 @@ describe("선택 경로 형상 상세화", () => {
       }),
     };
     const original = recommendation("selected");
+    const observe = vi.fn(() => {
+      throw new Error("metrics exporter failed");
+    });
 
-    const [result] = await new SelectedRouteGeometryService(provider).enrich([
-      original,
-    ]);
+    const [result] = await new SelectedRouteGeometryService(provider).enrich(
+      [original],
+      undefined,
+      observe,
+    );
 
     expect(result?.legs[0]?.geometryQuality).toBe("DETAILED");
     expect(result?.legs[1]).toEqual(original.legs[1]);
     expect(result?.durationSeconds).toBe(original.durationSeconds);
+    expect(observe).toHaveBeenCalledTimes(2);
+  });
+
+  it("BUS provider가 관측 뒤 실패해도 stable key를 한 번만 기록한다", async () => {
+    const observe = vi.fn();
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [],
+      getWalkingRoute: vi.fn(async (): Promise<NormalizedRoute> => ({
+        id: "walk-detail",
+        source: "KAKAO",
+        durationSeconds: 1,
+        distanceMeters: 1,
+        walkDistanceMeters: 1,
+        transitDistanceMeters: 0,
+        transferCount: 0,
+        legs: [{
+          id: "walk-detail-leg",
+          mode: "WALK",
+          distanceMeters: 1,
+          durationSeconds: 1,
+          coordinates: [walkFrom, walkMiddle, walkTo],
+          isExerciseSegment: false,
+        }],
+      })),
+      resolveBusGeometry: vi.fn(async ({ observe: observeBus }) => {
+        observeBus?.({
+          mode: "BUS",
+          outcome: "APPROXIMATE",
+          reason: "UPSTREAM",
+          source: "FALLBACK",
+          cacheState: "MISS",
+          durationMilliseconds: 1,
+          inputVertexCount: 2,
+          outputVertexCount: 2,
+          successfulSectionCount: 0,
+          failedSectionCount: 1,
+        });
+        throw new Error("provider failed after observation");
+      }),
+    };
+
+    await expect(new SelectedRouteGeometryService(provider).enrich(
+      [recommendation("selected")],
+      undefined,
+      observe,
+    )).resolves.toHaveLength(1);
+
+    expect(observe.mock.calls.filter(
+      ([observation]) => observation.mode === "BUS",
+    )).toHaveLength(1);
   });
 
   it("legacy walking-only 경로에서는 BUS provider를 호출하지 않는다", async () => {
