@@ -609,9 +609,20 @@ export function selectRecommendations(input: {
     usedIds.add(doubleSteps.route.id);
   }
 
-  const goal = [...unique]
-    .sort(byGoal(remainingSteps))
-    .find((candidate) => !usedIds.has(candidate.route.id));
+  const unusedGoalCandidates = unique.filter(
+    (candidate) => !usedIds.has(candidate.route.id),
+  );
+  const intentionalGoalCandidates = unusedGoalCandidates.filter(
+    (candidate) => candidate.kind !== "BASE",
+  );
+  // A BASE route can be numerically close only because it happens to contain
+  // more ordinary ACCESS walking. Prefer candidates generated specifically
+  // for the step goal so final provenance validation has a viable route.
+  const goalCandidatePool =
+    intentionalGoalCandidates.length > 0
+      ? intentionalGoalCandidates
+      : unusedGoalCandidates;
+  const goal = goalCandidatePool.sort(byGoal(remainingSteps))[0];
   if (goal !== undefined) {
     selected.set("GOAL", goal);
     usedIds.add(goal.route.id);

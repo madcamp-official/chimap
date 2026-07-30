@@ -248,7 +248,8 @@ expectedTotalSteps = currentSteps + estimatedSteps
 
 1. `FAST`: 유효 후보 중 총 소요시간 최소
 2. `BALANCED`: FAST 예상 걸음의 2배와 예상 걸음 차이 최소
-3. `GOAL`: 남은 걸음과 예상 걸음 차이 최소
+3. `GOAL`: 미사용 운동 조정 후보가 있으면 그 후보군에서, 없으면 전체 미사용
+   후보에서 남은 걸음과 예상 걸음 차이 최소
 4. 응답 정렬은 FAST→BALANCED→GOAL
 
 `BALANCED`는 기존 API 호환을 위해 유지하는 타입 이름이며 화면에는

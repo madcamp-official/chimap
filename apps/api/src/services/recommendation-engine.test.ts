@@ -97,10 +97,13 @@ function actualRoute(input: {
   };
 }
 
-function candidate(route: NormalizedRoute): RouteCandidate {
+function candidate(
+  route: NormalizedRoute,
+  kind: RouteCandidate["kind"] = "BASE",
+): RouteCandidate {
   return {
     route,
-    kind: "BASE",
+    kind,
   };
 }
 
@@ -239,6 +242,74 @@ describe("건강 경로 추천 선정", () => {
       id: "exact-double",
       estimatedSteps: 2000,
     });
+  });
+
+  it("GOAL은 더 가까운 BASE보다 실제 운동 조정 후보를 우선한다", () => {
+    const adjustedGoalBase = actualRoute({
+      id: "adjusted-goal",
+      routeNo: "604",
+      durationSeconds: 4_100,
+      walkDistanceMeters: 1_890,
+    });
+    const adjustedGoal: NormalizedRoute = {
+      ...adjustedGoalBase,
+      legs: [
+        {
+          ...adjustedGoalBase.legs[0]!,
+          geometryQuality: "DETAILED",
+          isExerciseSegment: true,
+          walkingRole: "GOAL_EARLY_ALIGHTING",
+        },
+        ...adjustedGoalBase.legs.slice(1),
+      ],
+    };
+
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const policy = resolveRecommendationPolicy(request, fast);
+    const selected = selectRecommendations({
+      candidates: [
+        candidate(fast),
+        candidate(doubleSteps),
+        candidate(goal),
+        candidate(adjustedGoal, "EARLY_ALIGHT"),
+      ],
+      baseline: fast,
+      request,
+      departureAt,
+      policy,
+    });
+
+    expect(selected.recommendations.find((item) => item.type === "BALANCED"))
+      .toMatchObject({ id: "actual-double-102" });
+    expect(selected.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        id: "adjusted-goal",
+        estimatedSteps: 2_700,
+        stepDifference: -100,
+      });
+    expect(selected.primaryRecommendationId).toBe("adjusted-goal");
+
+    const finalized = finalizeRecommendations({
+      recommendations: selected.recommendations,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy,
+      requireDetailedExerciseWalking: true,
+      candidateKindByRecommendationId: new Map([
+        ["actual-fast-108", "BASE"],
+        ["actual-double-102", "BASE"],
+        ["actual-goal-511", "BASE"],
+        ["adjusted-goal", "EARLY_ALIGHT"],
+      ]),
+    });
+
+    expect(finalized.goalDecision).toEqual({
+      outcome: "KEPT",
+      originalGoalRecommendationId: "adjusted-goal",
+      finalGoalRecommendationId: "adjusted-goal",
+    });
+    expect(finalized.primaryRecommendationId).toBe("adjusted-goal");
   });
 
   it("실제 고유 후보가 세 개보다 적으면 같은 경로를 복제하지 않는다", () => {
