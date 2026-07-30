@@ -56,7 +56,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
     .getByRole("option", { name: /^대전역 대전 동구 중앙로/u })
     .click();
 
-  await page.getByLabel("현재 걸음").fill("5200");
+  await page.getByLabel("현재 걸음").fill("0");
   await page.getByLabel("현재 걸음").press("Enter");
 
   const recommendationResponsePromise = page.waitForResponse(
@@ -258,7 +258,7 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   await expect(page.getByRole("combobox", { name: "도착지" })).toHaveValue(
     "대전역",
   );
-  await expect(page.getByLabel("현재 걸음")).toHaveValue("5200");
+  await expect(page.getByLabel("현재 걸음")).toHaveValue("0");
   await expect(page.locator('[aria-label="오늘의 걸음 요약"]')).toContainText(
     "8,000걸음",
   );
