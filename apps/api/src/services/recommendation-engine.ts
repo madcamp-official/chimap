@@ -388,7 +388,15 @@ export function finalizeRecommendations(input: {
   requireDetailedExerciseWalking: boolean;
   candidateKindByRecommendationId?: ReadonlyMap<string, CandidateKind>;
 }): FinalizedRecommendationSelection {
-  const recalculated = recalculateRecommendations(input);
+  const finalBaselineDurationSeconds =
+    input.recommendations.find(
+      (recommendation) => recommendation.type === "FAST",
+    )?.legs.reduce((total, leg) => total + leg.durationSeconds, 0) ??
+    input.baselineDurationSeconds;
+  const recalculated = recalculateRecommendations({
+    ...input,
+    baselineDurationSeconds: finalBaselineDurationSeconds,
+  });
   const remainingSteps = calculateRemainingSteps(
     input.request.currentSteps,
     input.request.goalSteps,
@@ -402,7 +410,7 @@ export function finalizeRecommendations(input: {
       recommendation,
       ...(candidateKind === undefined ? {} : { candidateKind }),
       departureAt: input.departureAt,
-      baselineDurationSeconds: input.baselineDurationSeconds,
+      baselineDurationSeconds: finalBaselineDurationSeconds,
       policy: input.policy,
       requireDetailedExerciseWalking:
         input.requireDetailedExerciseWalking,
