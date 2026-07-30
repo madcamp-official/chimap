@@ -651,7 +651,7 @@ describe("건강 경로 추천 선정", () => {
     });
   });
 
-  it("일반 ACCESS WALK가 만든 증가분을 작은 운동 구간에 잘못 귀속하지 않는다", () => {
+  it("다른 FAST itinerary의 ACCESS 차이를 운동 구간 검증에 섞지 않는다", () => {
     const departureAt = new Date("2026-07-25T12:00:00.000Z");
     const selected = selectRecommendations({
       candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
@@ -667,17 +667,17 @@ describe("건강 경로 추천 선정", () => {
             legs: [
               {
                 ...recommendation.legs[0]!,
-                distanceMeters: 1_880,
-                durationSeconds: 1_790,
+                distanceMeters: 1_000,
+                durationSeconds: 800,
                 geometryQuality: "DETAILED",
                 isExerciseSegment: false,
                 walkingRole: "ACCESS",
               },
               {
                 ...recommendation.legs[0]!,
-                id: "misattributed-exercise-connector",
-                distanceMeters: 25,
-                durationSeconds: 20,
+                id: "valid-exercise-segment",
+                distanceMeters: 960,
+                durationSeconds: 768,
                 geometryQuality: "DETAILED",
                 isExerciseSegment: true,
                 walkingRole: "GOAL_EARLY_ALIGHTING",
@@ -690,18 +690,26 @@ describe("건강 경로 추천 선정", () => {
     const result = finalizeRecommendations({
       recommendations: selected,
       request,
+      candidateKindByRecommendationId: new Map([
+        ["actual-goal-511", "EARLY_ALIGHT"],
+      ]),
       departureAt,
       baselineDurationSeconds: fast.durationSeconds,
       policy: resolveRecommendationPolicy(request, fast),
       requireDetailedExerciseWalking: true,
     });
 
-    expect(result.recommendations.some((item) => item.type === "GOAL"))
-      .toBe(false);
+    expect(result.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        id: "actual-goal-511",
+        walkDistanceMeters: 1_960,
+        estimatedSteps: 2_800,
+        goalFit: "WITHIN_TOLERANCE",
+      });
     expect(result.goalDecision).toEqual({
-      outcome: "REMOVED",
+      outcome: "KEPT",
       originalGoalRecommendationId: "actual-goal-511",
-      rejectionReason: "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT",
+      finalGoalRecommendationId: "actual-goal-511",
     });
   });
 

@@ -39,8 +39,7 @@ export type GoalValidationFailureReason =
   | "NO_EXERCISE_WALK"
   | "EXERCISE_WALK_ROLE_INVALID"
   | "NO_SUBSTANTIAL_EXERCISE_WALK"
-  | "EXERCISE_WALK_NOT_DETAILED"
-  | "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT";
+  | "EXERCISE_WALK_NOT_DETAILED";
 
 export type GoalFinalizationDecision =
   | {
@@ -251,7 +250,6 @@ function satisfiesRecommendationPolicy(input: {
 }
 
 const SHORT_EXERCISE_WALK_METERS = 20;
-const EXERCISE_INCREMENT_TOLERANCE_RATE = 0.05;
 
 function isGoalExerciseWalkingRole(
   role: Recommendation["legs"][number]["walkingRole"],
@@ -282,8 +280,6 @@ function inferCandidateKind(
 
 function validateGoalCandidate(input: {
   recommendation: Recommendation;
-  fastRecommendation?: Recommendation;
-  request: RecommendationRequest;
   candidateKind?: CandidateKind;
   departureAt: Date;
   baselineDurationSeconds: number;
@@ -302,8 +298,8 @@ function validateGoalCandidate(input: {
     return "NO_EXERCISE_WALK";
   }
 
-  // Keep causal exercise failures ahead of the aggregate policy failure so
-  // provider degradation is not hidden by the numbers it made inaccurate.
+  // Keep exercise-provenance failures ahead of the time-policy failure so
+  // provider degradation is reported with its most specific cause.
   const markedExerciseWalking = input.recommendation.legs.filter(
     (leg) =>
       leg.mode === "WALK" &&
@@ -362,30 +358,6 @@ function validateGoalCandidate(input: {
     return "EXERCISE_WALK_NOT_DETAILED";
   }
 
-  const fastEstimatedSteps = input.fastRecommendation?.estimatedSteps ?? 0;
-  const additionalSteps = Math.max(
-    input.recommendation.estimatedSteps - fastEstimatedSteps,
-    0,
-  );
-  const exerciseDistanceMeters = exerciseWalking.reduce(
-    (total, leg) => total + leg.distanceMeters,
-    0,
-  );
-  const exerciseEstimatedSteps = estimateSteps(
-    exerciseDistanceMeters,
-    input.request.walkingMetric.stepLengthMeters,
-  );
-  const attributionToleranceSteps = Math.max(
-    1,
-    Math.round(additionalSteps * EXERCISE_INCREMENT_TOLERANCE_RATE),
-  );
-  if (
-    exerciseEstimatedSteps + attributionToleranceSteps <
-    additionalSteps
-  ) {
-    return "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT";
-  }
-
   // GOAL means the valid route closest to the remaining-step target. Being
   // outside ±5% affects goalReachable and its warning, not card eligibility.
   if (!satisfiesRecommendationPolicy(input)) {
@@ -421,9 +393,6 @@ export function finalizeRecommendations(input: {
     input.request.currentSteps,
     input.request.goalSteps,
   );
-  const fast = recalculated.find(
-    (recommendation) => recommendation.type === "FAST",
-  );
   const goalValidationFailure = (
     recommendation: Recommendation,
   ): GoalValidationFailureReason | undefined => {
@@ -431,8 +400,6 @@ export function finalizeRecommendations(input: {
       input.candidateKindByRecommendationId?.get(recommendation.id);
     return validateGoalCandidate({
       recommendation,
-      ...(fast === undefined ? {} : { fastRecommendation: fast }),
-      request: input.request,
       ...(candidateKind === undefined ? {} : { candidateKind }),
       departureAt: input.departureAt,
       baselineDurationSeconds: input.baselineDurationSeconds,

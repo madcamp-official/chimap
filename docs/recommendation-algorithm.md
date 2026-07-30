@@ -259,6 +259,10 @@ expectedTotalSteps = currentSteps + estimatedSteps
 `primaryRecommendationId`는 GOAL, GOAL이 없으면 BALANCED를 가리키며 UI가
 이 경로를 처음부터 선택합니다. 목표를 이미 달성한 경우 FAST가 기본입니다.
 
+최종 GOAL 검증은 운동 WALK의 명시적 역할·최소 길이·상세 geometry와 시간
+정책을 확인합니다. FAST와 GOAL은 서로 다른 대중교통 itinerary일 수 있으므로
+두 경로의 총 도보량 차이를 운동 WALK의 인과적 증가분으로 간주하지 않습니다.
+
 브라우저의 추천 성공 횟수는 성공 응답을 받은 뒤 안내 밀도를 조절하는 데만
 사용합니다. 이 값은 추천 요청에 포함하지 않고 서버나 PostgreSQL에 저장하지
 않으므로 같은 입력의 경로 계산 결과에 영향을 주지 않습니다.
