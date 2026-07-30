@@ -99,6 +99,10 @@ Express API
   │
   ├─ RecommendationService
   │    ├─ CandidateGenerator
+  │    │    └─ SelectedRouteGeometryService
+  │    │         └─ WalkingRouteProvider
+  │    │              ├─ CachedWalkingProvider → ValhallaWalkingProvider
+  │    │              └─ Kakao walking (`WALKING_ROUTER=KAKAO` rollback)
   │    ├─ RecommendationEngine
   │    ├─ RouteGeometryService
   │    │    ├─ 지하철 segment LineString 조립
@@ -106,7 +110,6 @@ Express API
   │    │    └─ 도보 step 연속 조립·근사 fallback
   │    └─ CachedMobilityProvider
   │         └─ TagoTransitMobilityProvider
-  │              ├─ Kakao walking
   │              ├─ Kakao road geometry
   │              └─ TransitService
   │                   ├─ TAGO client
@@ -124,16 +127,23 @@ Express API
 정규화합니다. API 응답도 공유 계약 패키지로 다시 검증합니다.
 
 추천 계산은 버스 topology와 지하철의 노선 순서·방향별 구간 시간·환승 간선을
-함께 사용합니다. 지하철 탑승 전후에는 Kakao 도보 경로를 붙이고, 기존 버스
+함께 사용합니다. 지하철 탑승 전후에는 planning WALK edge를 붙이고, 기존 버스
 경로의 첫·마지막 버스 구간과도 결합해 버스→지하철과 지하철→버스 후보를
 만듭니다. 추천 성공 뒤 Web의 주변 역·TAGO U/D 시간표 조회도 별도로 유지합니다.
 지하철 소요시간은 TAGO 시간표 기반 예상이며 실제 열차 위치나 지연은 반영하지
 않습니다.
 
-`transit-v2` 형상 처리는 추천 시간·순위 계산과 분리합니다. 검증된 지하철·버스·
-도보 좌표만 `DETAILED`로 표시하고, 형상 timeout·빈 응답·endpoint/연속성 실패는
+사전 생성된 버스↔지하철 transfer edge의 원천은 Kakao지만, 요청에서 선택된
+WALK leg의 상세화는 환경별 `WALKING_ROUTER`가 담당합니다. production과
+staging은 Valhalla이고 Kakao는 명시적 rollback 값입니다.
+
+`transit-v2` 형상 처리는 planning 후보 생성 뒤 최종 정책 검증 전에 수행합니다.
+검증된 지하철·버스·도보 좌표만 `DETAILED`로 표시하고, 형상
+timeout·빈 응답·endpoint/연속성 실패는
 추천을 제거하지 않은 채 `APPROXIMATE` 두 점 또는 부분 경로로 반환합니다. 서버
 캐시 키와 Web·Mobile persisted cache namespace에 geometry profile을 포함합니다.
+Valhalla 실패는 Kakao 자동 전환이 아니며, 상세화되지 않은 20m 초과 운동 WALK는
+최종 GOAL 검증에서 제거하거나 검증된 BALANCED로 대체합니다.
 
 ### Mobile application 경계
 
@@ -282,22 +292,34 @@ RecommendationRequest
   → 노선 0건 정류장 제외
   → 직행 후보, 필요 시 최대 1회 환승 후보
   → TAGO 도착정보 + 노선 정류장 순서
-  → Kakao 도보 구간 + 버스 도로 매칭 geometry
+  → planning WALK 구간 + Kakao 버스 도로 매칭 geometry
+  → planning baseline으로 AUTO 추가시간을 요청당 한 번 확정
   → baseline이 목표 ±5% 밖이면 실제 TAGO 정류장 순서로 운동 후보 생성
        ├─ 마지막 버스 조기 하차 상위 4개 우선
        ├─ 범위 내 후보 없음: 첫 버스 늦은 탑승 상위 2개
        └─ 여전히 없음: 늦은 탑승+조기 하차 조합 상위 1개
+  → 조정 child의 ΔWALK가 같은 parent에 삽입한 운동 WALK와 같은지 검증
   → 마감/추가시간 필터
   → 중복 제거
-  → FAST/FAST 대비 2배 걸음/목표 근접 후보를 고유 route로 선택
-  → 남은 목표가 있으면 GOAL을 primaryRecommendationId로 지정
+  → intentional 비-BASE 후보를 우선해 FAST/BALANCED/GOAL 초기 선택
+  → 초기 GOAL WALK 상세화 barrier를 configured provider로 실행
+       └─ 실패: APPROXIMATE 유지, 자동 Kakao 전환 없음
+  → GOAL 상세 거리·시간·걸음 재계산
+  → 공원 개선 후보 생성과 같은-parent ΔWALK 검증
+  → 나머지 선택 WALK·BUS geometry 완료와 overlay
+  → 최종 GOAL 검증 및 필요 시 BALANCED→GOAL 승격
+  → final detailed FAST 기준으로 extraMinutes·시간 정책 재검증
+  → response baseline = final detailed FAST
+  → 유효 GOAL이 있으면 GOAL, 없으면 FAST를 primaryRecommendationId로 지정
   → RecommendationResponse
 ```
 
 추천 전체 timeout은 20초입니다. 후보 생성기 기준 대중교통 경로 호출은
 1회, 조정 도보 호출은 최대 8회로 합계 최대 9회이며 동시성은 3입니다.
 조기 하차 후보가 목표 범위에 들어오면 늦은 탑승과 양쪽 조합 호출은
-생략합니다.
+생략합니다. 선택 WALK 상세화와 공원 connector에 배정된 service-layer
+provider-call policy slot은 profile별 최대 11회입니다. 선택 BUS geometry,
+내부 TAGO/Kakao 호출, 구간 분할과 HTTP retry를 포함한 외부 요청 상한은 아닙니다.
 
 ## 5. 데이터 저장 경계
 
@@ -351,10 +373,13 @@ IP를 분석 로그에 기록하지 않습니다.
 | TAGO 노선·노선 정류장 | 기본 24시간 |
 | TAGO 도착 | 기본 20초 |
 | TAGO 차량 | 기본 10초 |
-| Kakao 도보 | 30분 |
+| Kakao 선택 상세 도보 (`WALKING_ROUTER=KAKAO`) | 24시간 |
+| Valhalla 선택 상세 도보 | 설정값, 기본 30분 |
 | Kakao 버스 도로 geometry | 24시간 |
 
-같은 key의 진행 중 요청은 하나의 Promise를 공유합니다. 캐시와 IP rate
+Valhalla key는 provider source, 소수점 다섯 자리 origin/vias/destination와
+route mode를 포함합니다. 같은 key의 진행 중 요청은 하나의 Promise를
+공유합니다. 캐시와 IP rate
 limit은 프로세스 로컬이므로 현재 API는 단일 인스턴스로 운영합니다.
 기본 rate limit은 장소 60회/분, 추천 10회/분, 익명 UI 이벤트 120회/분이며
 각각 IP 단위입니다.
@@ -367,8 +392,9 @@ segment와 사전 계산한 버스↔지하철 보행 간선을 결합합니다.
 상태를 유지해 같은 노선의 매 역마다 대기시간이 반복되지 않게 하고, 최대 2회
 환승과 제한된 Pareto label로 요청 비용을 제한합니다.
 
-결과 materializer가 도보는 Kakao 보행 geometry, 버스는 검증된 도로 geometry,
-지하철은 실제 방향성 역열로 변환합니다. `X-Route-Geometry: track-v1` 요청이면
+`transit-v2` materializer는 planning WALK를 근사 좌표로 만들고 초기 선택 뒤
+configured provider로 상세화합니다. 버스는 검증된 도로 geometry, 지하철은 실제
+방향성 역열로 변환합니다. `X-Route-Geometry: track-v1` 요청이면
 방향별 `subway_segments.track_geometry`를 공통 결합기로 이어 실제 선로 좌표를
 반환하고, 구버전 요청은 역사 좌표 직선을 유지합니다. 실시간 공급자 장애는 각 leg의 정적
 대기시간으로 격리되며 그래프 자체를 실패시키지 않습니다. 배포 중 새 데이터가
@@ -381,6 +407,8 @@ segment와 사전 계산한 버스↔지하철 보행 간선을 결합합니다.
 - 자격 증명·API 선택 오류: HTTP 503 `SERVICE_NOT_READY`
 - 공급자 timeout: HTTP 504 `UPSTREAM_TIMEOUT`
 - 공급자 사용량 제한: HTTP 429 `UPSTREAM_RATE_LIMIT`
+- 선택 WALK 상세화 실패: 기존 `APPROXIMATE` leg 유지, 자동 Kakao 전환 없음.
+  20m 초과 운동 WALK가 남은 GOAL은 최종 제거 또는 BALANCED 승격으로 대체
 - TAGO 일부 실시간 실패: 정적 실제 경로가 있으면 warning과 함께 계속
 - 확장 범위 내 운행 정류장 없음: 위치 구체화 안내와 `NO_TRANSIT_ROUTE`
 - 운행 정류장은 있으나 직행/1회 환승 연결 없음: 연결 범위 안내와

@@ -1,8 +1,11 @@
 # Kakao Local·도보·도로 경로 API
 
-Kakao는 CHIMap의 장소·주소·역지오코딩·도보와 버스 표시용 도로 geometry
-공급자입니다. 브라우저가 Kakao를 직접 호출하지 않고 Node API가 서버 전용
-REST API 키로 호출합니다.
+Kakao는 CHIMap의 장소·주소·역지오코딩과 버스 표시용 도로 geometry
+공급자이며, `WALKING_ROUTER=KAKAO`일 때 선택 상세 도보 공급자이기도 합니다.
+`WALKING_ROUTER=VALHALLA`에서는 선택 WALK 상세화와 공원 connector를 Valhalla가
+담당하지만 Kakao Local과 버스 도로 geometry는 계속 사용합니다. Valhalla
+장애가 요청 중 Kakao 도보 호출로 자동 전환되지는 않습니다. 브라우저가 Kakao를
+직접 호출하지 않고 Node API가 서버 전용 REST API 키로 호출합니다.
 
 이 문서는 현재 구현과 2026-07-27에 확인한 Kakao 공식 문서를 기준으로
 합니다. 쿼터·과금·콘솔 메뉴는 운영 정책에 따라 바뀔 수 있으므로 배포 때
@@ -15,13 +18,13 @@ REST API 키로 호출합니다.
 | 키워드 검색 | `GET /v2/local/search/keyword.json` | 3초 | 장소명·상호명 |
 | 주소 검색 | `GET /v2/local/search/address.json` | 3초 | 도로명·지번 |
 | 좌표→주소 | `GET /v2/local/geo/coord2address.json` | 3초 | GPS 역검색 |
-| 도보 경로 | `GET /v2/routing/walk` | 5초 | 버스 전후·운동 구간 |
+| 도보 경로 | `GET /v2/routing/walk` | 5초 | `WALKING_ROUTER=KAKAO` 또는 legacy materializer |
 | 도로 geometry | `POST /v1/waypoints/directions` | 5초 | TAGO 정류장 순서 도로 매칭 |
 
 host:
 
 ```text
-Local·도보: https://dapi.kakao.com
+Local·Kakao 선택 도보: https://dapi.kakao.com
 도로 geometry: https://apis-navi.kakaomobility.com
 ```
 
@@ -93,7 +96,8 @@ Kakao 결과가 하나라도 있으면 NAVER 결과와 섞지 않습니다. NAVE
 | 장소 검색 성공 | 10분 |
 | 장소 검색 정상 0건 | 60초 |
 | 역지오코딩 | 24시간 |
-| 도보 경로 | 30분 |
+| Kakao 선택 상세 도보 (`WALKING_ROUTER=KAKAO`) | 24시간 |
+| legacy·비-`transit-v2` materializer 내부 WALK | 30분 |
 | 버스 도로 geometry | 24시간 |
 
 검색 key는 정규화한 query, scope, limit, 소수점 다섯 자리 중심 좌표를
@@ -205,12 +209,14 @@ Cloud provider 변경 시 outbound IP를 다시 확인합니다.
 | 401 | 즉시 설정 오류 | REST 키 종류·오탈자·재발급 확인 |
 | 403 | 즉시 설정 오류 | Map ON·REST 설정·허용 IP 확인 |
 | 429 | 한 번 제한 재시도 후 rate limit | 일·월 쿼터와 유료 설정 확인 |
-| 500/502/503/504 | 한 번 제한 재시도 | 주소는 NAVER 보완, 도로 geometry는 정류장선 복구 |
-| timeout/network | 한 번 제한 재시도 | 주소는 NAVER 보완, 도로 geometry는 정류장선 복구 |
+| 500/502/503/504 | 한 번 제한 재시도 | 주소는 NAVER 보완, 도로 geometry는 정류장선 복구, 선택 WALK는 기존 근사 leg 유지 |
+| timeout/network | 한 번 제한 재시도 | 주소는 NAVER 보완, 도로 geometry는 정류장선 복구, 선택 WALK는 기존 근사 leg 유지 |
 | 사용자 AbortSignal | 즉시 취소 | 오래된 UI 요청은 표시하지 않음 |
 
 400·401·403은 NAVER 보완으로 숨기지 않습니다. 주소 공급자까지 실패하면
 정상 0건으로 변환하지 않고 정규화된 API 오류를 반환합니다.
+`WALKING_ROUTER=VALHALLA`에서 Valhalla 실패를 Kakao 도보로 자동 failover하지
+않으며, 운영자가 rollback flag를 적용해 API를 재기동할 때만 공급자가 바뀝니다.
 
 ## 7. 관측과 보안
 

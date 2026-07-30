@@ -1,8 +1,8 @@
 # 추천 알고리즘
 
-추천은 버스·지하철·Kakao 도보를 요청 범위 멀티모달 그래프로 조합해 사용자의
-남은 하루 목표와 기본 경로에서 자동 계산한 시간 범위 안에서 최대 3개의 실제
-경로를 선택합니다.
+추천은 버스·지하철과 planning WALK를 요청 범위 멀티모달 그래프로 조합하고,
+초기 선택 뒤 설정된 도보 공급자로 WALK를 상세화해 사용자의 남은 하루 목표와
+자동 시간 범위 안에서 최대 3개의 실제 경로를 선택합니다.
 
 이 문서는 현재 `RecommendationService`, 후보 생성기와 공유 계약을 기준으로
 합니다. UI의 guided/compact 전환과 익명 이벤트는 추천 점수·후보 생성·API
@@ -31,8 +31,8 @@
 1. 출발·도착 주변의 실제 운행 버스 정류장과 노선을 500m→800m→최대 1.2km로
    점진 조회합니다.
 2. 활성 `is_route_ready=true` 지하철 방향성 구간과 시간대별 headway를 읽습니다.
-3. 사전 검증된 500m 이하 버스↔지하철 Kakao 보행 연결을 합칩니다.
-4. 출발·목적지와 후보 정류장·역의 실제 Kakao 도보 edge를 추가합니다.
+3. 사전 검증해 DB에 저장한 500m 이하 버스↔지하철 Kakao 보행 연결을 합칩니다.
+4. 출발·목적지와 후보 정류장·역의 planning WALK edge를 추가합니다.
 5. 상태를 현재 node, 탑승 중 service, 마지막 탑승 service, 환승 횟수로 구분해
    최소 소요시간 queue를 탐색합니다. 같은 상태에서는 시간·도보거리 모두 열등한
    label을 제거합니다.
@@ -64,12 +64,22 @@
 
 ## 3. 도보·대기·승차시간
 
-출발→승차, 환승, 하차→목적지 구간은 Kakao 도보 경로를 사용합니다. 두
-좌표가 3m 이하인 구간은 생략합니다.
+출발→승차, 환승, 하차→목적지 구간은 planning 단계에서 WALK edge로 만들고,
+두 좌표가 3m 이하인 구간은 생략합니다. `transit-v2`는 초기 선택 뒤 20m를
+초과하는 비상세 WALK를 `WALKING_ROUTER`로 상세화합니다. production과
+staging은 `VALHALLA`, 명시적 rollback 값은 `KAKAO`입니다.
 
 따라서 확장 탐색으로 500m 밖의 정류장을 선택해도 출발지에서 정류장까지의
-거리는 직선 거리로 대체하지 않고 Kakao의 실제 도보 거리·시간·좌표를
-그대로 포함합니다.
+최종 거리·시간·좌표는 상세화가 성공하면 선택된 도보 공급자의 검증된 응답으로
+치환합니다.
+Valhalla는 pedestrian 거리·시간과 polyline6 좌표의 leg 수, endpoint snap,
+우회율과 보고 거리 일관성을 검증합니다. 실패·timeout·검증 거절은 기존 planning
+`APPROXIMATE` leg를 유지하며 요청 중 Kakao로 자동 전환하지 않습니다.
+
+Valhalla memory cache는 provider source, 소수점 다섯 자리
+origin/vias/destination와 route mode를 key로 사용합니다. 기본 TTL은
+`VALHALLA_WALK_CACHE_TTL_SECONDS=1800`이고 동일 key의 진행 중 요청은 하나만
+실행합니다.
 
 대기시간:
 
@@ -170,7 +180,7 @@ targetWalkMeters = remainingSteps × stepLengthMeters
 
 1. 마지막 버스 leg의 원래 하차 정류장보다 앞선 정류장을 전부 열거합니다.
 2. 직선거리×1.25로 목표 적합도를 사전 계산하고 상위 4개 조기 하차 후보의
-   하차→목적지 Kakao 도보를 조회합니다.
+   하차→목적지 planning WALK를 만듭니다.
 3. 조기 하차만으로 목표 ±5% 후보가 없을 때 첫 버스 leg의 탑승 정류장을
    뒤로 옮긴 상위 2개 후보를 조회합니다.
 4. 그래도 목표 범위가 없으면 늦은 탑승과 조기 하차를 결합한 상위 1개
@@ -181,8 +191,8 @@ targetWalkMeters = remainingSteps × stepLengthMeters
    역전되는 조합은 제외합니다.
 
 변경된 버스 leg는 기존 TAGO 정류장 배열과 도로 geometry를 해당
-승하차점까지 잘라 사용합니다. 새 출발·도착 도보거리와 시간은 Kakao
-실제 응답으로 다시 계산합니다.
+승하차점까지 잘라 사용합니다. 새 출발·도착 WALK는 먼저 planning 값으로
+계산하고 초기 선택 뒤 설정된 도보 공급자의 실제 응답으로 상세화합니다.
 
 목표 허용 범위:
 
@@ -196,15 +206,23 @@ abs(routeSteps - remainingSteps) <= toleranceSteps
 
 ## 6. 외부 호출 예산
 
-한 추천 요청의 예산:
+후보 생성과 선택 상세화·공원 connector에 배정한 논리 provider-call slot:
 
-| 호출 | 최대 |
+| 단계 | 최대 |
 | --- | --- |
-| baseline 대중교통 | 1회 |
-| 조정 도보 | 8회 |
-| 합계 | 9회 |
+| 후보 생성 | 9회: 대중교통 1회 + 조정 WALK 8회 |
+| 선택 WALK 상세화 | 8회, `transit-v2`에서만 |
+| 공원 connector | 2회, 두 slot이 남은 경우에만 |
+| 요청 policy slot | 11회 |
 | 동시성 | 3 |
 | 추천 전체 timeout | 20초 |
+
+후보 생성 9회와 선택 상세화 8회는 profile별 상한이라 서로 더하지 않습니다.
+`transit-v2`는 planning transit 1회, 선택 WALK 상세화 최대 8회와 공원 connector
+2회 안에서 전체 11회를 지키고, 비-`transit-v2`는 후보 생성 최대 9회와 공원
+connector 2회 안에서 같은 상한을 지킵니다.
+이 값은 CHIMap 서비스 계층의 논리 호출 예산이며 선택 BUS geometry, TAGO/Kakao
+내부 호출, 구간 분할과 HTTP retry까지 센 전체 외부 요청 상한은 아닙니다.
 
 ## 7. 자동 시간 예산
 
@@ -256,8 +274,9 @@ expectedTotalSteps = currentSteps + estimatedSteps
 `2배 걸음 경로`로 표시합니다. 같은 route ID를 두 타입에 중복 배정하지
 않으며 유효한 고유 후보가 3개 이상이면 세 타입을 모두 반환합니다. 실제
 후보가 부족하면 경로를 복제하지 않고 1~2개만 반환합니다. 남은 걸음이 있으면
-`primaryRecommendationId`는 GOAL, GOAL이 없으면 BALANCED를 가리키며 UI가
-이 경로를 처음부터 선택합니다. 목표를 이미 달성한 경우 FAST가 기본입니다.
+`primaryRecommendationId`는 최종 유효 GOAL이 있으면 GOAL을 가리키고, GOAL이
+검증에서 제거되고 BALANCED도 승격되지 않으면 FAST를 가리킵니다. 목표를 이미
+달성한 경우도 FAST가 기본입니다.
 
 최종 GOAL은 운동 WALK의 명시적 역할, exercise 표식, 최소 길이, 상세 geometry,
 후보 종류와 역할 topology, 추가시간·마감 정책을 검증합니다. FAST와 GOAL은
@@ -276,6 +295,17 @@ expectedTotalSteps = currentSteps + estimatedSteps
 예상 걸음 수를 그대로 사용합니다. 자동 추가시간 예산의 크기는 후보 생성 전
 planning baseline으로 한 번만 정하고 상세화 뒤 더 넓히지 않습니다.
 
+상세화 후에도 ±5%는 도달 가능 여부와 warning을 결정할 뿐 GOAL 카드의 자격
+조건은 아닙니다. 운동 provenance와 시간 정책을 통과한 최접근 경로는
+`goalFit: "UNDER" | "OVER"`인 채 GOAL과 `primaryRecommendationId`로
+유지됩니다. 상세화된 BALANCED가 같은 GOAL 검증을 통과하고 기존 GOAL보다 남은
+걸음 절대 오차가 더 작으면 BALANCED를 GOAL로 승격하고 기존 GOAL을 제거합니다.
+동률이면 기존 GOAL을 유지하며 FAST는 재라벨하지 않습니다.
+
+20m를 초과하는 운동 WALK가 상세화되지 않으면 최종 GOAL 검증에서 제거하거나
+검증된 BALANCED로 대체합니다. 이 검증은 공급자 실패로 만든 근사 경로를 운동
+목표 달성 경로처럼 표시하지 않기 위한 경계입니다.
+
 브라우저의 추천 성공 횟수는 성공 응답을 받은 뒤 안내 밀도를 조절하는 데만
 사용합니다. 이 값은 추천 요청에 포함하지 않고 서버나 PostgreSQL에 저장하지
 않으므로 같은 입력의 경로 계산 결과에 영향을 주지 않습니다.
@@ -293,8 +323,9 @@ TAGO 실시간 도착이 없으면 `REALTIME_UNAVAILABLE`, 주변 정류장 갱�
 `GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET`, 기존 시간 제약 요청에서는
 `GOAL_UNREACHABLE_WITHIN_CONSTRAINTS`를 반환합니다.
 
-공급자 경로가 없는 직선 거리 결과를 생성하지 않습니다. 지도 SDK가
-실패하는 경우에만 이미 성공한 추천 응답 좌표를 SVG로 다시 그립니다.
+상세 도보 실패를 새 성공 경로로 가장하지 않고 기존 planning
+`APPROXIMATE` leg를 유지하며 자동 Kakao provider 전환은 하지 않습니다. 지도
+SDK가 실패하면 같은 추천 응답 좌표를 SVG로 다시 그립니다.
 
 ## 11. 보폭 연구 근거와 한계
 
@@ -339,8 +370,9 @@ reviewed dataset near eligible access walks: origin/access, final
 alighting/destination, or an all-walking trip. Transfer walks are excluded.
 PostGIS and stored distance shortlist candidates before external calls.
 
-A candidate replaces one eligible walk with Kakao access walking, the stored
-park geometry, and Kakao egress walking. `FORWARD_ONLY` is never reversed;
+A candidate replaces one eligible walk with configured-provider access
+walking, the stored park geometry, and configured-provider egress walking.
+`FORWARD_ONLY` is never reversed;
 `BOTH` can create an in-memory reversed view (entry/exit, coordinates, and
 path waypoint IDs) without changing the row. The park leg is a detailed,
 exercise `PARK_DETOUR` leg. It is selected only when its absolute difference

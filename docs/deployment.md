@@ -1,8 +1,9 @@
 # 배포·백업·복구 운영서
 
 운영 도메인은 `https://chimap.madcamp-kaist.org`이고 Cloudflare Tunnel
-origin은 `http://127.0.0.1:3000`입니다. 명령은 저장소 루트에서
-실행합니다.
+origin은 `http://127.0.0.1:3000`입니다. 일반 개발 명령은 저장소 루트에서
+실행하고, 현재 운영 서버의 service 재기동은 아래에 기록한 Compose provenance를
+명시합니다.
 
 cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그인은
 2026-07-27 11:01 KST 이미지 `sha256:0a2db829...`로 공개 배포했습니다.
@@ -18,12 +19,25 @@ cross-platform Web/API foundation, Route Pulse UI와 선택형 카카오 로그�
 마지막 전체 E2E·백업·복구 검증 시각은 앞선 14:29 KST 기록과 구분합니다.
 staging은 `https://staging.chimap.madcamp-kaist.org`와 별도 Compose/DB volume을
 사용하며 자세한 절차는 [staging 환경 운영서](./staging-environment.md)에 둡니다.
-2026-07-30 23:30 KST production은 service release code `f2332827`, image
-`sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`,
+2026-07-31 03:15 KST production은 service release code `7e5687b1`, image
+`sha256:c62bb9945c000d71f3127ccdb9e689f7e569a124a495f8311ddd16773d579895`,
 migration 13으로 승격했습니다. production·staging 모두 Valhalla 상세 도보와
 active 공원 경로 152건을 사용하며 import endpoint는 비활성입니다. 결정적 테스트
-450개와 격리 PostGIS 12개, typecheck·format·Web/API/Mobile build·native config,
-GitHub Actions run `30549876265`의 5개 job과 양 환경 public E2E가 통과했습니다.
+457개와 별도 격리 PostGIS 12개, typecheck·format·Web/API/Mobile build·native
+config, PR #16 run `30565973638`과 final `main` push run `30568184426`의 5개
+job, 양 환경 public route gate 2개(NAVER-strict UI 1개와 API 회귀 1개)가
+통과했습니다. 최종 상세 기록은
+§26에 둡니다.
+
+현재 production service의 Compose project directory는
+`/root/chimap_web_assets`, config는 `/root/chimap_web_assets/compose.yml`과
+`/etc/chimap/compose-runtime.yml`, env는 `/root/chimap/.env`입니다. 기존
+PostgreSQL volume은 project `chimap`의 `chimap-postgres`로 보존합니다. staging
+service는 project directory `/root/chimap`, config
+`/root/chimap_web_assets/compose.staging.yml`, env `/root/chimap/.env.staging`을
+사용합니다. source tree가 여러 개 있는 운영 서버에서 service build·재기동·승격에
+plain `docker compose`를 실행하지 않습니다. backup·sync script는 별도로
+`/root/chimap`의 보존된 PostgreSQL service를 대상으로 합니다.
 
 ## 1. 사전 조건
 
@@ -405,11 +419,12 @@ PostgreSQL/PostGIS 18 컨테이너를 사용합니다.
 
 스크립트는 최신 일일 백업의 checksum을 먼저 확인하고, PostGIS 이미지
 초기화 완료를 기다린 뒤 `template0` 기반 빈 DB를 만들어 archive 전체를
-복원합니다. restore 후 최소 다음을 확인합니다.
+복원합니다. 자동 검증 항목은 PostGIS 존재 여부, `schema_migrations` 행 수와
+네 교통 통계입니다.
 
 ```sql
-SELECT extversion FROM pg_extension WHERE extname = 'postgis';
-SELECT version, name, checksum FROM schema_migrations ORDER BY version;
+SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'postgis');
+SELECT count(*) FROM schema_migrations;
 SELECT count(*) FROM bus_stops;
 SELECT count(*) FROM bus_stops
   WHERE city_code IS NOT NULL AND node_id IS NOT NULL;
@@ -417,8 +432,16 @@ SELECT count(*) FROM bus_routes;
 SELECT count(*) FROM bus_route_stops;
 ```
 
-extension, migration과 네 통계가 모두 성공한 백업만 release rollback
-자산으로 사용합니다. 결과는
+`restore-latest.json`의 `migrations`는 최신 migration 버전이 아니라 복원된
+행 수입니다. release gate에서는 실행 중 readiness의 schema current 상태를
+별도로 확인하고, 필요하면 다음 결과를 release source와 대조합니다.
+
+```sql
+SELECT version, name, checksum FROM schema_migrations ORDER BY version;
+```
+
+extension, migration 행 수와 네 통계가 모두 성공한 백업만 release rollback
+자산으로 사용합니다. 자동 검증 결과는
 `/var/backups/chimap/restore-latest.json`에 기록합니다.
 
 현재 검증된 백업은 [구현·운영 현황](./current-state.md)에 기록되어 있습니다.
@@ -500,13 +523,22 @@ image를 각각 빌드합니다.
 고정합니다. 신규 상세 공급자는 §25의 단계별 gate에서 나중에 활성화합니다.
 
 ```bash
-docker tag chimap:actual-data "chimap:rollback-pre-${RELEASE_SHA:0:8}"
+docker tag chimap:actual-data "chimap:rollback-prod-pre-${RELEASE_SHA:0:8}"
 docker tag "$RELEASE_TAG" chimap:actual-data
 
 export APP_COMMIT_SHA="$RELEASE_SHA"
-docker compose up -d --no-build --force-recreate --wait \
+docker compose \
+  --project-directory /root/chimap_web_assets \
+  --env-file /root/chimap/.env \
+  -f /root/chimap_web_assets/compose.yml \
+  -f /etc/chimap/compose-runtime.yml \
+  up -d --no-build --force-recreate --wait \
   api alert-relay alertmanager prometheus
-docker compose ps
+docker compose \
+  --project-directory /root/chimap_web_assets \
+  --env-file /root/chimap/.env \
+  -f /root/chimap_web_assets/compose.yml \
+  -f /etc/chimap/compose-runtime.yml ps
 curl -fsS http://127.0.0.1:3000/api/v1/health
 curl -fsS http://127.0.0.1:3000/api/v1/readiness
 curl -fsS http://127.0.0.1:3000/api/v1/mobile-config
@@ -518,7 +550,8 @@ readiness HTTP 200 이후에만 Cloudflare origin을 새 API로 유지하거나
 전환합니다.
 API와 alert relay 모두 같은 `APP_COMMIT_SHA`를 받아야 합니다. bind mount된
 Prometheus rule 파일은 자동 reload되지 않으므로 lifecycle reload 뒤 25개
-rule의 health, 변경한 provider rate-limit 식과 firing alert 0건을 확인합니다.
+rule의 health, 변경한 provider rate-limit 식과 신규 critical·warning을 확인하고,
+기존 firing warning은 원인과 release 승인 여부를 기록합니다.
 API 내부 metrics의 `chimap_build_info{commit="..."}`도 `RELEASE_SHA`와 같아야
 합니다.
 
@@ -540,7 +573,7 @@ API 내부 metrics의 `chimap_build_info{commit="..."}`도 `RELEASE_SHA`와 같�
 11. 역지오코딩과 NAVER 지도 경로선
 12. ETA 10분 이하 승차 전 접근 차량과 승차~하차 구간 운행 차량만 표시되고
     WebP·흰 전광판·검은 노선번호·상태 title이 일치하는지 확인
-13. 차량 10초 갱신을 두 번 이상 지나도 사용자가 바꾼 지도 중심·줌 유지
+13. 차량 10초 후속 polling이 한 번 이상 완료돼도 사용자가 바꾼 지도 중심·줌 유지
 14. 출발·도착 주변 역과 U/D 다음 출발, 시간표 기반·지연 미반영·추천시간
     미합산 문구 확인
 15. 왼쪽 패널 최하단 TAGO 버스·지하철 제공 안내와 NAVER SDK 기본 저작권 확인
@@ -569,7 +602,7 @@ API 내부 metrics의 `chimap_build_info{commit="..."}`도 `RELEASE_SHA`와 같�
     미검출인지 확인
 30. `/api/v1/mobile-config`의 contract/minimum version/maintenance/region과
     guest·Kakao·Apple provider flag가 runtime credential 상태와 일치하는지 확인
-31. `schema_migrations`가 1~11 current이고 candidate와 운영 readiness가 모두
+31. `schema_migrations`가 1~13 current이고 candidate와 운영 readiness가 모두
     HTTP 200이며 지하철 선로·버스 형상 캐시의 SRID와 정점 제약이 정상인지 확인
 
 자동 E2E:
@@ -580,12 +613,24 @@ E2E_REQUIRE_NAVER_MAP=1 \
 pnpm test:e2e
 ```
 
+위 명령은 layout smoke까지 3개를 실행합니다. final public route 증거로 기록하는
+2개는 `pnpm test:e2e -- happy-path.spec.ts`로 같은 target에서 별도 실행합니다.
+
 배포 호스트에서 Playwright Docker image로 strict E2E를 실행할 때 기본
 bridge가 `oapi.map.naver.com` 연결을 timeout하면 저장소의 Playwright
 version과 같은 image를 `--network host`로 실행합니다. 현재 검증 image는
 `mcr.microsoft.com/playwright:v1.61.1-noble`입니다. 이 우회는 테스트
 컨테이너의 outbound 경로에만 적용하며 운영 Compose network 설정을
 변경하지 않습니다.
+
+```bash
+docker run --rm --network host --ipc=host \
+  -v /root/chimap_web_assets:/work -w /work \
+  -e E2E_BASE_URL=https://chimap.madcamp-kaist.org \
+  -e E2E_REQUIRE_NAVER_MAP=1 \
+  mcr.microsoft.com/playwright:v1.61.1-noble \
+  bash -lc 'corepack enable && corepack prepare pnpm@10.15.1 --activate && pnpm install --frozen-lockfile && pnpm test:e2e -- happy-path.spec.ts'
+```
 
 ### GitHub release gate
 
@@ -595,7 +640,7 @@ version과 같은 image를 `--network host`로 실행합니다. 현재 검증 im
 - `API and Web quality`
 - `Expo iOS and Android JavaScript quality`
 - `iOS native compile`
-- `Android native compile`
+- `Android native artifacts and 16KB verification`
 - `PostgreSQL and PostGIS integration`
 
 다섯 job이 성공한 commit만 병합합니다. iOS/Android native job은 각 OS prebuild
@@ -608,6 +653,11 @@ run `30230011225`에서는 위 다섯 job이 모두 성공했습니다. 이후�
 job을 release gate로 사용합니다. Web/API foundation과 iOS staging 이력은 갱신된
 `main`에 통합하고, 이후 변경은 최신 `origin/main`에서 책임별 short-lived branch로
 분기합니다.
+
+CI의 API/Web job은 `promtool check config`, `promtool check rules`,
+`amtool check-config`와 Compose model 검증도 수행합니다. 이는 설정 파일의 정적
+검사이며 운영 runtime의 reload, target `up`, rule health와 firing 상태 확인을
+대체하지 않습니다.
 
 ### 2026-07-27 승격 기록
 
@@ -778,7 +828,7 @@ node --input-type=module -e '
 
 ### 매일
 
-- `docker compose ps`
+- `docker ps --filter name=chimap`
 - API health/readiness
 - PostgreSQL `pg_isready`
 - `systemctl status chimap-backup.timer`
@@ -792,6 +842,9 @@ node --input-type=module -e '
 curl -fsS http://127.0.0.1:9090/-/ready
 curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active'
 curl -fsS http://127.0.0.1:9090/api/v1/rules
+curl -fsS http://127.0.0.1:9093/-/ready
+docker exec chimap-alert-relay-1 node -e \
+  "fetch('http://127.0.0.1:9080/health').then(async r => { console.log(await r.text()); if (!r.ok) process.exit(1) })"
 ```
 
 Prometheus에서 검색 0건률·NAVER 보완률, 공급자별 429/5xx, API p95,
@@ -839,12 +892,23 @@ ALERT_WEBHOOK_URL=
 지원 provider는 `slack`, `discord`, `generic`입니다. 입력 후:
 
 ```bash
-docker compose up -d --no-build --force-recreate alert-relay
-./ops/check-alert-delivery.sh
+export RELEASE_SHA="$(git -C /root/chimap_web_assets rev-parse HEAD)"
+export APP_COMMIT_SHA="$RELEASE_SHA"
+docker compose \
+  --project-directory /root/chimap_web_assets \
+  --env-file /root/chimap/.env \
+  -f /root/chimap_web_assets/compose.yml \
+  -f /etc/chimap/compose-runtime.yml \
+  up -d --no-build --force-recreate alert-relay
+
+CHIMAP_REPO_ROOT=/root/chimap \
+  /root/chimap_web_assets/ops/check-alert-delivery.sh
 ```
 
 확인 스크립트는 Alertmanager API에 실제 점검 경보를 넣고 relay의 마지막
 전달 성공 시각이 갱신되는지 확인한 뒤 경보를 복구 상태로 바꿉니다.
+스크립트의 `/root/chimap` Compose 사용은 기존 project의 relay에 `exec`만 하며
+service를 build하거나 재생성하지 않습니다.
 현재처럼 외부 알림을 사용하지 않으면 `EXTERNAL_ALERTS_ENABLED=0`으로 둡니다.
 이때 relay는 `/alerts`를 `202 disabled`로 수신 종료하고 health에
 `enabled:false`를 표시하며, `ChimapAlertDeliveryNotConfigured` 경보도
@@ -873,7 +937,8 @@ health, readiness, 일반 추천과 provider metric을 확인합니다. 공원 d
 코드만 문제이고 schema가 호환되면 immutable rollback image를
 `chimap:actual-data`로 재태그하고 해당 image의 정확한 `APP_COMMIT_SHA`로 API와
 alert relay를 함께 재기동합니다. 최종 schema가 계속 migration 13이면 현재
-`chimap:release-d268e06` 기준선으로 돌아갈 수 있습니다. 더 높은 migration이
+`chimap:rollback-prod-pre-7e5687b1`의 `f2332827` 기준선으로 돌아갈 수 있습니다.
+더 높은 migration이
 추가되면 이전 binary의 readiness가 forward-compatible한지 먼저 확인합니다.
 DB 변경이 하위 호환되지 않으면 운영 volume을 직접 덮어쓰지 않고 다음
 순서를 따릅니다.
@@ -1152,12 +1217,72 @@ API는 두 geometry flag가 모두 `1`이 아니면 Valhalla 설정을 거절해
 보존해야 합니다. `chimap_provider_configured{provider="VALHALLA"} == 1`과
 `chimap_route_provider_requests_total{provider="VALHALLA",operation="WALK_GEOMETRY",outcome="SUCCESS"}`를
 확인하고 성공한 상세 도보의 source가 `VALHALLA_WALK`인지 검증합니다.
+이 source는 내부 metric·log 값이며 공개 응답은 `geometryQuality=DETAILED`만
+노출합니다.
 Valhalla 실패는 근사 도보 leg로 격리되며 자동 Kakao fallback switch는 없습니다.
 
 2026-07-30 staging은 Valhalla 상세 도보, active 공원 경로 152건과 공원 GOAL을
 확인했습니다. production은 새 custom-format backup과 SHA-256을 확인하고 별도
-PostGIS 컨테이너 restore에서 migration 13과 교통 통계를 검증한 뒤 같은 순서로
-승격했습니다. import 응답은 152건 `ACTIVATED`였고 재기동 뒤 endpoint 503,
+PostGIS 컨테이너 restore에서 migration row 13개와 교통 통계를 검증한 뒤 같은
+순서로 승격했습니다. import 응답은 152건 `ACTIVATED`였고 재기동 뒤 endpoint 503,
 `WALKING_ROUTER=VALHALLA`, integration 활성과 상세 `VALHALLA_WALK` metric 증가,
 public E2E 3개 통과를 확인했습니다. Prometheus는 최종 25개 rule로 reload했고
 target 3개 `up`, firing 0입니다.
+
+## 26. 2026-07-31 최종 `main` 추천 정책 승격 기록
+
+최종 source는 `agent/use-final-fast-policy-baseline@62e039a`를 병합한
+`main@7e5687b1102268c97c5d616cd9f8e401bbe1b99a`입니다. 두 commit의 tree hash가
+같음을 확인했고, Valhalla 구현은 `agent/valhalla-walking-provider@2125128`과
+merge `929834d`에서 이어집니다.
+
+- image: `sha256:c62bb9945c000d71f3127ccdb9e689f7e569a124a495f8311ddd16773d579895`
+- tags: `chimap:release-7e5687b1`, `chimap:actual-data`, `chimap:staging`
+- provenance: image OCI revision, API·relay runtime `APP_COMMIT_SHA`, API
+  `chimap_build_info`가 모두 full merge SHA와 일치
+- production API·relay·monitoring service Compose: project `chimap`, project directory
+  `/root/chimap_web_assets`, `/root/chimap_web_assets/compose.yml` +
+  `/etc/chimap/compose-runtime.yml`, env `/root/chimap/.env`
+- staging API service Compose: project `chimap-staging`, project directory `/root/chimap`,
+  `/root/chimap_web_assets/compose.staging.yml`, env `/root/chimap/.env.staging`
+- preserved PostgreSQL Compose: production `/root/chimap/compose.yml`, staging
+  `/root/chimap/compose.staging.yml`, named volumes unchanged
+- runtime: `WALKING_ROUTER=VALHALLA`, 두 geometry flag `1`, Valhalla
+  timeout/retry/cache/snap/detour `3500/1/1800/100/5`, park import `0`,
+  integration `1`
+- rollback: production `chimap:rollback-prod-pre-7e5687b1` → `f2332827`,
+  staging `chimap:rollback-staging-pre-7e5687b1` → `5c0a380`
+
+03:14 KST production과 staging의 local·public health/readiness는 HTTP 200이고
+API container는 healthy, restart 0입니다. production readiness는
+`227359/4391/181/8644`, staging은 `227230/3658/108/6801`이며 양쪽 migration은
+13입니다. 양 환경에서 Valhalla configured metric `1`과 walking success를
+확인했습니다.
+
+KAIST 본원→대전역, 현재 걸음 0의 production 실제 요청은
+`FAST/BALANCED/GOAL` 3건과 GOAL primary를 반환했습니다. 응답 `baseline`의
+소요시간·도착시각·도보거리·예상 걸음이 최종 FAST와 모두 같고, GOAL은 시간
+정책 안에서 `KEPT/VALID`, 근사 geometry leg는 0이었습니다. 이 요청에 연결된
+Valhalla walking 6회도 모두 성공했습니다. final image의 public route gate는
+staging과 production에서 각각 2개(NAVER-strict UI 1개와 API 회귀 1개)
+통과했습니다.
+
+배포 후 생성·복원한 rollback 기준 백업은 다음과 같습니다.
+
+```text
+/var/backups/chimap/chimap-daily-20260730T181642Z.dump
+18,336,328 bytes
+SHA-256 af0e54f0440a0f65859a04938415f335b248d553a3b9fd42117d5e1beb7efeba
+backup 완료 2026-07-31 03:16:46 KST
+restore 완료 2026-07-31 03:22:37 KST
+PostGIS=true, migration rows=13, 227359/4391/181/8644
+```
+
+PR #16 run `30565973638`의 workspace 457개 테스트와 다섯 CI job, 별도 격리
+PostGIS 12개가 통과했고 final `main` push run `30568184426`도 성공했습니다.
+03:16 KST production monitoring은 target 3개
+`up`, source/runtime rule 25개 모두 healthy였습니다. critical은 없고 기존 품질
+warning `ChimapBusGeometryOutAndBackObserved`,
+`ChimapRouteGeometryFallbackRatioHigh` 2개가 잠시 firing했지만 03:26 KST에 모두
+자동 해제돼 firing·critical은 0입니다. 외부 알림 전달은
+`EXTERNAL_ALERTS_ENABLED=0`으로 명시적으로 비활성입니다.

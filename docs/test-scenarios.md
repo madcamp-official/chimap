@@ -6,7 +6,9 @@
 
 ## 1. 테스트 데이터 정책
 
-공급자 parser·normalizer는 실제 호출을 캡처한 응답만 사용합니다. 캡처에는:
+공급자 parser·normalizer는 재현 가능한 실제 호출 캡처를 우선 사용합니다.
+Valhalla polyline6·multi-leg와 오류 경계처럼 특정 protocol 조건을 만들어야 하는
+검증은 비밀값 없는 최소 synthetic 응답을 사용합니다. 실제 캡처에는:
 
 - 공급자
 - API endpoint
@@ -44,18 +46,9 @@ pnpm format:check
 git diff --check
 ```
 
-현재 일반 test 구성:
-
-- contracts: 12개
-- app-core: 3개
-- alert-relay: 3개
-- API: 104개
-- web: 56개
-- mobile: 14개
-- 합계: 192개
-
-PostgreSQL 전용 8개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
-건너뜁니다. 격리 PostGIS까지 포함한 전체는 200개입니다.
+2026-07-31 final release tree의 workspace test는 457개입니다. PostgreSQL 전용
+12개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서 건너뛰며, release gate에서는
+격리 PostGIS 18에서 별도로 실행해 모두 통과시킵니다.
 
 ## 3. 공급자 테스트
 
@@ -101,6 +94,15 @@ PostgreSQL 전용 8개는 `DATABASE_TEST_URL`이 없으면 일반 실행에서
 - 평일·토요일·일요일과 U/D 시간표 정규화
 - 정확한 역명·노선 단일 후보만 매핑, 복수 후보는 `UNRESOLVED`
 
+### Valhalla
+
+- pedestrian 요청, via 순서, polyline6 multi-leg 결합과 summary 보존
+- leg 수, endpoint snap, detour ratio, 보고 거리/geometry 거리 불일치 거절
+- provider timeout·5xx 제한 재시도와 4xx·client abort 무재시도
+- provider별 cache namespace, `MISS/SHARED/FRESH`, waiter 취소 격리
+- selected WALK 응답의 `DETAILED`와 내부 관측 source `VALHALLA_WALK`
+- 실패 시 기존 `APPROXIMATE` 유지와 Kakao 자동 전환 없음
+
 ## 4. PostgreSQL/PostGIS 통합
 
 운영 DB를 사용하지 않고 별도 PostGIS DB를 지정합니다.
@@ -112,7 +114,7 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
   src/auth/mobile-auth-repository.integration.test.ts
 ```
 
-현재 7개 통합 시나리오:
+현재 12개 통합 test case는 다음 7개 데이터·인증 경계를 다룹니다.
 
 1. migration 반복 적용, CSV COPY/upsert idempotency, 500m 거리 정렬
 2. 공개 정류장과 실제 TAGO 정류장의 30m 연결
@@ -188,14 +190,23 @@ DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
 - 실제 연결이 없을 때 500m→800m→1.2km 단계 확장
 - 연결 정류장 수와 비율이 충분할 때 주변 공급자 재호출 생략
 - 운행 정류장 부재와 직행/1회 환승 연결 부재 오류 문구 구분
-- Kakao 도보 전후 구간
+- 설정된 `WALKING_ROUTER`의 도보 전후 구간과 Valhalla 실패 시 근사 leg 유지
 - 실시간 도착과 배차간격 추정
-- 최대 9회 외부 경로 호출
+- 후보 생성 최대 9회, 선택 상세화·공원 connector의 논리 policy slot 최대
+  11회. BUS geometry·내부 호출·구간 분할·HTTP retry는 별도임을 확인
 - 20초 전체 timeout과 8초 이후 지연 안내
 - 자동 추천 범위 밖 후보 필터와 자동 범위 전용 목표 미달 warning
 - 기존 요청의 마감·추가시간 필터
 - route 중복 제거
 - FAST/2배 걸음/목표 근접 경로의 선정 기준과 ID·타입 중복 금지
+- ±5% 밖이어도 시간 정책을 통과한 최접근 GOAL·primary·warning 유지
+- 더 가까운 BASE보다 intentional 운동 조정 후보 우선
+- 상세화 후 더 가까운 검증된 BALANCED의 GOAL 승격
+- 조정·공원 후보의 same-parent 정확 WALK 귀속
+- final detailed FAST 기준 extraMinutes와 강화된 시간 정책 재검증
+- planning 단계에서 확정한 AUTO budget과 LEGACY deadline 유지
+- 응답 baseline과 final detailed FAST의 시간·도착·도보거리·예상 걸음 일치
+- 20m 초과 운동 WALK 상세화 실패 시 GOAL 제거 또는 검증된 BALANCED 승격
 - 부분 후보 실패 warning
 
 ## 8. 공개 E2E
@@ -206,8 +217,10 @@ E2E_REQUIRE_NAVER_MAP=1 \
 pnpm test:e2e
 ```
 
-현재 Playwright 시나리오는 UI 전체 흐름, 네 화면 폭의 로컬 레이아웃 smoke,
-확장 정류장 API 회귀 3개입니다.
+현재 Playwright 시나리오는 UI 전체 흐름과 확장 정류장 API 회귀 2개,
+네 화면 폭의 로컬 레이아웃 smoke 1개입니다. final public route gate는 앞의
+2개를 staging·production에서 각각 실행하며, `E2E_REQUIRE_NAVER_MAP` strict
+검사는 UI 1개에만 적용됩니다.
 운영 호스트의 Docker bridge에서 NAVER SDK 주소 연결이 제한될 수 있으므로
 배포 서버에서 strict 지도 E2E를 실행할 때는 `--network host`를 사용합니다.
 
@@ -257,7 +270,8 @@ UI 전체 흐름:
 4. 빠른 경로에 TAGO 버스 구간 존재
 5. 버스 geometry 좌표 수>정류장 수, 정류장 외 도로 vertex 포함 확인
 6. 도로 매칭 `estimationNotes` 확인
-7. 첫 승차 전 Kakao 실제 도보가 500m를 넘는지 확인
+7. 첫 승차 전 WALK가 500m를 넘는지 확인. 이 API 회귀 자체는 상세 여부나
+   provider identity를 단정하지 않으며 별도 runtime metric·log에서 확인
 
 배포 gate에서만 실행하고 외부 API 부하 테스트로 사용하지 않습니다.
 
@@ -348,7 +362,8 @@ timeout 난 정류장·역만 격리하고 나머지 seed를 계속하는 회귀
 
 - 백업 파일 비어 있지 않음, `pg_restore --list`, SHA-256 일치
 - 최신 백업을 `template0` 기반 별도 PostGIS 18 DB에 전부 복원
-- restore 후 PostGIS, 현재 migration과 readiness 교통 통계 일치 확인
+- restore 후 PostGIS 존재, `schema_migrations` 행 수와 교통 통계 확인. 현재
+  migration·checksum은 runtime readiness와 release source에서 별도 대조
 - backup·restore·교통 동기화 systemd unit 문법과 timer active 확인
 - Prometheus 설정과 25개 rule을 `promtool`로 검증
 - API metrics 9091 host 미노출, Prometheus 9090 loopback 전용
@@ -476,9 +491,9 @@ gate입니다.
   `sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`
 - 두 환경의 local/public health·readiness·mobile-config HTTP 200, migration 13
 - production Prometheus target 3개 `up`, 25개 rule healthy, firing 0
-- 양 환경 Valhalla provider configured, `DETAILED/VALHALLA_WALK`와 active 공원
-  경로 152건 확인. staging에서 공원 GOAL 포함 확인
-- 배포 직전 production backup checksum과 별도 restore에서 migration 13 및
+- 양 환경 Valhalla provider configured, 응답 `DETAILED`와 내부 관측 source
+  `VALHALLA_WALK`, active 공원 경로 152건 확인. staging에서 공원 GOAL 포함 확인
+- 배포 직전 production backup checksum과 별도 restore에서 migration row 13개 및
   readiness 교통 통계 확인
 - merged tree 결정적 테스트 450개 통과: API 272, mobile 83,
   web 61, contracts 20, app-core 10, alert-relay 4
@@ -488,3 +503,25 @@ gate입니다.
   각각 3개 통과
 - production 실제 추천에서 상세 WALK leg 4개와 `VALHALLA_WALK` metric +8 확인;
   공원 import endpoint 503, integration 활성·active dataset 152건 확인
+
+2026-07-31 최종 `main` 추천 정책 release 검증:
+
+- source `agent/use-final-fast-policy-baseline@62e039a`와 merge
+  `7e5687b1102268c97c5d616cd9f8e401bbe1b99a`의 tree 동일성 확인
+- workspace test 457개와 별도 격리 PostGIS 12개 통과
+- PR #16 Actions run `30565973638`의 Web/API, Expo JavaScript, iOS native,
+  Android artifacts·16KB, PostgreSQL/PostGIS 다섯 job 성공
+- final `main` push run `30568184426`의 같은 다섯 job 성공
+- final image `sha256:c62bb9945c000d71f3127ccdb9e689f7e569a124a495f8311ddd16773d579895`로
+  staging·production public route gate 각각 2개(NAVER-strict UI 1개와 API 회귀
+  1개) 통과
+- 양 환경 health/readiness HTTP 200, migration 13, Valhalla configured와 응답
+  `DETAILED`, 내부 관측 source `VALHALLA_WALK` 확인
+- KAIST 본원→대전역, 현재 걸음 0 요청에서 FAST/BALANCED/GOAL 3건, GOAL
+  primary·`KEPT/VALID`, 근사 geometry leg 0
+- 응답 baseline의 소요시간·도착시각·도보거리·예상 걸음이 최종 FAST와 일치
+- production 연관 Valhalla walking 6회 모두 성공
+- 배포 후 backup checksum과 별도 restore에서 migration row 13개,
+  `227359/4391/181/8644` 재확인
+- production monitoring target 3개와 rule 25개 healthy. 03:16 KST quality
+  warning 2개는 03:26 KST 자동 해제돼 firing·critical 0 확인

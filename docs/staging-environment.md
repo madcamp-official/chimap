@@ -40,6 +40,9 @@ token family는 복사하지 않습니다.
 | --- | --- | --- |
 | Compose 파일 | `compose.yml` | `compose.staging.yml` |
 | project | `chimap` | `chimap-staging` |
+| 현재 service project directory | `/root/chimap_web_assets` | `/root/chimap` |
+| 현재 service config source | `/root/chimap_web_assets/compose.yml` + `/etc/chimap/compose-runtime.yml` | `/root/chimap_web_assets/compose.staging.yml` |
+| 현재 PostgreSQL config source | `/root/chimap/compose.yml` | `/root/chimap/compose.staging.yml` |
 | API loopback | `127.0.0.1:3000` | `127.0.0.1:3001` |
 | Cloudflare hostname | `chimap.madcamp-kaist.org` | `staging.chimap.madcamp-kaist.org` |
 | PostgreSQL volume | `chimap-postgres` | `chimap-staging-postgres` |
@@ -50,6 +53,10 @@ token family는 복사하지 않습니다.
 두 PostgreSQL은 host 5432를 공개하지 않습니다. `docker compose` 명령에는 항상
 대상 파일과 env file을 함께 써서 기본 production Compose를 잘못 조작하지 않게
 합니다.
+
+현재 서버의 service 재기동은 staging env
+`/root/chimap/.env.staging`과 위 절대 경로를 사용합니다. 일반 clone에서 아래
+상대 경로 예제를 실행할 때도 clean release tree인지 먼저 확인합니다.
 
 ## 3. 환경변수
 
@@ -216,6 +223,15 @@ docker compose \
   logs --tail=100 api
 ```
 
+staging은 전용 Prometheus를 실행하지 않습니다. API 내부 metrics를 필요할 때만
+container 안에서 조회하며 scraping, retention, alert 평가와 전달은 production
+monitoring에만 있습니다.
+
+```bash
+docker compose --env-file .env.staging -f compose.staging.yml exec -T api \
+  node -e "fetch('http://127.0.0.1:9091/metrics').then(async r => { process.stdout.write(await r.text()); if (!r.ok) process.exit(1) })"
+```
+
 기동 확인:
 
 ```bash
@@ -309,6 +325,26 @@ docker compose --env-file .env.staging -f compose.staging.yml \
   up -d --no-deps --force-recreate --wait api
 ```
 
+현재 서버에서 이미 빌드·검증된 image로 API만 재기동할 때는 source 혼동을
+막기 위해 다음 canonical invocation을 사용합니다. `chimap:staging`은 가변
+태그이므로 `--no-build`만으로 release 고정이 보장되지 않습니다. 재기동 전에
+image OCI revision이 승인된 source SHA와 같은지 반드시 검사합니다.
+
+```bash
+export RELEASE_SHA="$(git -C /root/chimap_web_assets rev-parse HEAD)"
+export APP_COMMIT_SHA="$RELEASE_SHA"
+export STAGING_IMAGE_REVISION="$(docker image inspect chimap:staging \
+  --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+test "$STAGING_IMAGE_REVISION" = "$RELEASE_SHA"
+docker image inspect chimap:staging \
+  --format '{{.Id}} {{ index .Config.Labels "org.opencontainers.image.revision" }}'
+docker compose \
+  --project-directory /root/chimap \
+  --env-file /root/chimap/.env.staging \
+  -f /root/chimap_web_assets/compose.staging.yml \
+  up -d --no-deps --no-build --force-recreate --wait api
+```
+
 컨테이너 중지와 network 제거는 DB volume을 보존합니다.
 
 ```bash
@@ -331,7 +367,7 @@ Valhalla·공원 경로 갱신은 다음 순서를 지킵니다.
 3. host와 API container에서 Valhalla smoke를 통과시킵니다.
 4. `WALKING_ROUTER=VALHALLA`로 재기동하고
    `chimap_provider_configured{provider="VALHALLA"} == 1`, provider success와
-   `VALHALLA_WALK` 상세 leg를 확인합니다.
+   응답 leg의 `DETAILED`, 내부 관측 source `VALHALLA_WALK`를 확인합니다.
 5. 마지막으로 park integration을 `1`로 켜고 GOAL 경로를 확인합니다.
 
 장애 시 `WALKING_ROUTER=KAKAO`, `PARK_ROUTE_INTEGRATION_ENABLED=0`,
@@ -368,9 +404,40 @@ Valhalla·공원 경로 갱신은 다음 순서를 지킵니다.
 - `WALKING_ROUTER=VALHALLA`, park import 비활성, integration 활성
 - 공원 dataset 2개·저장 route 246개, active dataset 선언 route 152개
 - `chimap_provider_configured{provider="VALHALLA"} 1`, Valhalla walking success와
-  `DETAILED/VALHALLA_WALK`, 공원 GOAL 포함 확인
+  응답 `DETAILED`, 내부 관측 source `VALHALLA_WALK`, 공원 GOAL 포함 확인
 
 이 snapshot과 동일한 immutable image를 production에 승격했습니다. production은
 별도 backup·restore와 public E2E를 다시 통과했으며 두 환경 모두 private 또는
 명시적으로 승인된 endpoint 정책, Valhalla provider metric과 import 비활성을
 유지합니다.
+
+## 10. 2026-07-31 최종 `main` 확인 스냅샷
+
+- source: `7e5687b1102268c97c5d616cd9f8e401bbe1b99a`
+- image: `sha256:c62bb9945c000d71f3127ccdb9e689f7e569a124a495f8311ddd16773d579895`
+- OCI revision과 runtime `APP_COMMIT_SHA`가 source full SHA와 일치
+- `chimap-staging-api-1` healthy, restart 0
+- local/external health·readiness HTTP 200, migration 13 current
+- readiness: 정류장 227,230개, 연결 3,658개, 노선 108개,
+  노선-정류장 6,801개, route-ready 지하철 segment 2,314개
+- `WALKING_ROUTER=VALHALLA`, 두 geometry flag 활성, park import 비활성,
+  integration 활성, active 공원 경로 152건
+- Valhalla configured metric `1`, walking success와
+  응답 `DETAILED`, 내부 관측 source `VALHALLA_WALK` 확인
+- rollback tag `chimap:rollback-staging-pre-7e5687b1`은 `5c0a380` image 보존
+- KAIST 본원→대전역 요청에서 `FAST/BALANCED/GOAL` 3건, GOAL primary,
+  response baseline과 최종 FAST 네 필드 일치, 근사 geometry leg 0
+- final image의 public route gate 2개(NAVER-strict UI 1개와 API 회귀 1개) 통과
+
+staging public route gate는 production과 대상을 분명히 나눠 실행합니다.
+
+```bash
+E2E_BASE_URL=https://staging.chimap.madcamp-kaist.org \
+E2E_REQUIRE_NAVER_MAP=1 \
+pnpm test:e2e -- happy-path.spec.ts
+```
+
+배포 호스트의 Playwright container 기본 bridge에서 NAVER SDK가 timeout되면
+[배포·백업·복구 운영서](./deployment.md)의 같은-version `--network host` 명령에서
+`E2E_BASE_URL`만 staging으로 바꿉니다. staging E2E는 현재 수동 release gate이며
+production을 기본값으로 사용하는 workflow 실행으로 대체하지 않습니다.

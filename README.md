@@ -4,25 +4,28 @@ CHIMap은 개인의 하루 걸음 목표와 현재 걸음에 맞춰 실제 대�
 경로를 자동으로 비교·추천하는 Web·iOS·Android 서비스입니다.
 
 - 운영 주소: <https://chimap.madcamp-kaist.org>
-- production health/readiness 재확인: 2026-07-30 23:30 KST
-- 최신 전체 운영 검증 스냅샷: 2026-07-30 final release gate
+- production health/readiness 재확인: 2026-07-31 03:15 KST
+- 최신 전체 운영 검증 스냅샷: 2026-07-31 final `main` release
 - 런타임: Node.js 24 단일 프로세스 + PostgreSQL 18/PostGIS
 - 운영 방식: Docker Compose + Cloudflare Tunnel
-- 공개 production: release code `f2332827`, image
-  `sha256:4be33c4f43c2e6995d1f32f4d459ae9ef357ffeb17473b79413e3abf1da2a498`,
+- 공개 production: release code `7e5687b1`, image
+  `sha256:c62bb9945c000d71f3127ccdb9e689f7e569a124a495f8311ddd16773d579895`,
   migration 13, `WALKING_ROUTER=VALHALLA`, 공원 import 비활성·integration 활성
 - staging: `https://staging.chimap.madcamp-kaist.org`, 별도 Compose/DB volume,
-  같은 release image, health/readiness 200, Valhalla 상세 도보와 active 공원
-  경로 152건 확인
+  같은 final release image, health/readiness 200, Valhalla 상세 도보와 active
+  공원 경로 152건 확인
 
-최종 release는 결정적 테스트 450개와 격리 PostGIS 테스트 12개, GitHub Actions
-5개 job, staging·production public E2E 3개를 모두 통과했습니다. production 실제
-추천에서 상세 `VALHALLA_WALK` 4개와 해당 metric 증가를 확인했습니다.
+최종 release tree는 workspace 테스트 457개와 별도 격리 PostGIS 테스트 12개,
+PR #16과 final `main` push의 GitHub Actions 5개 job을 모두 통과했습니다. final
+image로 staging·production의 public route gate 2개(NAVER-strict UI 1개와 API
+회귀 1개)를 각각 통과했고,
+production 실제 추천에서 Valhalla walking 호출 6회가 모두 성공하며
+응답 WALK는 `DETAILED`, 내부 관측 source는 `VALHALLA_WALK`였습니다.
 
 현재 배포 상태와 남은 운영 조치는
 [구현·운영 현황](./docs/current-state.md)에 기록합니다.
-2026-07-30 공개 production readiness는 정류장 227,310개, TAGO 연결 정류장
-3,369개, 노선 156개, 노선-정류장 관계 7,254개, 활성 지하철역 1,097개,
+2026-07-31 공개 production readiness는 정류장 227,359개, TAGO 연결 정류장
+4,391개, 노선 181개, 노선-정류장 관계 8,644개, 활성 지하철역 1,097개,
 TAGO 매핑 706개와 버스↔지하철 보행 연결 182개입니다. 추천 요청과 정기 동기화가 새
 지역의 실제 노선을 저장하면 버스 관련 수치는 증가할 수 있습니다.
 
@@ -50,7 +53,8 @@ staging에서는 숨기며 외부 TestFlight 전 별도 E2E를 수행합니다. 
 4. 헤더에서 현재 걸음을 확인하거나 수정하고 왼쪽 폼에서 `건강 경로 찾기`를
    누릅니다. 사용자가 추가 시간이나 마감시간을 결정할 필요는 없습니다.
 5. 서버가 남은 목표와 기본 경로를 바탕으로 15~90분의 자동 추천 범위를
-   계산하고 TAGO 버스, Kakao 도보와 도로 매칭 geometry를 조합합니다.
+   계산하고 TAGO 버스, 선택된 도보 공급자와 Kakao 도로 매칭 geometry를
+   조합합니다. production과 staging의 선택 도보 공급자는 Valhalla입니다.
 6. 목표 경로는 먼저 내려 걷는 후보를 우선하고, 필요할 때 더 뒤의
    정류장에서 탑승하는 후보를 결합합니다.
 7. 빠른 경로, 빠른 경로 대비 약 2배 걸음 경로, 목표 근접 경로의
@@ -72,8 +76,8 @@ staging에서는 숨기며 외부 TestFlight 전 별도 E2E를 수행합니다. 
 
 추천은 출발·도착 각각 500m에서 운행 노선이 있는 정류장을 먼저 찾고,
 연결 경로가 없으면 800m, 최대 1.2km까지 단계적으로 확장합니다. 멀어진
-승하차 지점까지의 이동은 직선 추정이 아니라 Kakao 실제 도보 경로로
-추천에 포함합니다.
+승하차 지점까지의 이동은 설정된 도보 공급자의 실제 경로로 추천에
+포함합니다.
 
 ## 데이터 공급자와 저장 경계
 
@@ -83,7 +87,7 @@ staging에서는 숨기며 외부 TestFlight 전 별도 E2E를 수행합니다. 
 | 장소 | Kakao Local | 키워드·주소 검색 |
 | 주소 보완 | NAVER Geocoding | Kakao 0건 또는 복구 가능한 장애 시 주소 검색 |
 | 역지오코딩 | Kakao→NAVER | GPS 좌표를 주소로 변환 |
-| 상세 도보 | 환경별 Kakao 또는 Valhalla | production은 현재 Kakao, staging은 Valhalla의 실제 거리·시간·좌표 |
+| 상세 도보 | 환경별 Kakao 또는 Valhalla | production·staging은 현재 Valhalla의 실제 거리·시간·좌표, Kakao는 명시적 rollback 값 |
 | 버스 선 | Kakao Mobility Directions | TAGO 정류장 순서를 보존한 도로 매칭 geometry |
 | 버스 | 국토교통부 TAGO | 정류장·노선·도착·차량 |
 | 지하철 | 서울 열린데이터광장 + 국토교통부 TAGO | 서울 실시간 도착·위치, 그 외 역 검색·시간표 기반 다음 출발 |
@@ -279,19 +283,26 @@ GET  /api/v1/transit/subway/stations/223/departures?direction=U
 pnpm typecheck
 pnpm test
 pnpm build:all
-E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
+E2E_BASE_URL=https://chimap.madcamp-kaist.org \
+  E2E_REQUIRE_NAVER_MAP=1 pnpm test:e2e
 ```
+
+전체 명령은 public 경로 gate 2개와 네 viewport layout smoke 1개를 실행합니다.
+최종 양 환경 2/2 기록은 `happy-path.spec.ts`의 NAVER UI 1개와 API 공급자 회귀
+1개를 대상으로 한 결과입니다.
 
 일반 테스트는 캡처 시각·호출 API·SHA-256 checksum을 기록한 실제 공급자
 응답을 사용합니다. PostgreSQL 통합 테스트는 별도 PostGIS DB에
 `DATABASE_TEST_URL`을 지정해 실행합니다.
 
-2026-07-30 merged-tree 검증에서 결정적 테스트 450개와 격리 PostGIS 통합
-테스트 12개, 총 462개가 통과했습니다. 결정적 테스트 구성은 API 272, mobile
-83, web 61, contracts 20, app-core 10, alert-relay 4개입니다. workspace
-typecheck·format check·Web/API/Mobile build와 생성된 iOS/Android native config도
-통과했습니다. 이 결과는 아직 최종 SHA의 CI·production 배포 완료를 뜻하지
-않습니다.
+2026-07-31 final release tree 검증에서 workspace 테스트 457개가 통과했고,
+일반 실행에서 생략되는 PostGIS 통합 테스트 12개도 격리 DB에서 별도로
+통과했습니다. workspace typecheck·format check·Web/API/Mobile build와 생성된
+iOS/Android native config, PR #16과 final `main` push의 다섯 CI job도
+통과했습니다. merge SHA
+`7e5687b1102268c97c5d616cd9f8e401bbe1b99a`를 담은 동일 immutable image로 양
+환경의 public route gate 2개(NAVER-strict UI 1개와 API 회귀 1개)를 각각
+재검증했습니다.
 
 ```bash
 DATABASE_TEST_URL=postgresql://user:password@127.0.0.1:5432/chimap_test \
@@ -327,6 +338,7 @@ Alertmanager와 relay 서비스 health, 라우팅 설정과 메시지 변환은
 - [API 레퍼런스](./docs/api-reference.md)
 - [데이터베이스 스키마와 저장 계약](./docs/database-schema.md)
 - [배포·백업·복구](./docs/deployment.md)
+- [Staging 환경 운영](./docs/staging-environment.md)
 - [Android 개발·검증](./docs/android-development.md)
 - [Kakao 연동](./docs/kakao-api-integration.md)
 - [NAVER 연동](./docs/naver-map-integration.md)

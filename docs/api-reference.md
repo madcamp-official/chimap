@@ -415,8 +415,10 @@ type RecommendationRequest = {
 `X-Route-Geometry: transit-v2`를 사용합니다. 이 profile은 `track-v1` 지하철
 선로 형상을 포함하며 각 leg에 선택 필드
 `geometryQuality: "DETAILED" | "APPROXIMATE"`를 반환합니다. 형상 조회가
-실패해도 추천은 유지하고 `APPROXIMATE` 좌표를 반환합니다. 구버전 strict
-클라이언트를 위해 `track-v1`과 헤더 없는 응답에는 이 필드를 추가하지 않습니다.
+실패하면 기존 planning leg는 `APPROXIMATE` 좌표로 유지합니다. 다만 20m를
+초과하는 운동 WALK가 상세화되지 않은 GOAL은 최종 검증에서 제거되거나 검증된
+BALANCED로 대체됩니다. 구버전 strict 클라이언트를 위해 `track-v1`과 헤더 없는
+응답에는 이 필드를 추가하지 않습니다.
 
 브라우저는 최초 설정에서 받은 만 나이·신장·체중·생물학적 성별로 한 걸음
 길이를 계산합니다. 연구식 적용 직전에 만 나이를 출생연도로 변환하며, 원본
@@ -463,7 +465,12 @@ type LegacyRecommendationRequest = RecommendationRequest & {
 응답:
 
 ```ts
-type RouteSource = "KAKAO" | "TAGO";
+type BaselineSummary = {
+  durationSeconds: number;
+  arrivalAt: string;
+  walkDistanceMeters: number;
+  estimatedSteps: number;
+};
 
 type RecommendationResponse = {
   requestId: string;
@@ -486,21 +493,43 @@ type RecommendationResponse = {
 추천 타입은 `FAST`, `BALANCED`, `GOAL`입니다. `BALANCED`는 호환성을 위해
 유지하며 화면 의미는 FAST 예상 걸음의 2배에 가장 가까운 `2배 걸음 경로`입니다.
 `GOAL`은 남은 목표 걸음에 가장 가까운 `목표 근접 경로`입니다. 세 타입에는
-서로 다른 route ID만 배정합니다. 도보·버스 경로 좌표는 정규화된 Kakao/TAGO
-응답을 사용하고, `track-v1` 지하철 좌표는 DB의 검증된 선로 LineString을
-사용합니다.
+서로 다른 route ID만 배정합니다. 도보는 환경별 `WALKING_ROUTER`, 버스는
+Kakao 도로 매칭과 TAGO 정류장 순서를 사용하고, `track-v1` 지하철 좌표는 DB의
+검증된 선로 LineString을 사용합니다. production·staging의 선택 도보 공급자는
+Valhalla이며 실패 시 기존 `APPROXIMATE` leg를 유지하고 Kakao로 자동 전환하지
+않습니다.
+
+`baseline`은 후보 생성 때의 원본 planning route가 아니라 최종 상세화된 FAST의
+소요시간·도착시각·도보거리·예상 걸음 수와 정확히 같습니다. AUTO의
+`maxExtraMinutes`는 planning baseline으로 한 번만 계산하고 상세화 뒤 다시
+계산하거나 넓히지 않습니다. LEGACY의 `maxExtraMinutes`와
+`deadline - safetyBufferMinutes`도 요청에서 확정한 값을 유지합니다. 최종 시간
+비교의 기준 소요시간만 같은 상세화 단계의 FAST를 사용합니다.
 
 각 추천은 `stepDifference`와
 `goalFit: "WITHIN_TOLERANCE" | "UNDER" | "OVER"`를 포함합니다.
-`primaryRecommendationId`는 남은 목표가 있을 때 목표에 가장 가까운 경로,
-목표를 이미 달성했을 때 빠른 경로를 가리킵니다.
+`primaryRecommendationId`는 남은 목표가 있고 최종 유효 GOAL이 있을 때 그
+경로를 가리킵니다. GOAL이 제거되고 BALANCED도 승격되지 않았거나 목표를 이미
+달성했다면 FAST를 가리킵니다.
+
+±5%는 도달 가능 여부와 warning을 결정할 뿐 GOAL 카드의 자격 조건은 아닙니다.
+운동 provenance와 시간 정책을 통과한 최접근 경로는 `UNDER` 또는 `OVER`인 채
+GOAL과 primary로 유지됩니다. 상세화된 BALANCED가 같은 GOAL 검증을 통과하고
+기존 GOAL보다 남은 걸음 절대 오차가 더 작으면 BALANCED를 GOAL로 승격하고 기존
+GOAL을 제거합니다. 동률이면 기존 GOAL을 유지하며 FAST는 재라벨하지 않습니다.
 
 도보 leg의 `walkingRole`은 `ACCESS`, `TRANSFER`,
-`GOAL_LATE_BOARDING`, `GOAL_EARLY_ALIGHTING` 중 하나입니다. 마지막
+`GOAL_LATE_BOARDING`, `GOAL_EARLY_ALIGHTING`, `PARK_CONNECTOR`,
+`PARK_DETOUR` 중 하나입니다. `GOAL_*`와 `PARK_*`는
+`isExerciseSegment=true`이고 `parkRoute` metadata는 `PARK_DETOUR`에만
+허용됩니다. 마지막
 하차점을 앞당기는 `GOAL_EARLY_ALIGHTING` 후보를 먼저 조회하고 부족한
 경우에만 늦은 탑승과 양쪽 조합을 추가합니다. 후보 생성기 호출 예산은
 대중교통 경로 1회와 조정 도보 최대 8회이며 조기 하차 후보가 목표 ±5%를
-충족하면 나머지 호출을 생략합니다.
+충족하면 나머지 호출을 생략합니다. 선택 WALK 상세화와 공원 connector를
+포함한 profile별 service-layer provider-call policy slot은 최대 11회입니다.
+선택 BUS geometry, 내부 TAGO/Kakao 호출, 구간 분할과 HTTP retry를 포함한 실제
+외부 HTTP 요청 수의 상한은 아닙니다.
 
 버스 leg의 `bus.stops`는 승차부터 하차까지의 실제 TAGO 정류장 순서를
 유지합니다. `coordinates`와 `bus.polyline`은 그 정류장 순서를 Kakao

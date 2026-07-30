@@ -480,8 +480,6 @@ type ReverseGeocodeResponse = {
 ### 8.5 추천
 
 ```ts
-type RouteSource = "KAKAO" | "TAGO";
-
 type RecommendationRequest = {
   origin: Place;
   destination: Place;
@@ -515,9 +513,14 @@ type RecommendationResponse = {
 `Recommendation`은 `stepDifference`,
 `goalFit: "WITHIN_TOLERANCE" | "UNDER" | "OVER"`와 도보 leg별
 `walkingRole`을 포함합니다. 목표 운동 역할은 조기 하차
-`GOAL_EARLY_ALIGHTING`과 늦은 탑승 `GOAL_LATE_BOARDING`으로 구분합니다.
+`GOAL_EARLY_ALIGHTING`, 늦은 탑승 `GOAL_LATE_BOARDING`, 공원 연결
+`PARK_CONNECTOR`와 공원 운동 `PARK_DETOUR`로 구분합니다.
 마지막 버스의 조기 하차 후보를 먼저 조회하고 목표 ±5% 후보가 없을 때만
 늦은 탑승과 양쪽 조합을 보완합니다.
+
+응답 `baseline`은 최종 상세 FAST의 소요시간·도착시각·도보거리·예상 걸음과
+일치합니다. 추천 요청과 Valhalla/Kakao 원문·캐시는 PostgreSQL에 저장하지
+않습니다.
 
 공급자 원문 모델은 API 밖으로 노출하지 않으며 모든 경로 좌표는 WGS84
 `{lng,lat}`로 정규화합니다.
