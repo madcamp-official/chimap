@@ -118,6 +118,7 @@ const MAX_SECTION_JOIN_GAP_METERS = 30;
 const OUT_AND_BACK_RETURN_METERS = 3;
 const OUT_AND_BACK_LEG_METERS = 5;
 const busGeometryLimit = pLimit(4);
+const busGeometryContinuationLimit = pLimit(1);
 const walkingGeometryLimit = pLimit(4);
 
 export const BUS_GEOMETRY_ALGORITHM_VERSION = "kakao-road-pair-v3";
@@ -833,6 +834,20 @@ export class RouteGeometryService {
     return waitForSharedFill(shared, signal);
   }
 
+  async #fetchPairSectionContinuation(
+    expected: ExpectedBusSection[],
+    bypassMemoryCache = false,
+  ): Promise<BusGeometryFetchResult> {
+    const chunk = expected.slice(0, MAX_BUS_GEOMETRY_PAIR_REQUESTS);
+    return busGeometryContinuationLimit(() =>
+      this.#fetchAndStorePairSections(
+        chunk,
+        undefined,
+        bypassMemoryCache,
+      ),
+    );
+  }
+
   async #resolveLegacyBusGeometry(input: {
     stops: BusRouteStop[];
     signal?: AbortSignal;
@@ -1016,7 +1031,12 @@ export class RouteGeometryService {
         ? "MISS"
         : stale.length > 0 ? "STALE" : "FRESH";
     const requestedMissing = missing.slice(0, MAX_BUS_GEOMETRY_PAIR_REQUESTS);
-    const requestLimitReached = requestedMissing.length < missing.length;
+    const continuationMissing = missing.slice(
+      MAX_BUS_GEOMETRY_PAIR_REQUESTS,
+      MAX_BUS_GEOMETRY_PAIR_REQUESTS * 2,
+    );
+    const requestLimitReached =
+      missing.length > requestedMissing.length + continuationMissing.length;
     let failureReason: RouteGeometryReason = requestLimitReached
       ? "PAIR_REQUEST_LIMIT"
       : "NONE";
@@ -1024,25 +1044,61 @@ export class RouteGeometryService {
     let queueStartedCount = 0;
     let queueAbortedBeforeStartCount = 0;
     if (missing.length > 0) {
-      try {
-        const fetched = await this.#fetchAndStorePairSections(
+      const fetches: Array<{
+        expectedCount: number;
+        pending: Promise<BusGeometryFetchResult>;
+      }> = [{
+        expectedCount: requestedMissing.length,
+        pending: this.#fetchAndStorePairSections(
           requestedMissing,
           input.signal,
           input.forceRefresh === true,
+        ),
+      }];
+      if (continuationMissing.length > 0) {
+        const continuation = this.#fetchPairSectionContinuation(
+          continuationMissing,
+          input.forceRefresh === true,
         );
-        fetched.geometries.forEach((value, key) => available.set(key, value));
-        queueWaitMilliseconds = fetched.queueWaitMilliseconds;
-        queueStartedCount = fetched.queueStartedCount;
-        queueAbortedBeforeStartCount = fetched.queueAbortedBeforeStartCount;
-        if (!requestLimitReached) failureReason = fetched.failureReason;
-        if (
-          fetched.geometries.size < requestedMissing.length &&
-          failureReason === "NONE"
-        ) {
-          failureReason = "SECTION_MISMATCH";
+        fetches.push({
+          expectedCount: continuationMissing.length,
+          pending: waitForSharedFill(continuation, input.signal),
+        });
+      }
+      const settled = await Promise.allSettled(
+        fetches.map((fetch) => fetch.pending),
+      );
+      settled.forEach((result, index) => {
+        if (result.status === "rejected") {
+          if (failureReason === "NONE") {
+            failureReason = classifyGeometryError(result.reason);
+          }
+          return;
         }
-      } catch (error) {
-        if (!requestLimitReached) failureReason = classifyGeometryError(error);
+        const fetched = result.value;
+        fetched.geometries.forEach((value, key) => available.set(key, value));
+        queueWaitMilliseconds = Math.max(
+          queueWaitMilliseconds,
+          fetched.queueWaitMilliseconds,
+        );
+        queueStartedCount += fetched.queueStartedCount;
+        queueAbortedBeforeStartCount +=
+          fetched.queueAbortedBeforeStartCount;
+        if (failureReason === "NONE") {
+          failureReason = fetched.failureReason;
+          if (
+            fetched.geometries.size < fetches[index]!.expectedCount &&
+            failureReason === "NONE"
+          ) {
+            failureReason = "SECTION_MISMATCH";
+          }
+        }
+      });
+      if (
+        available.size < expected.length &&
+        failureReason === "NONE"
+      ) {
+        failureReason = "SECTION_MISMATCH";
       }
     } else if (stale.length > 0) {
       void this.#fetchAndStorePairSections(

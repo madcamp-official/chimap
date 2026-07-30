@@ -74,8 +74,13 @@ function abortedBeforeStartReason(
     : "REQUEST_ABORTED";
 }
 
-type ResolvedWalkingGeometry = {
-  coordinates: Coordinate[] | null;
+type ResolvedWalkingGeometry = ({
+  coordinates: Coordinate[];
+  distanceMeters: number;
+  durationSeconds: number;
+} | {
+  coordinates: null;
+}) & {
   reason: RouteGeometryReason;
   durationMilliseconds: number;
   queueWaitMilliseconds: number;
@@ -282,6 +287,8 @@ export class SelectedRouteGeometryService {
           const resolved: ResolvedWalkingGeometry = coordinates.length >= 2
             ? {
                 coordinates,
+                distanceMeters: route.walkDistanceMeters,
+                durationSeconds: route.durationSeconds,
                 reason: "NONE",
                 durationMilliseconds: performance.now() - startedAt,
                 queueWaitMilliseconds,
@@ -495,7 +502,9 @@ export class SelectedRouteGeometryService {
             return detailed
               ? {
                   ...leg,
-                  coordinates: geometry.coordinates!,
+                  distanceMeters: geometry.distanceMeters,
+                  durationSeconds: geometry.durationSeconds,
+                  coordinates: geometry.coordinates,
                   geometryQuality: "DETAILED" as const,
                 }
               : leg;

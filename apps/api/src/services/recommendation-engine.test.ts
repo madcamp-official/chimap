@@ -1,5 +1,6 @@
 import type {
   NormalizedRoute,
+  Recommendation,
   RecommendationRequest,
 } from "@chimap/contracts";
 import { describe, expect, it } from "vitest";
@@ -9,7 +10,10 @@ import {
   calculateAutomaticMaxExtraMinutes,
   resolveRecommendationPolicy,
 } from "./calculations.js";
-import { selectRecommendations } from "./recommendation-engine.js";
+import {
+  finalizeRecommendations,
+  selectRecommendations,
+} from "./recommendation-engine.js";
 import { deduplicateRoutes } from "./route-deduplicator.js";
 
 const request: RecommendationRequest = {
@@ -154,7 +158,7 @@ describe("건강 경로 추천 선정", () => {
     ).toBe(8000);
   });
 
-  it("이미 목표를 달성했어도 후보가 충분하면 세 경로를 보여주고 빠른 경로를 기본 선택한다", () => {
+  it("이미 목표를 달성했으면 최종 GOAL 라벨을 제거하고 빠른 경로를 기본 선택한다", () => {
     const completedRequest: RecommendationRequest = {
       ...request,
       currentSteps: 8100,
@@ -174,6 +178,21 @@ describe("건강 경로 추천 선정", () => {
     ]);
     expect(new Set(result.recommendations.map((item) => item.id)).size).toBe(3);
     expect(result.primaryRecommendationId).toBe("actual-fast-108");
+
+    const finalized = finalizeRecommendations({
+      recommendations: result.recommendations,
+      request: completedRequest,
+      departureAt: new Date("2026-07-25T12:00:00.000Z"),
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(completedRequest, fast),
+      requireDetailedExerciseWalking: true,
+    });
+    expect(finalized.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "BALANCED",
+    ]);
+    expect(finalized.primaryRecommendationId).toBe("actual-fast-108");
+    expect(finalized.goalReachable).toBe(true);
   });
 
   it("2배 걸음 경로는 빠른 경로 예상 걸음의 정확한 두 배에 가장 가까운 후보를 고른다", () => {
@@ -271,6 +290,266 @@ describe("건강 경로 추천 선정", () => {
       "actual-fast-108",
     ]);
     expect(result.goalReachable).toBe(false);
+  });
+
+  it("상세 WALK 수치로 추천 지표와 ETA를 다시 계산한 뒤 검증된 GOAL을 primary로 확정한다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations;
+    const detailed = selected.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: recommendation.legs.map((leg, index) =>
+              index !== 0
+                ? leg
+                : {
+                    ...leg,
+                    distanceMeters: 1_890,
+                    durationSeconds: 1_800,
+                    geometryQuality: "DETAILED",
+                    isExerciseSegment: true,
+                    walkingRole: "GOAL_EARLY_ALIGHTING",
+                  }
+            ),
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: detailed,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        id: "actual-goal-511",
+        durationSeconds: 4_432,
+        arrivalAt: "2026-07-25T13:13:52.000Z",
+        extraMinutes: 14,
+        walkDistanceMeters: 1_890,
+        estimatedSteps: 2_700,
+        stepDifference: -100,
+        goalFit: "WITHIN_TOLERANCE",
+        expectedTotalSteps: 7_900,
+        dailyGoalCompletionRate: 0.9875,
+        shortfallCoverageRate: 2_700 / 2_800,
+      });
+    expect(result.primaryRecommendationId).toBe("actual-goal-511");
+    expect(result.goalReachable).toBe(true);
+  });
+
+  it("운동 WALK 상세화가 실패한 GOAL은 제거하고 FAST를 primary로 되돌린다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: recommendation.legs.map((leg, index) =>
+              index !== 0
+                ? leg
+                : {
+                    ...leg,
+                    geometryQuality: "APPROXIMATE",
+                    isExerciseSegment: true,
+                    walkingRole: "GOAL_EARLY_ALIGHTING",
+                  }
+            ),
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "BALANCED",
+    ]);
+    expect(result.primaryRecommendationId).toBe("actual-fast-108");
+    expect(result.goalReachable).toBe(false);
+  });
+
+  it("20m 이하의 짧은 운동 WALK는 provider 상세화 없이도 GOAL 검증을 막지 않는다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    }).recommendations.map((recommendation): Recommendation =>
+      recommendation.type !== "GOAL"
+        ? recommendation
+        : {
+            ...recommendation,
+            legs: [
+              {
+                ...recommendation.legs[0]!,
+                distanceMeters: 1_880,
+                durationSeconds: 1_790,
+                geometryQuality: "DETAILED",
+              },
+              {
+                ...recommendation.legs[0]!,
+                id: "short-exercise-connector",
+                distanceMeters: 10,
+                durationSeconds: 8,
+                geometryQuality: "APPROXIMATE",
+                isExerciseSegment: true,
+                walkingRole: "GOAL_EARLY_ALIGHTING",
+              },
+              ...recommendation.legs.slice(1),
+            ],
+          }
+    );
+
+    const result = finalizeRecommendations({
+      recommendations: selected,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(result.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        walkDistanceMeters: 1_890,
+        goalFit: "WITHIN_TOLERANCE",
+      });
+    expect(result.primaryRecommendationId).toBe("actual-goal-511");
+  });
+
+  it("검증할 GOAL 카드가 애초에 없으면 BALANCED 대신 FAST를 기본 선택한다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const selection = selectRecommendations({
+      candidates: [candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy: resolveRecommendationPolicy(request, fast),
+    });
+    expect(selection.primaryRecommendationId).toBe("actual-double-102");
+
+    const finalized = finalizeRecommendations({
+      recommendations: selection.recommendations,
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(request, fast),
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(finalized.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "BALANCED",
+    ]);
+    expect(finalized.primaryRecommendationId).toBe("actual-fast-108");
+  });
+
+  it("상세 WALK 재계산 뒤 ±5% 또는 시간 제약을 벗어난 GOAL은 유지하지 않는다", () => {
+    const departureAt = new Date("2026-07-25T12:00:00.000Z");
+    const policy = resolveRecommendationPolicy(request, fast);
+    const selected = selectRecommendations({
+      candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
+      baseline: fast,
+      request,
+      departureAt,
+      policy,
+    }).recommendations;
+    const detailedGoal = selected.find((item) => item.type === "GOAL")!;
+    const finalizeGoal = (
+      distanceMeters: number,
+      durationSeconds: number,
+    ) => finalizeRecommendations({
+      recommendations: selected.map((recommendation): Recommendation =>
+        recommendation.type !== "GOAL"
+          ? recommendation
+          : {
+              ...recommendation,
+              legs: recommendation.legs.map((leg, index) =>
+                index !== 0
+                  ? leg
+                  : {
+                      ...leg,
+                      distanceMeters,
+                      durationSeconds,
+                      geometryQuality: "DETAILED",
+                      isExerciseSegment: true,
+                      walkingRole: "GOAL_EARLY_ALIGHTING",
+                    }
+              ),
+            }
+      ),
+      request,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy,
+      requireDetailedExerciseWalking: true,
+    });
+
+    expect(finalizeGoal(1_700, detailedGoal.legs[0]!.durationSeconds)
+      .recommendations.some((item) => item.type === "GOAL")).toBe(false);
+    expect(finalizeGoal(1_960, 4_000)
+      .recommendations.some((item) => item.type === "GOAL")).toBe(false);
+
+    const deadlineRequest: RecommendationRequest = {
+      ...request,
+      deadline: "2026-07-25T13:15:00.000Z",
+      maxExtraMinutes: 120,
+      safetyBufferMinutes: 3,
+    };
+    const missedDeadline = finalizeRecommendations({
+      recommendations: selected.map((recommendation): Recommendation =>
+        recommendation.type !== "GOAL"
+          ? recommendation
+          : {
+              ...recommendation,
+              legs: recommendation.legs.map((leg, index) =>
+                index !== 0
+                  ? leg
+                  : {
+                      ...leg,
+                      distanceMeters: 1_890,
+                      durationSeconds: 1_800,
+                      geometryQuality: "DETAILED",
+                      isExerciseSegment: true,
+                      walkingRole: "GOAL_EARLY_ALIGHTING",
+                    }
+              ),
+            }
+      ),
+      request: deadlineRequest,
+      departureAt,
+      baselineDurationSeconds: fast.durationSeconds,
+      policy: resolveRecommendationPolicy(deadlineRequest, fast),
+      requireDetailedExerciseWalking: true,
+    });
+    expect(missedDeadline.recommendations.some(
+      (item) => item.type === "GOAL",
+    )).toBe(false);
   });
 
   it("부족한 도보거리로 자동 추가시간을 계산하고 15~90분으로 제한한다", () => {

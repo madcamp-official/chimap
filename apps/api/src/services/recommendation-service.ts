@@ -16,7 +16,11 @@ import {
   resolveRecommendationPolicy,
 } from "./calculations.js";
 import { CandidateGenerator } from "./candidate-generator.js";
-import { selectRecommendations } from "./recommendation-engine.js";
+import {
+  finalizeRecommendations,
+  recalculateRecommendations,
+  selectRecommendations,
+} from "./recommendation-engine.js";
 import type {
   RouteGeometryProfile,
   SubwayGeometryObservation,
@@ -154,6 +158,12 @@ function overlayLegGeometry(target: RouteLeg, source: RouteLeg): RouteLeg {
   }
   return {
     ...target,
+    ...(target.mode === "WALK"
+      ? {
+          distanceMeters: source.distanceMeters,
+          durationSeconds: source.durationSeconds,
+        }
+      : {}),
     coordinates: source.coordinates,
     ...(source.geometryQuality === undefined
       ? {}
@@ -563,6 +573,12 @@ export class RecommendationService {
           performance.now(),
         );
       }
+      recommendations = recalculateRecommendations({
+        recommendations,
+        request: input.request,
+        departureAt,
+        baselineDurationSeconds: generated.baseline.durationSeconds,
+      });
       if (this.#parkRoutes !== undefined) {
         const parkStartedAt = performance.now();
         if (finalPhaseSignal.aborted) {
@@ -664,6 +680,25 @@ export class RecommendationService {
         }
       }
 
+      const finalized = finalizeRecommendations({
+        recommendations,
+        request: input.request,
+        departureAt,
+        baselineDurationSeconds: generated.baseline.durationSeconds,
+        policy,
+        requireDetailedExerciseWalking:
+          input.geometryProfile === "TRANSIT_V2",
+      });
+      recommendations = finalized.recommendations;
+      primaryRecommendationId = finalized.primaryRecommendationId;
+      if (primaryRecommendationId === undefined) {
+        throw new AppError({
+          code: "INTERNAL_ERROR",
+          message: "최종 기본 추천 경로를 결정하지 못했어요.",
+          status: 500,
+        });
+      }
+
       const baselineMetrics = calculateStepMetrics(
         input.request,
         generated.baseline,
@@ -709,7 +744,7 @@ export class RecommendationService {
             "일부 운동 경로는 확인하지 못했지만 검증된 결과를 보여드려요.",
         });
       }
-      if (!selection.goalReachable) {
+      if (!finalized.goalReachable) {
         warnings.push({
           code:
             policy.mode === "AUTO"

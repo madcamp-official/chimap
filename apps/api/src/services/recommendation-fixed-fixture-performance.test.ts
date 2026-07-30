@@ -215,15 +215,17 @@ describe("추천 geometry 100건 고정 fixture 성능 게이트", () => {
           walkDistanceMeters: input.walkDistanceMeters,
           estimatedSteps: input.estimatedSteps,
         });
-        expect(result!.legs.map((leg) => ({
-          id: leg.id,
-          distanceMeters: leg.distanceMeters,
-          durationSeconds: leg.durationSeconds,
-        }))).toEqual(input.legs.map((leg) => ({
-          id: leg.id,
-          distanceMeters: leg.distanceMeters,
-          durationSeconds: leg.durationSeconds,
-        })));
+        const walkingTimedOut = index % 4 === 2;
+        expect(result!.legs[0]).toMatchObject({
+          id: input.legs[0]!.id,
+          distanceMeters: walkingTimedOut ? 250 : 999,
+          durationSeconds: walkingTimedOut ? 200 : 999,
+        });
+        expect(result!.legs[1]).toMatchObject({
+          id: input.legs[1]!.id,
+          distanceMeters: input.legs[1]!.distanceMeters,
+          durationSeconds: input.legs[1]!.durationSeconds,
+        });
         return result!;
       }),
     );

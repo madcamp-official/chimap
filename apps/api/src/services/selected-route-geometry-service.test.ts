@@ -227,7 +227,7 @@ describe("선택 경로 형상 상세화", () => {
     expect(completed[1]?.legs[0]?.geometryQuality).toBe("DETAILED");
   });
 
-  it("선택된 최대 3개 경로의 중복 BUS/WALK를 한 번씩 동시에 조회하고 지표는 유지한다", async () => {
+  it("선택된 최대 3개 경로의 중복 BUS/WALK를 한 번씩 조회하고 상세 WALK leg 지표를 반영한다", async () => {
     const walkingGate = deferred();
     const busGate = deferred();
     const getWalkingRoute = vi.fn(async (): Promise<NormalizedRoute> => {
@@ -275,15 +275,11 @@ describe("선택 경로 형상 상세화", () => {
       recommendation("third"),
       fourth,
     ];
-    const beforeMetrics = input.map((item) => ({
+    const beforeAggregates = input.map((item) => ({
       durationSeconds: item.durationSeconds,
       arrivalAt: item.arrivalAt,
       walkDistanceMeters: item.walkDistanceMeters,
       estimatedSteps: item.estimatedSteps,
-      legMetrics: item.legs.map((leg) => ({
-        durationSeconds: leg.durationSeconds,
-        distanceMeters: leg.distanceMeters,
-      })),
     }));
     const observe = vi.fn();
 
@@ -305,13 +301,11 @@ describe("선택 경로 형상 상세화", () => {
       arrivalAt: item.arrivalAt,
       walkDistanceMeters: item.walkDistanceMeters,
       estimatedSteps: item.estimatedSteps,
-      legMetrics: item.legs.map((leg) => ({
-        durationSeconds: leg.durationSeconds,
-        distanceMeters: leg.distanceMeters,
-      })),
-    }))).toEqual(beforeMetrics);
+    }))).toEqual(beforeAggregates);
     for (const item of result.slice(0, 3)) {
       expect(item.legs[0]).toMatchObject({
+        distanceMeters: 999,
+        durationSeconds: 999,
         coordinates: [walkFrom, walkMiddle, walkTo],
         geometryQuality: "DETAILED",
       });
@@ -327,6 +321,42 @@ describe("선택 경로 형상 상세화", () => {
         observation.mode === "WALK"
       ),
     ).toHaveLength(1);
+  });
+
+  it("운동 WALK 상세화 실패 시 근사 geometry와 거리·시간을 그대로 둔다", async () => {
+    const provider: MobilityProvider = {
+      source: "TAGO",
+      searchPlaces: async () => [],
+      getTransitRoutes: async () => [],
+      getWalkingRoute: vi.fn(async () => {
+        throw new Error("walking provider failed");
+      }),
+    };
+    const base = recommendation("goal-fallback");
+    const exerciseWalk = {
+      ...base.legs[0]!,
+      isExerciseSegment: true,
+      walkingRole: "GOAL_EARLY_ALIGHTING" as const,
+    };
+    const original = {
+      ...base,
+      type: "GOAL" as const,
+      legs: [exerciseWalk, base.legs[1]!],
+    };
+
+    const [result] = await new SelectedRouteGeometryService(provider).enrich(
+      [original],
+      undefined,
+      undefined,
+      { includeBus: false },
+    );
+
+    expect(result?.legs[0]).toEqual(exerciseWalk);
+    expect(result?.legs[0]).toMatchObject({
+      distanceMeters: 300,
+      durationSeconds: 240,
+      geometryQuality: "APPROXIMATE",
+    });
   });
 
   it("한 mode의 실패를 다른 mode의 상세화와 추천 응답에서 격리한다", async () => {

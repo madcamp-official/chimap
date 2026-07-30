@@ -7,6 +7,7 @@ import type {
 
 import {
   calculateRemainingSteps,
+  estimateSteps,
   evaluateCandidate,
   type EvaluatedCandidate,
   type RecommendationPolicy,
@@ -20,6 +21,12 @@ export type RecommendationSelection = {
   validCandidateCount: number;
   goalReachable: boolean;
   diversityReduced: boolean;
+};
+
+export type FinalizedRecommendationSelection = {
+  recommendations: Recommendation[];
+  primaryRecommendationId?: string;
+  goalReachable: boolean;
 };
 
 const TYPE_COPY: Record<
@@ -124,6 +131,151 @@ function toRecommendation(
       ? {}
       : { estimationNotes: candidate.route.estimationNotes }),
     legs: candidate.route.legs,
+  };
+}
+
+export function recalculateRecommendations(input: {
+  recommendations: readonly Recommendation[];
+  request: RecommendationRequest;
+  departureAt: Date;
+  baselineDurationSeconds: number;
+}): Recommendation[] {
+  const remainingSteps = calculateRemainingSteps(
+    input.request.currentSteps,
+    input.request.goalSteps,
+  );
+  const toleranceSteps = Math.round(remainingSteps * 0.05);
+  return input.recommendations.map((recommendation) => {
+    const durationSeconds = recommendation.legs.reduce(
+      (total, leg) => total + leg.durationSeconds,
+      0,
+    );
+    const walkDistanceMeters = recommendation.legs
+      .filter((leg) => leg.mode === "WALK")
+      .reduce((total, leg) => total + leg.distanceMeters, 0);
+    const estimatedSteps = estimateSteps(
+      walkDistanceMeters,
+      input.request.walkingMetric.stepLengthMeters,
+    );
+    const stepDifference =
+      remainingSteps === 0 ? 0 : estimatedSteps - remainingSteps;
+    const expectedTotalSteps = input.request.currentSteps + estimatedSteps;
+    return {
+      ...recommendation,
+      durationSeconds,
+      arrivalAt: new Date(
+        input.departureAt.getTime() + durationSeconds * 1_000,
+      ).toISOString(),
+      extraMinutes: Math.max(
+        0,
+        Math.round(
+          (durationSeconds - input.baselineDurationSeconds) / 60,
+        ),
+      ),
+      walkDistanceMeters,
+      estimatedSteps,
+      stepDifference,
+      goalFit:
+        Math.abs(stepDifference) <= toleranceSteps
+          ? "WITHIN_TOLERANCE" as const
+          : stepDifference < 0
+            ? "UNDER" as const
+            : "OVER" as const,
+      expectedTotalSteps,
+      dailyGoalCompletionRate: Math.min(
+        expectedTotalSteps / input.request.goalSteps,
+        1,
+      ),
+      shortfallCoverageRate:
+        remainingSteps === 0
+          ? 1
+          : Math.min(estimatedSteps / remainingSteps, 1),
+    };
+  });
+}
+
+function satisfiesRecommendationPolicy(input: {
+  recommendation: Recommendation;
+  departureAt: Date;
+  baselineDurationSeconds: number;
+  policy: RecommendationPolicy;
+}): boolean {
+  const arrivalAt = new Date(
+    input.departureAt.getTime() +
+      input.recommendation.durationSeconds * 1_000,
+  );
+  return (
+    input.recommendation.durationSeconds <=
+      input.baselineDurationSeconds + input.policy.maxExtraMinutes * 60 &&
+    (input.policy.effectiveDeadline === undefined ||
+      arrivalAt.getTime() <= input.policy.effectiveDeadline.getTime())
+  );
+}
+
+const SHORT_EXERCISE_WALK_METERS = 20;
+
+function hasVerifiedExerciseWalking(
+  recommendation: Recommendation,
+): boolean {
+  return recommendation.legs.every(
+    (leg) =>
+      leg.mode !== "WALK" ||
+      !leg.isExerciseSegment ||
+      leg.distanceMeters <= SHORT_EXERCISE_WALK_METERS ||
+      leg.geometryQuality === "DETAILED",
+  );
+}
+
+export function finalizeRecommendations(input: {
+  recommendations: readonly Recommendation[];
+  request: RecommendationRequest;
+  departureAt: Date;
+  baselineDurationSeconds: number;
+  policy: RecommendationPolicy;
+  requireDetailedExerciseWalking: boolean;
+}): FinalizedRecommendationSelection {
+  const recalculated = recalculateRecommendations(input);
+  const remainingSteps = calculateRemainingSteps(
+    input.request.currentSteps,
+    input.request.goalSteps,
+  );
+  const isVerifiedGoalCandidate = (
+    recommendation: Recommendation,
+  ): boolean =>
+    recommendation.goalFit === "WITHIN_TOLERANCE" &&
+    satisfiesRecommendationPolicy({
+      recommendation,
+      departureAt: input.departureAt,
+      baselineDurationSeconds: input.baselineDurationSeconds,
+      policy: input.policy,
+    }) &&
+    (!input.requireDetailedExerciseWalking ||
+      hasVerifiedExerciseWalking(recommendation));
+  const goal = recalculated.find(
+    (recommendation) => recommendation.type === "GOAL",
+  );
+  const keepGoal =
+    remainingSteps > 0 &&
+    goal !== undefined &&
+    isVerifiedGoalCandidate(goal);
+  const recommendations = keepGoal
+    ? recalculated
+    : recalculated.filter((recommendation) => recommendation.type !== "GOAL");
+  const primaryRecommendationId =
+    remainingSteps > 0 && keepGoal
+      ? goal.id
+      : (recommendations.find(
+          (recommendation) => recommendation.type === "FAST",
+        )?.id ?? recommendations[0]?.id);
+  const goalReachable =
+    remainingSteps === 0 ||
+    recommendations.some(isVerifiedGoalCandidate);
+  return {
+    recommendations,
+    ...(primaryRecommendationId === undefined
+      ? {}
+      : { primaryRecommendationId }),
+    goalReachable,
   };
 }
 

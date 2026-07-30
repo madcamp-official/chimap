@@ -246,9 +246,72 @@ describe("버스 인접 정류장 형상", () => {
     });
   });
 
-  it("v3 cache miss는 요청당 최대 8쌍만 호출하고 나머지는 정류장 직선으로 둔다", async () => {
-    const manyStops = Array.from({ length: 11 }, (_, index) =>
-      stop(index + 1, 36.35 + index * 0.0002, 127.37 + index * 0.0002),
+  it("514번 56→65의 9개 cold pair도 첫 응답에서 전부 재조립한다", async () => {
+    const routeStops = [
+      stop(56, 36.36237, 127.37039),
+      stop(57, 36.35968, 127.371956),
+      stop(58, 36.35917, 127.374146),
+      stop(59, 36.35571, 127.37578),
+      stop(60, 36.355686, 127.37889),
+      stop(61, 36.355667, 127.38408),
+      stop(62, 36.355705, 127.38866),
+      stop(63, 36.35568, 127.39251),
+      stop(64, 36.35467, 127.39488),
+      stop(65, 36.350273, 127.39484),
+    ];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const provider = {
+      getRoadRouteGeometry: vi.fn(async () => []),
+      getRoadRouteSections: vi.fn(async ({ points }) => {
+        activeRequests += 1;
+        maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+        await gate;
+        activeRequests -= 1;
+        return { sections: [[points[0]!, points[1]!]] };
+      }),
+    };
+    const service = new RouteGeometryService({
+      provider,
+      repository: {
+        getBusSegmentGeometries: vi.fn(async () => []),
+        upsertBusSegmentGeometries: vi.fn(async () => undefined),
+        getVersionedBusSegmentGeometries: vi.fn(async () => []),
+        upsertVersionedBusSegmentGeometries: vi.fn(async () => undefined),
+      },
+      algorithmVersion: BUS_GEOMETRY_ALGORITHM_VERSION,
+    });
+
+    const pending = service.resolveBusGeometry({ stops: routeStops });
+    await vi.waitFor(() => {
+      expect(provider.getRoadRouteSections).toHaveBeenCalledTimes(4);
+    });
+    expect(maxActiveRequests).toBe(4);
+    release();
+    const result = await pending;
+
+    expect(provider.getRoadRouteSections).toHaveBeenCalledTimes(9);
+    expect(provider.getRoadRouteSections.mock.calls.every(
+      ([request]) => request.points.length === 2,
+    )).toBe(true);
+    expect(maxActiveRequests).toBeLessThanOrEqual(4);
+    expect(result).toMatchObject({
+      quality: "DETAILED",
+      reason: "NONE",
+    });
+    expect(result.coordinates.at(-1)).toEqual({
+      lat: routeStops.at(-1)!.latitude,
+      lng: routeStops.at(-1)!.longitude,
+    });
+  });
+
+  it("17개 이상 cold pair는 최대 16개만 채우고 요청 상한으로 강등한다", async () => {
+    const routeStops = Array.from({ length: 18 }, (_, index) =>
+      stop(index + 1, 36.35 + index * 0.0001, 127.37 + index * 0.0001),
     );
     const provider = {
       getRoadRouteGeometry: vi.fn(async () => []),
@@ -267,16 +330,12 @@ describe("버스 인접 정류장 형상", () => {
       algorithmVersion: BUS_GEOMETRY_ALGORITHM_VERSION,
     });
 
-    const result = await service.resolveBusGeometry({ stops: manyStops });
+    const result = await service.resolveBusGeometry({ stops: routeStops });
 
-    expect(provider.getRoadRouteSections).toHaveBeenCalledTimes(8);
+    expect(provider.getRoadRouteSections).toHaveBeenCalledTimes(16);
     expect(result).toMatchObject({
       quality: "APPROXIMATE",
       reason: "PAIR_REQUEST_LIMIT",
-    });
-    expect(result.coordinates.at(-1)).toEqual({
-      lat: manyStops.at(-1)!.latitude,
-      lng: manyStops.at(-1)!.longitude,
     });
   });
 

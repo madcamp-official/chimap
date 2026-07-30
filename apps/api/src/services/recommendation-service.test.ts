@@ -136,6 +136,96 @@ const baseline: NormalizedRoute = {
   ],
 };
 
+function routeVariant(input: {
+  id: string;
+  routeNo: string;
+  durationSeconds: number;
+  walkDistanceMeters: number;
+  exerciseWalk?: boolean;
+}): NormalizedRoute {
+  const walkDurationSeconds = Math.round(input.walkDistanceMeters / 1.25);
+  const walk = {
+    ...baseline.legs[0]!,
+    id: `${input.id}-walk`,
+    distanceMeters: input.walkDistanceMeters,
+    durationSeconds: walkDurationSeconds,
+    ...(input.exerciseWalk === true
+      ? {
+          geometryQuality: "APPROXIMATE" as const,
+          isExerciseSegment: true,
+          walkingRole: "GOAL_EARLY_ALIGHTING" as const,
+        }
+      : {}),
+  };
+  const bus = {
+    ...baseline.legs[1]!,
+    id: `${input.id}-bus`,
+    name: input.routeNo,
+    durationSeconds: input.durationSeconds - walkDurationSeconds,
+    bus: {
+      ...baseline.legs[1]!.bus!,
+      routeId: `route-${input.routeNo}`,
+      routeNo: input.routeNo,
+      stops: baseline.legs[1]!.bus!.stops.map((stop) => ({
+        ...stop,
+        routeId: `route-${input.routeNo}`,
+      })),
+    },
+  };
+  return {
+    ...baseline,
+    id: input.id,
+    durationSeconds: input.durationSeconds,
+    distanceMeters: 9_800 + input.walkDistanceMeters,
+    walkDistanceMeters: input.walkDistanceMeters,
+    legs: [walk, bus],
+  };
+}
+
+const fastRoute = routeVariant({
+  id: "fast-route",
+  routeNo: "108",
+  durationSeconds: 3_600,
+  walkDistanceMeters: 700,
+});
+const balancedRoute = routeVariant({
+  id: "balanced-route",
+  routeNo: "102",
+  durationSeconds: 3_900,
+  walkDistanceMeters: 1_400,
+});
+const goalRoute = routeVariant({
+  id: "goal-route",
+  routeNo: "511",
+  durationSeconds: 4_200,
+  walkDistanceMeters: 1_960,
+  exerciseWalk: true,
+});
+
+function detailGoalWalking(
+  recommendations: readonly Recommendation[],
+  distanceMeters = 1_890,
+  durationSeconds = 1_800,
+): Recommendation[] {
+  return recommendations.map((recommendation) =>
+    recommendation.type !== "GOAL"
+      ? recommendation
+      : {
+          ...recommendation,
+          legs: recommendation.legs.map((leg) =>
+            leg.mode !== "WALK" || !leg.isExerciseSegment
+              ? leg
+              : {
+                  ...leg,
+                  distanceMeters,
+                  durationSeconds,
+                  geometryQuality: "DETAILED" as const,
+                }
+          ),
+        }
+  );
+}
+
 function goalRecommendation(
   id: string,
   legs: Recommendation["legs"],
@@ -224,6 +314,100 @@ describe("자동 추천 서비스 경고", () => {
     expect(candidateGenerator.enrichSelectedRouteGeometry).not.toHaveBeenCalled();
     expect(enrichWalkingGeometry.mock.calls[0]?.[0]).toHaveLength(1);
     expect(response.recommendations).toHaveLength(1);
+  });
+
+  it("transit-v2 상세 WALK 결과로 모든 추천 지표를 다시 계산하고 GOAL을 확정한다", async () => {
+    const enrichSelectedRouteGeometry = vi.fn(
+      async (recommendations: readonly Recommendation[]) =>
+        detailGoalWalking(recommendations),
+    );
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline: fastRoute,
+        candidates: [
+          { route: fastRoute, kind: "BASE" },
+          { route: balancedRoute, kind: "BASE" },
+          { route: goalRoute, kind: "EARLY_ALIGHT" },
+        ],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      enrichSelectedRouteGeometry,
+      enrichWalkingGeometry: vi.fn(),
+    } as unknown as CandidateGenerator;
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: vi.fn() } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      selectedGeometryEnabled: true,
+    });
+
+    const response = await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000011",
+      geometryProfile: "TRANSIT_V2",
+    });
+    const goal = response.recommendations.find((item) => item.type === "GOAL");
+
+    expect(goal).toMatchObject({
+      id: "goal-route",
+      durationSeconds: 4_432,
+      arrivalAt: "2026-07-26T04:13:52.000Z",
+      extraMinutes: 14,
+      walkDistanceMeters: 1_890,
+      estimatedSteps: 2_700,
+      stepDifference: -100,
+      goalFit: "WITHIN_TOLERANCE",
+      expectedTotalSteps: 7_900,
+      dailyGoalCompletionRate: 0.9875,
+      shortfallCoverageRate: 2_700 / 2_800,
+    });
+    expect(response.primaryRecommendationId).toBe("goal-route");
+    expect(response.warnings).not.toContainEqual(expect.objectContaining({
+      code: "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
+    }));
+  });
+
+  it("transit-v2 운동 WALK 상세화 실패 시 GOAL을 제거하고 최종 warning을 다시 계산한다", async () => {
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline: fastRoute,
+        candidates: [
+          { route: fastRoute, kind: "BASE" },
+          { route: balancedRoute, kind: "BASE" },
+          { route: goalRoute, kind: "EARLY_ALIGHT" },
+        ],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      enrichSelectedRouteGeometry: vi.fn(
+        async (recommendations: readonly Recommendation[]) => [
+          ...recommendations,
+        ],
+      ),
+      enrichWalkingGeometry: vi.fn(),
+    } as unknown as CandidateGenerator;
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: vi.fn() } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      selectedGeometryEnabled: true,
+    });
+
+    const response = await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000012",
+      geometryProfile: "TRANSIT_V2",
+    });
+
+    expect(response.recommendations.map((item) => item.type)).toEqual([
+      "FAST",
+      "BALANCED",
+    ]);
+    expect(response.primaryRecommendationId).toBe("fast-route");
+    expect(response.warnings).toContainEqual(expect.objectContaining({
+      code: "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
+    }));
   });
 
   it("기존 후보가 9회 호출을 써도 GOAL 공원 연결용 2회를 별도로 보장한다", async () => {
@@ -529,7 +713,59 @@ describe("자동 추천 서비스 경고", () => {
     expect(candidateGenerator.enrichSelectedRouteGeometry).not.toHaveBeenCalled();
   });
 
-  it("park가 교체한 GOAL에는 보존된 leg의 geometry만 덮어쓴다", () => {
+  it("GOAL WALK barrier 결과를 aggregate 재계산한 뒤 park에 전달한다", async () => {
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline: fastRoute,
+        candidates: [
+          { route: fastRoute, kind: "BASE" },
+          { route: balancedRoute, kind: "BASE" },
+          { route: goalRoute, kind: "EARLY_ALIGHT" },
+        ],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      prepareSelectedRouteGeometry: vi.fn(
+        (recommendations: readonly Recommendation[]) => {
+          const detailed = Promise.resolve(
+            detailGoalWalking(recommendations),
+          );
+          return { goalWalking: detailed, complete: detailed };
+        },
+      ),
+      enrichSelectedRouteGeometry: vi.fn(),
+      enrichWalkingGeometry: vi.fn(),
+    } as unknown as CandidateGenerator;
+    const improveGoal = vi.fn(async (input: {
+      recommendations: Recommendation[];
+    }) => input.recommendations);
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: vi.fn() } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      parkRoutes: { improveGoal } as unknown as ParkRouteCandidateService,
+      selectedGeometryEnabled: true,
+    });
+
+    await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000013",
+      geometryProfile: "TRANSIT_V2",
+    });
+    const goalAtPark = improveGoal.mock.calls[0]?.[0].recommendations.find(
+      (item) => item.type === "GOAL",
+    );
+
+    expect(goalAtPark).toMatchObject({
+      durationSeconds: 4_432,
+      arrivalAt: "2026-07-26T04:13:52.000Z",
+      walkDistanceMeters: 1_890,
+      estimatedSteps: 2_700,
+      goalFit: "WITHIN_TOLERANCE",
+    });
+  });
+
+  it("park가 교체한 GOAL에는 보존된 WALK의 상세 geometry와 지표를 덮어쓴다", () => {
     const approximateWalk = {
       ...baseline.legs[0]!,
       id: "preserved-walk",
@@ -624,8 +860,8 @@ describe("자동 추천 서비스 경고", () => {
       "preserved-bus",
     ]);
     expect(result?.legs[0]).toMatchObject({
-      distanceMeters: 111,
-      durationSeconds: 222,
+      distanceMeters: 9_999,
+      durationSeconds: 9_999,
       coordinates: detailedWalkCoordinates,
       geometryQuality: "DETAILED",
     });

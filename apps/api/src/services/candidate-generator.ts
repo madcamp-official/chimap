@@ -282,15 +282,28 @@ function busLegIndexes(route: NormalizedRoute): {
     : { first, last };
 }
 
-function walkingDistance(
-  legs: readonly RouteLeg[],
-  from: number,
-  to: number,
-): number {
-  return legs
-    .slice(from, to)
-    .filter((leg) => leg.mode === "WALK")
-    .reduce((total, leg) => total + leg.distanceMeters, 0);
+function lateBoardingConnectorOrigin(
+  route: NormalizedRoute,
+  firstBusIndex: number,
+  request: RecommendationRequest,
+): Coordinate {
+  const previousLeg = route.legs[firstBusIndex - 1];
+  if (previousLeg === undefined) return request.origin.location;
+  return previousLeg.coordinates.at(-1) ??
+    route.legs[firstBusIndex]?.coordinates[0] ??
+    request.origin.location;
+}
+
+function earlyAlightingConnectorDestination(
+  route: NormalizedRoute,
+  lastBusIndex: number,
+  request: RecommendationRequest,
+): Coordinate {
+  const nextLeg = route.legs[lastBusIndex + 1];
+  if (nextLeg === undefined) return request.destination.location;
+  return nextLeg.coordinates[0] ??
+    route.legs[lastBusIndex]?.coordinates.at(-1) ??
+    request.destination.location;
 }
 
 function adjustmentFit(
@@ -326,14 +339,16 @@ function enumerateAdjustments(
     if (firstBus === undefined || lastBus === undefined) {
       continue;
     }
-    const walkBeforeFirst = walkingDistance(route.legs, 0, indexes.first);
-    const walkAfterLast = walkingDistance(
-      route.legs,
-      indexes.last + 1,
-      route.legs.length,
+    const lateConnectorOrigin = lateBoardingConnectorOrigin(
+      route,
+      indexes.first,
+      request,
     );
-    const fixedMiddleWalk =
-      route.walkDistanceMeters - walkBeforeFirst - walkAfterLast;
+    const earlyConnectorDestination = earlyAlightingConnectorDestination(
+      route,
+      indexes.last,
+      request,
+    );
 
     for (
       let alightingIndex = 1;
@@ -342,11 +357,10 @@ function enumerateAdjustments(
     ) {
       const stop = lastBus.stops[alightingIndex]!;
       const estimatedWalkDistanceMeters =
-        walkBeforeFirst +
-        fixedMiddleWalk +
+        route.walkDistanceMeters +
         haversineDistanceMeters(
           stopCoordinate(stop),
-          request.destination.location,
+          earlyConnectorDestination,
         ) *
           1.25;
       early.push({
@@ -370,10 +384,9 @@ function enumerateAdjustments(
     ) {
       const stop = firstBus.stops[boardingIndex]!;
       const estimatedWalkDistanceMeters =
-        fixedMiddleWalk +
-        walkAfterLast +
+        route.walkDistanceMeters +
         haversineDistanceMeters(
-          request.origin.location,
+          lateConnectorOrigin,
           stopCoordinate(stop),
         ) *
           1.25;
@@ -410,15 +423,15 @@ function enumerateAdjustments(
         const boardingStop = firstBus.stops[boardingIndex]!;
         const alightingStop = lastBus.stops[alightingIndex]!;
         const estimatedWalkDistanceMeters =
-          fixedMiddleWalk +
+          route.walkDistanceMeters +
           haversineDistanceMeters(
-            request.origin.location,
+            lateConnectorOrigin,
             stopCoordinate(boardingStop),
           ) *
             1.25 +
           haversineDistanceMeters(
             stopCoordinate(alightingStop),
-            request.destination.location,
+            earlyConnectorDestination,
           ) *
             1.25;
         combined.push({
@@ -620,7 +633,11 @@ async function buildAdjustedCandidate(
     boardingStop === undefined
       ? Promise.resolve(undefined)
       : budget.walk(
-          request.origin.location,
+          lateBoardingConnectorOrigin(
+            spec.route,
+            spec.firstBusIndex,
+            request,
+          ),
           stopCoordinate(boardingStop),
           signal,
         ),
@@ -628,7 +645,11 @@ async function buildAdjustedCandidate(
       ? Promise.resolve(undefined)
       : budget.walk(
           stopCoordinate(alightingStop),
-          request.destination.location,
+          earlyAlightingConnectorDestination(
+            spec.route,
+            spec.lastBusIndex,
+            request,
+          ),
           signal,
         ),
   ]);
@@ -664,32 +685,32 @@ async function buildAdjustedCandidate(
     }
   }
 
-  if (startWalkingRoute !== undefined && boardingStop !== undefined) {
-    legs = [
-      ...walkingLegs(
-        startWalkingRoute,
-        `${spec.route.id}-late-board-walk`,
-        "GOAL_LATE_BOARDING",
-        `${boardingStop.stopName} 정류장까지 걸어가 탑승`,
-      ),
-      ...legs.slice(spec.firstBusIndex),
-    ];
-  }
-  if (endWalkingRoute !== undefined && alightingStop !== undefined) {
-    const adjustedLastBusIndex =
-      startWalkingRoute === undefined
-        ? spec.lastBusIndex
-        : spec.lastBusIndex - spec.firstBusIndex +
-          startWalkingRoute.legs.length;
-    legs = [
-      ...legs.slice(0, adjustedLastBusIndex + 1),
-      ...walkingLegs(
-        endWalkingRoute,
-        `${spec.route.id}-early-alight-walk`,
-        "GOAL_EARLY_ALIGHTING",
-        `${alightingStop.stopName} 정류장에서 미리 내려 목적지까지 걷기`,
-      ),
-    ];
+  const startWalkingLegs =
+    startWalkingRoute === undefined || boardingStop === undefined
+      ? []
+      : walkingLegs(
+          startWalkingRoute,
+          `${spec.route.id}-late-board-walk`,
+          "GOAL_LATE_BOARDING",
+          `${boardingStop.stopName} 정류장까지 더 걸어가 탑승`,
+        );
+  const endWalkingLegs =
+    endWalkingRoute === undefined || alightingStop === undefined
+      ? []
+      : walkingLegs(
+          endWalkingRoute,
+          `${spec.route.id}-early-alight-walk`,
+          "GOAL_EARLY_ALIGHTING",
+          `${alightingStop.stopName} 정류장에서 미리 내려 기존 경로 합류 지점까지 걷기`,
+        );
+  if (startWalkingLegs.length > 0 || endWalkingLegs.length > 0) {
+    const connected: RouteLeg[] = [];
+    for (const [index, leg] of legs.entries()) {
+      if (index === spec.firstBusIndex) connected.push(...startWalkingLegs);
+      connected.push(leg);
+      if (index === spec.lastBusIndex) connected.push(...endWalkingLegs);
+    }
+    legs = connected;
   }
 
   const id = [
