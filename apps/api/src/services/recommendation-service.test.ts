@@ -384,6 +384,58 @@ describe("자동 추천 서비스 경고", () => {
     }));
   });
 
+  it("transit-v2 상세 GOAL이 ±5% 밖이어도 카드와 도달 불가 warning을 함께 반환한다", async () => {
+    const loggerInfo = vi.fn();
+    const candidateGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        baseline: fastRoute,
+        candidates: [
+          { route: fastRoute, kind: "BASE" },
+          { route: balancedRoute, kind: "BASE" },
+          { route: goalRoute, kind: "EARLY_ALIGHT" },
+        ],
+        candidateFailureCount: 0,
+        routeApiCallCount: 1,
+      }),
+      enrichSelectedRouteGeometry: vi.fn(
+        async (recommendations: readonly Recommendation[]) =>
+          detailGoalWalking(recommendations, 1_700, 1_600),
+      ),
+      enrichWalkingGeometry: vi.fn(),
+    } as unknown as CandidateGenerator;
+    const service = new RecommendationService({
+      candidateGenerator,
+      logger: { info: loggerInfo } as unknown as Logger,
+      clock: () => new Date("2026-07-26T03:00:00.000Z"),
+      selectedGeometryEnabled: true,
+    });
+
+    const response = await service.createRecommendations({
+      request,
+      requestId: "00000000-0000-4000-8000-000000000017",
+      geometryProfile: "TRANSIT_V2",
+    });
+    const goal = response.recommendations.find((item) => item.type === "GOAL");
+
+    expect(goal).toMatchObject({
+      id: "goal-route",
+      estimatedSteps: 2_429,
+      stepDifference: -371,
+      goalFit: "UNDER",
+    });
+    expect(response.primaryRecommendationId).toBe("goal-route");
+    expect(response.warnings).toContainEqual(expect.objectContaining({
+      code: "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
+    }));
+    expect(loggerInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "recommendation.goal_decision",
+      outcome: "KEPT",
+      reason: "VALID",
+      originalGoalRecommendationId: "goal-route",
+      finalGoalRecommendationId: "goal-route",
+    }));
+  });
+
   it("transit-v2 운동 WALK 상세화 실패 시 GOAL을 제거하고 최종 warning을 다시 계산한다", async () => {
     const loggerInfo = vi.fn();
     const candidateGenerator = {

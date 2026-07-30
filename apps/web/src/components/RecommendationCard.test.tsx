@@ -84,6 +84,33 @@ describe("RecommendationCard", () => {
     expect(screen.queryByText(recommendation.reason)).not.toBeInTheDocument();
   });
 
+  it("허용오차 밖의 GOAL도 목표에 가장 가까운 경로로 표시한다", () => {
+    render(
+      <RecommendationCard
+        recommendation={{
+          ...recommendation,
+          id: "goal-route",
+          type: "GOAL",
+          title: "목표 근접 경로",
+          estimatedSteps: 2_429,
+          stepDifference: -371,
+          goalFit: "UNDER",
+        }}
+        selected={true}
+        detailsOpen={false}
+        detailsId="goal-route-details"
+        onSelect={vi.fn()}
+        onToggleDetails={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("목표에 가까움")).toBeInTheDocument();
+    expect(screen.getByText("371걸음 부족")).toBeInTheDocument();
+    expect(screen.getByRole("button", {
+      name: /목표 근접 경로, 예상 도착/,
+    })).toBeVisible();
+  });
+
   it("카드 선택과 상세 열기를 서로 구분해 실행한다", () => {
     const onSelect = vi.fn();
     const onToggleDetails = vi.fn();

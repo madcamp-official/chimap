@@ -717,7 +717,7 @@ describe("건강 경로 추천 선정", () => {
     });
   });
 
-  it("상세화 후 목표 범위에 들어온 검증된 BALANCED만 GOAL로 승격한다", () => {
+  it("상세화 후 목표에 더 가까워진 검증된 BALANCED를 GOAL로 승격한다", () => {
     const departureAt = new Date("2026-07-25T12:00:00.000Z");
     const selected = selectRecommendations({
       candidates: [candidate(goal), candidate(fast), candidate(doubleSteps)],
@@ -773,7 +773,6 @@ describe("건강 경로 추천 선정", () => {
       originalGoalRecommendationId: "actual-goal-511",
       finalGoalRecommendationId: "actual-double-102",
       promotedFromType: "BALANCED",
-      rejectionReason: "OUTSIDE_STEP_TOLERANCE",
     });
   });
 
@@ -804,7 +803,7 @@ describe("건강 경로 추천 선정", () => {
     expect(finalized.primaryRecommendationId).toBe("actual-fast-108");
   });
 
-  it("상세 WALK 재계산 뒤 ±5% 또는 시간 제약을 벗어난 GOAL은 유지하지 않는다", () => {
+  it("상세 WALK가 ±5% 밖이어도 가장 가까운 GOAL은 유지하고 시간 정책은 지킨다", () => {
     const departureAt = new Date("2026-07-25T12:00:00.000Z");
     const policy = resolveRecommendationPolicy(request, fast);
     const selected = selectRecommendations({
@@ -845,8 +844,24 @@ describe("건강 경로 추천 선정", () => {
       requireDetailedExerciseWalking: true,
     });
 
-    expect(finalizeGoal(1_700, detailedGoal.legs[0]!.durationSeconds)
-      .recommendations.some((item) => item.type === "GOAL")).toBe(false);
+    const closestGoal = finalizeGoal(
+      1_700,
+      detailedGoal.legs[0]!.durationSeconds,
+    );
+    expect(closestGoal.recommendations.find((item) => item.type === "GOAL"))
+      .toMatchObject({
+        id: "actual-goal-511",
+        estimatedSteps: 2_429,
+        stepDifference: -371,
+        goalFit: "UNDER",
+      });
+    expect(closestGoal.primaryRecommendationId).toBe("actual-goal-511");
+    expect(closestGoal.goalReachable).toBe(false);
+    expect(closestGoal.goalDecision).toEqual({
+      outcome: "KEPT",
+      originalGoalRecommendationId: "actual-goal-511",
+      finalGoalRecommendationId: "actual-goal-511",
+    });
     expect(finalizeGoal(1_960, 4_000)
       .recommendations.some((item) => item.type === "GOAL")).toBe(false);
 

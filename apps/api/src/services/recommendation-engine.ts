@@ -35,7 +35,6 @@ export type FinalizedRecommendationSelection = {
 
 export type GoalValidationFailureReason =
   | "GOAL_ALREADY_REACHED"
-  | "OUTSIDE_STEP_TOLERANCE"
   | "OUTSIDE_POLICY"
   | "NO_EXERCISE_WALK"
   | "EXERCISE_WALK_ROLE_INVALID"
@@ -303,7 +302,7 @@ function validateGoalCandidate(input: {
     return "NO_EXERCISE_WALK";
   }
 
-  // Keep causal exercise failures ahead of aggregate fit/policy failures so
+  // Keep causal exercise failures ahead of the aggregate policy failure so
   // provider degradation is not hidden by the numbers it made inaccurate.
   const markedExerciseWalking = input.recommendation.legs.filter(
     (leg) =>
@@ -386,10 +385,9 @@ function validateGoalCandidate(input: {
   ) {
     return "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT";
   }
-  if (input.recommendation.goalFit !== "WITHIN_TOLERANCE") {
-    return "OUTSIDE_STEP_TOLERANCE";
-  }
 
+  // GOAL means the valid route closest to the remaining-step target. Being
+  // outside ±5% affects goalReachable and its warning, not card eligibility.
   if (!satisfiesRecommendationPolicy(input)) {
     return "OUTSIDE_POLICY";
   }
@@ -455,18 +453,25 @@ export function finalizeRecommendations(input: {
     originalGoal !== undefined &&
     originalGoalRejectionReason === undefined;
 
-  // FAST is the stable fallback and is never relabelled. If detailed geometry
-  // makes the selected GOAL invalid, only an already-selected BALANCED route
-  // with verified exercise walking may take the GOAL label.
+  // FAST is the stable fallback and is never relabelled. Detailed geometry
+  // can change which selected exercise route is closest to the step target,
+  // so compare a verified BALANCED route with the original GOAL again.
+  const validBalanced = remainingSteps <= 0
+    ? undefined
+    : recalculated.find(
+        (recommendation) =>
+          recommendation.type === "BALANCED" &&
+          goalValidationFailure(recommendation) === undefined,
+      );
   const promotableBalanced =
-    remainingSteps <= 0 || keepOriginalGoal
-      ? undefined
-      : recalculated.find(
-          (recommendation) =>
-            recommendation.type === "BALANCED" &&
-            goalValidationFailure(recommendation) === undefined,
-        );
-  const finalGoal = keepOriginalGoal ? originalGoal : promotableBalanced;
+    validBalanced !== undefined &&
+    (!keepOriginalGoal ||
+      Math.abs(validBalanced.stepDifference) <
+        Math.abs(originalGoal.stepDifference))
+      ? validBalanced
+      : undefined;
+  const finalGoal = promotableBalanced ??
+    (keepOriginalGoal ? originalGoal : undefined);
   const recommendations = recalculated.flatMap((recommendation) => {
     if (
       recommendation.type === "GOAL" &&
@@ -499,15 +504,6 @@ export function finalizeRecommendations(input: {
         : { originalGoalRecommendationId: originalGoal.id }),
       rejectionReason: "GOAL_ALREADY_REACHED",
     };
-  } else if (
-    originalGoal !== undefined &&
-    originalGoalRejectionReason === undefined
-  ) {
-    goalDecision = {
-      outcome: "KEPT",
-      originalGoalRecommendationId: originalGoal.id,
-      finalGoalRecommendationId: originalGoal.id,
-    };
   } else if (promotableBalanced !== undefined) {
     goalDecision = {
       outcome: "PROMOTED",
@@ -521,6 +517,15 @@ export function finalizeRecommendations(input: {
           }),
       finalGoalRecommendationId: promotableBalanced.id,
       promotedFromType: "BALANCED",
+    };
+  } else if (
+    originalGoal !== undefined &&
+    originalGoalRejectionReason === undefined
+  ) {
+    goalDecision = {
+      outcome: "KEPT",
+      originalGoalRecommendationId: originalGoal.id,
+      finalGoalRecommendationId: originalGoal.id,
     };
   } else if (originalGoal === undefined) {
     goalDecision = { outcome: "ABSENT" };
