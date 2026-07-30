@@ -252,6 +252,7 @@ function satisfiesRecommendationPolicy(input: {
 }
 
 const SHORT_EXERCISE_WALK_METERS = 20;
+const EXERCISE_INCREMENT_TOLERANCE_RATE = 0.05;
 
 function isGoalExerciseWalkingRole(
   role: Recommendation["legs"][number]["walkingRole"],
@@ -282,6 +283,8 @@ function inferCandidateKind(
 
 function validateGoalCandidate(input: {
   recommendation: Recommendation;
+  fastRecommendation?: Recommendation;
+  request: RecommendationRequest;
   candidateKind?: CandidateKind;
   departureAt: Date;
   baselineDurationSeconds: number;
@@ -308,14 +311,10 @@ function validateGoalCandidate(input: {
       leg.isExerciseSegment &&
       leg.distanceMeters > 0,
   );
-  const requiresAdjustedExercise = candidateKind !== "BASE";
   const hasParkDetour = markedExerciseWalking.some(
     (leg) => leg.walkingRole === "PARK_DETOUR",
   );
-  if (
-    markedExerciseWalking.length === 0 &&
-    (requiresAdjustedExercise || intentionalWalking.length > 0)
-  ) {
+  if (markedExerciseWalking.length === 0) {
     return "NO_EXERCISE_WALK";
   }
   if (markedExerciseWalking.some(
@@ -364,6 +363,33 @@ function validateGoalCandidate(input: {
     return "EXERCISE_WALK_NOT_DETAILED";
   }
 
+  const fastEstimatedSteps = input.fastRecommendation?.estimatedSteps ?? 0;
+  const additionalSteps = Math.max(
+    input.recommendation.estimatedSteps - fastEstimatedSteps,
+    0,
+  );
+  const exerciseDistanceMeters = exerciseWalking.reduce(
+    (total, leg) => total + leg.distanceMeters,
+    0,
+  );
+  const exerciseEstimatedSteps = estimateSteps(
+    exerciseDistanceMeters,
+    input.request.walkingMetric.stepLengthMeters,
+  );
+  const attributionToleranceSteps = Math.max(
+    1,
+    Math.round(additionalSteps * EXERCISE_INCREMENT_TOLERANCE_RATE),
+  );
+  if (
+    exerciseEstimatedSteps + attributionToleranceSteps <
+    additionalSteps
+  ) {
+    return "EXERCISE_WALK_DOES_NOT_COVER_INCREMENT";
+  }
+  if (input.recommendation.goalFit !== "WITHIN_TOLERANCE") {
+    return "OUTSIDE_STEP_TOLERANCE";
+  }
+
   if (!satisfiesRecommendationPolicy(input)) {
     return "OUTSIDE_POLICY";
   }
@@ -397,6 +423,9 @@ export function finalizeRecommendations(input: {
     input.request.currentSteps,
     input.request.goalSteps,
   );
+  const fast = recalculated.find(
+    (recommendation) => recommendation.type === "FAST",
+  );
   const goalValidationFailure = (
     recommendation: Recommendation,
   ): GoalValidationFailureReason | undefined => {
@@ -404,6 +433,8 @@ export function finalizeRecommendations(input: {
       input.candidateKindByRecommendationId?.get(recommendation.id);
     return validateGoalCandidate({
       recommendation,
+      ...(fast === undefined ? {} : { fastRecommendation: fast }),
+      request: input.request,
       ...(candidateKind === undefined ? {} : { candidateKind }),
       departureAt: input.departureAt,
       baselineDurationSeconds: input.baselineDurationSeconds,

@@ -450,7 +450,7 @@ describe("자동 추천 서비스 경고", () => {
         baseline: fastRoute,
         candidates: [
           { route: fastRoute, kind: "BASE" },
-          { route: balancedRoute, kind: "BASE" },
+          { route: balancedRoute, kind: "EARLY_ALIGHT" },
           { route: goalRoute, kind: "EARLY_ALIGHT" },
         ],
         candidateFailureCount: 0,

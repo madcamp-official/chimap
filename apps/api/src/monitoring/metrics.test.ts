@@ -110,6 +110,12 @@ describe("운영 metrics", () => {
       timeoutOrigin: "GEOMETRY",
       durationMilliseconds: 1_500,
     });
+    metrics.observeRecommendationPhase({
+      phase: "SELECTED_GEOMETRY",
+      outcome: "DEGRADED",
+      timeoutOrigin: "NONE",
+      durationMilliseconds: 125,
+    });
     metrics.observeRouteProvider({
       provider: "TAGO",
       operation: "NEARBY_STOPS",
@@ -205,6 +211,12 @@ describe("운영 metrics", () => {
     );
     expect(output).toContain(
       'chimap_recommendation_phase_duration_seconds_sum{service="chimap-api",phase="SELECTED_GEOMETRY",outcome="TIMEOUT"} 1.5',
+    );
+    expect(output).toContain(
+      'chimap_recommendation_phase_total{phase="SELECTED_GEOMETRY",outcome="DEGRADED",timeout_origin="NONE",service="chimap-api"} 1',
+    );
+    expect(output).toContain(
+      'chimap_recommendation_phase_duration_seconds_sum{service="chimap-api",phase="SELECTED_GEOMETRY",outcome="DEGRADED"} 0.125',
     );
     expect(output).toContain(
       'chimap_route_provider_requests_total{provider="TAGO",operation="NEARBY_STOPS",outcome="TIMEOUT",timeout_origin="PROVIDER",service="chimap-api"} 1',

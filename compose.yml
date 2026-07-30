@@ -89,6 +89,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_COMMIT_SHA: ${APP_COMMIT_SHA:-unknown}
       ALERT_RELAY_PORT: 9080
       ALERT_STATUS_URL: https://chimap.madcamp-kaist.org/api/v1/health
     healthcheck:

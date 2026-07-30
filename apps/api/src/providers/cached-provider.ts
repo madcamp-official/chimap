@@ -19,7 +19,7 @@ import type { ResolvedBusGeometry } from "./route-geometry.js";
 
 const PLACE_TTL_MS = 60 * 60 * 1000;
 const TRANSIT_TTL_MS = 90 * 1000;
-const WALK_TTL_MS = 30 * 60 * 1000;
+const WALK_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class CachedMobilityProvider implements MobilityProvider {
   public readonly source: "KAKAO" | "TAGO";

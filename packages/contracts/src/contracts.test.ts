@@ -14,6 +14,7 @@ import {
   recommendPersonalizedDailyGoal,
   recommendationRequestSchema,
   routeLegSchema,
+  routeSourceSchema,
   storedPreferencesV1Schema,
   storedPreferencesV2Schema,
   storedPreferencesV3Schema,
@@ -204,6 +205,10 @@ describe("공유 계약", () => {
     expect(
       routeLegSchema.safeParse({ ...leg, geometryQuality: "UNKNOWN" }).success,
     ).toBe(false);
+  });
+
+  it("Valhalla를 정규화 도보 경로 source로 허용한다", () => {
+    expect(routeSourceSchema.parse("VALHALLA")).toBe("VALHALLA");
   });
 
   it("추천 입력의 걸음 수와 개인화 한 걸음 길이 경계를 검증한다", () => {

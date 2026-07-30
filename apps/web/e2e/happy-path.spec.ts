@@ -71,6 +71,9 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   const balancedRecommendation = recommendationPayload.recommendations.find(
     (recommendation) => recommendation.type === "BALANCED",
   );
+  const goalRecommendation = recommendationPayload.recommendations.find(
+    (recommendation) => recommendation.type === "GOAL",
+  );
   expect(balancedRecommendation).toBeDefined();
 
   const fast = page.getByRole("button", {
@@ -84,7 +87,16 @@ test("KAIST에서 대전역까지 건강 경로를 비교하고 선택을 저장
   });
   await expect(fast).toBeVisible();
   await expect(doubleSteps).toBeVisible();
-  await expect(goal).toBeVisible();
+  if (goalRecommendation === undefined) {
+    await expect(goal).toHaveCount(0);
+    expect(
+      recommendationPayload.warnings.some(
+        (warning) => warning.code === "GOAL_UNREACHABLE_WITHIN_AUTO_BUDGET",
+      ),
+    ).toBe(true);
+  } else {
+    await expect(goal).toBeVisible();
+  }
   await expect(
     page.getByRole("list", { name: "텍스트 이동 단계" }),
   ).toHaveCount(0);

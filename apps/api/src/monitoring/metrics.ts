@@ -69,6 +69,9 @@ export type RouteProviderObservation = {
   timeoutOrigin: RecommendationTimeoutOrigin;
   durationMilliseconds: number;
   httpStatus?: number;
+  providerCode?: -10;
+  providerReason?: "QUOTA_EXHAUSTED";
+  circuitState?: "TRIPPED" | "OPEN";
 };
 
 export type GeometrySkippedObservation = {
