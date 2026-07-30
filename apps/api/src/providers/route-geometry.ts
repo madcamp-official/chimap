@@ -373,8 +373,19 @@ export function validateRoadSection(
     haversineDistanceMeters(from, section.at(-1)!) +
     haversineDistanceMeters(to, section[0]!);
   const oriented = reverseGap < forwardGap ? [...section].reverse() : [...section];
+  const sanitized = removeOutAndBackSpikes(oriented);
+  const outAndBack = hasOutAndBackSpike(sanitized.coordinates);
+  if (sanitized.coordinates.length < 2) {
+    return {
+      coordinates: null,
+      distanceMeters: polylineDistance(oriented),
+      reason: "EXCESS_DETOUR",
+      ...roadSectionMetrics(oriented, from, to),
+      outAndBack: true,
+    };
+  }
   const straightDistance = Math.max(1, haversineDistanceMeters(from, to));
-  const metrics = roadSectionMetrics(oriented, from, to);
+  const metrics = roadSectionMetrics(sanitized.coordinates, from, to);
   const endpointTolerance = Math.min(
     MAX_ENDPOINT_SNAP_METERS,
     Math.max(MIN_ENDPOINT_SNAP_METERS, straightDistance * 0.15),
@@ -391,7 +402,7 @@ export function validateRoadSection(
       outAndBack: false,
     };
   }
-  const pathDistance = polylineDistance(oriented);
+  const pathDistance = polylineDistance(sanitized.coordinates);
   if (pathDistance < 1 || !Number.isFinite(metrics.detourRatio)) {
     return {
       coordinates: null,
@@ -401,7 +412,6 @@ export function validateRoadSection(
       outAndBack: false,
     };
   }
-  const outAndBack = hasOutAndBackSpike(oriented);
   if (
     (
       pathDistance / straightDistance >= 2.25 &&
@@ -418,11 +428,11 @@ export function validateRoadSection(
     };
   }
   return {
-    coordinates: oriented,
+    coordinates: sanitized.coordinates,
     distanceMeters: Math.max(1, pathDistance),
     reason: "NONE",
     ...metrics,
-    outAndBack: false,
+    outAndBack: sanitized.removed,
   };
 }
 
@@ -1090,6 +1100,9 @@ export class RouteGeometryService {
             ...metrics.map((metric) => metric.detourRatio),
           ),
         };
+    const sectionOutAndBackDetected = expected.some(
+      (item) => available.get(item.key)?.outAndBack === true,
+    );
     input.observe?.({
       mode: "BUS",
       outcome: quality,
@@ -1106,7 +1119,10 @@ export class RouteGeometryService {
       toNodeOrder: last.nodeOrder,
       geometryVersion: BUS_GEOMETRY_ALGORITHM_VERSION,
       ...snapAndDetour,
-      outAndBack: joined.outAndBack || joined.removedOutAndBack,
+      outAndBack:
+        sectionOutAndBackDetected ||
+        joined.outAndBack ||
+        joined.removedOutAndBack,
       queueWaitMilliseconds,
       queueStartedCount,
       queueAbortedBeforeStartCount,

@@ -514,7 +514,7 @@ describe("버스 인접 정류장 형상", () => {
     expect(joined.removedOutAndBack).toBe(true);
   });
 
-  it("5m 이상 왕복하는 A-B-A section을 거절한다", () => {
+  it("5m 이상 왕복하는 A-B-A section을 제거한 뒤 상세 경로로 수용한다", () => {
     const from = { lat: 36.35, lng: 127.37 };
     const to = { lat: 36.351, lng: 127.371 };
     const snap = { lat: 36.3504, lng: 127.3704 };
@@ -526,6 +526,18 @@ describe("버스 인접 정류장 형상", () => {
     );
 
     expect(hasOutAndBackSpike([snap, spur, snap])).toBe(true);
+    expect(result).toMatchObject({
+      coordinates: [from, snap, to],
+      reason: "NONE",
+      outAndBack: true,
+    });
+  });
+
+  it("A-B-A 제거 뒤 두 정점 미만이면 상세 경로로 수용하지 않는다", () => {
+    const from = { lat: 36.35, lng: 127.37 };
+    const spur = { lat: 36.3501, lng: 127.37 };
+    const result = validateRoadSection([from, spur, from], from, from);
+
     expect(result).toMatchObject({
       coordinates: null,
       reason: "EXCESS_DETOUR",
